@@ -12,7 +12,7 @@ import sys
 from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
 
-from .calculations import (
+from calculations import (
     GROUND_STATIONS,
     calculate_link_budget_parameters,
 )
