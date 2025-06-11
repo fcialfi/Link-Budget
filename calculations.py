@@ -3,6 +3,7 @@ import numpy as np
 import itur as itu
 import astropy.units as u
 from scipy.interpolate import interp1d
+from typing import Any, Dict, Optional
 
 # Define ground stations as a constant dictionary
 GROUND_STATIONS = {
@@ -34,10 +35,83 @@ def antenna_pattern(angle_deg: float) -> float:
 
 
 def calculate_link_budget_parameters(
-    t_sky, sat, gs, freq, p, r001, d_gs, alt_gs, eirp_sat, gt_gs,
-    demod_loss, bitrate, overhead, cisat_lin, other_att
-):
-    """Compute link budget parameters for a single time step."""
+t_sky: "Time",
+    sat: "Satellite", # type: ignore
+    gs: "GroundStation", # type: ignore
+    freq: u.Quantity,
+    p: float,
+    r001: float,
+    d_gs: float,
+    alt_gs: float,
+    eirp_sat: float,
+    gt_gs: float,
+    demod_loss: float,
+    bitrate: float,
+    overhead: float,
+    cisat_lin: Optional[float],
+    other_att: float,
+) -> Dict[str, Any]:
+    
+    """Compute link budget parameters for a single time step.
+    Parameters
+    ----------
+    t_sky : :class:`~skyfield.timelib.Time`
+        Skyfield time object for which the link budget is evaluated.
+    sat : :class:`~skyfield.api.EarthSatellite`
+        Satellite for which the pass is computed.
+    gs : :class:`~skyfield.api.wgs84.GeographicPosition`
+        Ground station location.
+    freq : :class:`~astropy.units.Quantity`
+        Downlink frequency.
+    p : float
+        Percentage of time attenuation is exceeded (100 - link availability).
+    r001 : float
+        Rain rate exceeded for 0.01\% of the time in mm/h.
+    d_gs : float
+        Ground station antenna diameter in metres.
+    alt_gs : float
+        Ground station altitude in kilometres.
+    eirp_sat : float
+        Satellite EIRP in dBW.
+    gt_gs : float
+        Ground station G/T in dB/K.
+    demod_loss : float
+        Demodulator implementation loss in dB.
+    bitrate : float
+        Channel bit rate in bits per second.
+    overhead : float
+        Coding overhead factor used for Eb/No calculation.
+    cisat_lin : float or None
+        Satellite C/I as a linear ratio, or ``None`` if not used.
+    other_att : float
+        Any other static attenuation to subtract from the link budget in dB.
+
+    Returns
+    -------
+    dict
+        Dictionary containing computed parameters with the following keys:
+
+        ``"Time (UTC)"`` : :class:`datetime.datetime`
+            Timestamp corresponding to ``t_sky``.
+        ``"Elevation (°)"`` : float
+            Elevation angle in degrees.
+        ``"Slant Range (km)"`` : float or ``None``
+            Distance to the satellite when visible.
+        ``"Path Loss (dB)"`` : float or ``None``
+            Free-space path loss.
+        ``"Pointing Loss (dB)"`` : float or ``None``
+            Loss due to antenna off-pointing.
+        ``"Off Boresight Angle (°)"`` : float or ``None``
+            Angle between satellite boresight and ground station direction.
+        ``"Rx Power (dBW)"`` : float or ``None``
+            Received carrier power.
+        ``"C/(No+Io) (dBHz)"`` : float or ``None``
+            Carrier-to-noise-plus-interference density.
+        ``"Eb/No (dB)"`` : float or ``None``
+            Energy-per-bit to noise density.
+        ``"Visible"`` : str
+            ``"YES"`` if the elevation is above 5°; otherwise ``"NO"``.
+    """
     diff = sat - gs
     topocentric = diff.at(t_sky)
     alt, az, dist = topocentric.altaz()

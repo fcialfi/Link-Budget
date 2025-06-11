@@ -36,7 +36,21 @@ def set_analysis_stale():
 
 # --- Main Analysis Function ---
 
+    """Run a full orbital and link budget analysis using GUI inputs.
+
+    The function reads TLE data, ground station parameters and link budget
+    settings from the GUI fields. It then propagates the orbit for a 24 hour
+    period with a 30 second step, computes the link budget for each step using
+    :func:`calculate_link_budget_parameters` and stores the results in the
+    global :data:`df_all` DataFrame. Detected contact windows are populated in
+    :data:`contact_windows` and displayed in the GUI.
+
+    No parameters are accepted; all values are taken from the GUI widgets. The
+    function updates the global state and returns ``None``.
+    """
+
 def run_analysis():
+    
     global contact_windows, df_all, analysis_needs_refresh
 
     tle1 = tle1_entry.get().strip()
