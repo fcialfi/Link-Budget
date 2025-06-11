@@ -66,7 +66,7 @@ t_sky: "Time", # type: ignore
     p : float
         Percentage of time attenuation is exceeded (100 - link availability).
     r001 : float
-        Rain rate exceeded for 0.01\% of the time in mm/h.
+        Rain rate exceeded for 0.01% of the time in mm/h.
     d_gs : float
         Ground station antenna diameter in metres.
     alt_gs : float
