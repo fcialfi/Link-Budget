@@ -96,19 +96,21 @@ t_sky: "Time", # type: ignore
             Timestamp corresponding to ``t_sky``.
         ``"Elevation (°)"`` : float
             Elevation angle in degrees.
-        ``"Slant Range (km)"`` : float or ``None``
-            Distance to the satellite when visible.
-        ``"Path Loss (dB)"`` : float or ``None``
+        ``"Slant Range (km)"`` : float
+            Distance to the satellite.
+        ``"Path Loss (dB)"`` : float
             Free-space path loss.
-        ``"Pointing Loss (dB)"`` : float or ``None``
+        ``"Atmospheric Att (dB)"`` : float
+            Attenuation due to the atmosphere at 5° elevation.
+        ``"Pointing Loss (dB)"`` : float
             Loss due to antenna off-pointing.
-        ``"Off Boresight Angle (°)"`` : float or ``None``
+        ``"Off Boresight Angle (°)"`` : float
             Angle between satellite boresight and ground station direction.
-        ``"Rx Power (dBW)"`` : float or ``None``
+        ``"Rx Power (dBW)"`` : float
             Received carrier power.
-        ``"C/(No+Io) (dBHz)"`` : float or ``None``
+        ``"C/(No+Io) (dBHz)"`` : float
             Carrier-to-noise-plus-interference density.
-        ``"Eb/No (dB)"`` : float or ``None``
+        ``"Eb/No (dB)"`` : float
             Energy-per-bit to noise density.
         ``"Visible"`` : str
             ``"YES"`` if the elevation is above 5°; otherwise ``"NO"``.
@@ -119,67 +121,74 @@ t_sky: "Time", # type: ignore
     elev = alt.degrees
     visible = elev >= 5
 
-    slant_range_km = path_loss = atm_att = None
-    rx_power = cn0 = ebno = off_boresight_angle = pointing_loss = None
+    slant_range_km = topocentric.distance().to(u.km).value
+    path_loss = (
+        20 * np.log10(slant_range_km)
+        + 20 * np.log10(freq.to(u.GHz).value)
+        + 92.45
+    )
 
-    if visible:
-        slant_range_km = topocentric.distance().to(u.km).value
-        path_loss = (
-            20 * np.log10(slant_range_km)
-            + 20 * np.log10(freq.to(u.GHz).value)
-            + 92.45
+    try:
+        Ag, Ac, Ar, As, A_tot = itu.atmospheric_attenuation_slant_path(
+            gs.latitude.degrees,
+            gs.longitude.degrees,
+            freq.to(u.GHz).value,
+            5.0,
+            p,
+            d_gs,
+            hs=alt_gs,
+            R001=r001,
+            return_contributions=True,
+            include_gas=True,
+            include_rain=True,
+            include_clouds=True,
+            include_scintillation=True,
         )
+        atm_att = float(A_tot.value if hasattr(A_tot, 'value') else A_tot)
+    except Exception as e: # Catch the exception and print it
+        print(
+            "Error calculating atmospheric attenuation in calculate_link_budget_parameters: "
+            f"{e}",
+            file=sys.stderr,
+        )
+        print(
+            "  Inputs for error: "
+            f"lat={gs.latitude.degrees}, lon={gs.longitude.degrees}, "
+            f"freq_GHz={freq.to(u.GHz).value}, elev=5.0, P={p}, R001={r001}, "
+            f"D={d_gs}, h_s={alt_gs}",
+            file=sys.stderr,
+        )
+        atm_att = 0.0
 
-        try:
-            Ag, Ac, Ar, As, A_tot = itu.atmospheric_attenuation_slant_path(
-                gs.latitude.degrees,
-                gs.longitude.degrees,
-                freq.to(u.GHz).value,
-                elev,
-                p,
-                d_gs,
-                hs=alt_gs,
-                R001=r001,
-                return_contributions=True,
-                include_gas=True,
-                include_rain=True,
-                include_clouds=True,
-                include_scintillation=True,
-            )
-            atm_att = float(A_tot.value if hasattr(A_tot, 'value') else A_tot)
-        except Exception as e: # Catch the exception and print it
-            print(f"Error calculating atmospheric attenuation in calculate_link_budget_parameters: {e}", file=sys.stderr)
-            print(f"  Inputs for error: lat={gs.latitude.degrees}, lon={gs.longitude.degrees}, freq_GHz={freq.to(u.GHz).value}, elev={elev}, P={p}, R001={r001}, D={d_gs}, h_s={alt_gs}", file=sys.stderr)
-            atm_att = 0.0
+    r_sat = sat.at(t_sky).position.km
+    r_gs = gs.at(t_sky).position.km
+    bore = -r_sat / np.linalg.norm(r_sat)
+    to_gs = (r_gs - r_sat) / np.linalg.norm(r_gs - r_sat)
+    angle_rad = np.arccos(np.clip(np.dot(bore, to_gs), -1.0, 1.0))
+    off_boresight_angle = np.degrees(angle_rad)
+    pointing_loss = antenna_pattern(off_boresight_angle)
 
-        r_sat = sat.at(t_sky).position.km
-        r_gs = gs.at(t_sky).position.km
-        bore = -r_sat / np.linalg.norm(r_sat)
-        to_gs = (r_gs - r_sat) / np.linalg.norm(r_gs - r_sat)
-        angle_rad = np.arccos(np.clip(np.dot(bore, to_gs), -1.0, 1.0))
-        off_boresight_angle = np.degrees(angle_rad)
-        pointing_loss = antenna_pattern(off_boresight_angle)
+    rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss
+    cno_db = rx_power + gt_gs + 228.6 - demod_loss
 
-        rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss
-        cno_db = rx_power + gt_gs + 228.6 - demod_loss
+    if cisat_lin is not None:
+        cno_lin = 10 ** (cno_db / 10.0)
+        cni_lin = 1.0 / (1.0 / cno_lin + 1.0 / cisat_lin)
+        cn0 = 10.0 * np.log10(cni_lin)
+    else:
+        cn0 = cno_db
 
-        if cisat_lin is not None:
-            cno_lin = 10 ** (cno_db / 10.0)
-            cni_lin = 1.0 / (1.0 / cno_lin + 1.0 / cisat_lin)
-            cn0 = 10.0 * np.log10(cni_lin)
-        else:
-            cn0 = cno_db
-
-        if cn0 is not None and bitrate > 0 and overhead > 0:
-            ebno = cn0 - 10 * np.log10(bitrate / overhead)
-        else:
-            ebno = np.nan
+    if cn0 is not None and bitrate > 0 and overhead > 0:
+        ebno = cn0 - 10 * np.log10(bitrate / overhead)
+    else:
+        ebno = np.nan
 
     return {
         "Time (UTC)": t_sky.utc_datetime(),
         "Elevation (°)": elev,
         "Slant Range (km)": slant_range_km,
         "Path Loss (dB)": path_loss,
+        "Atmospheric Att (dB)": atm_att,
         "Pointing Loss (dB)": pointing_loss,
         "Off Boresight Angle (°)": off_boresight_angle,
         "Rx Power (dBW)": rx_power,

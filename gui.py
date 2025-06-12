@@ -50,8 +50,8 @@ def set_analysis_stale():
     """
 
 def run_analysis():
-    
-    global contact_windows, df_all, analysis_needs_refresh
+
+    global contact_windows, df_all, analysis_needs_refresh, atm_label_var
 
     tle1 = tle1_entry.get().strip()
     tle2 = tle2_entry.get().strip()
@@ -137,10 +137,15 @@ def run_analysis():
             cisat_lin,
             other_att,
         )
+        if i == 0:
+            atm_label_var.set(
+                f"Atmospheric Att (dB) @ 5\u00b0 El: {params['Atmospheric Att (dB)']:.2f}"
+            )
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
             "Path Loss (dB)",
+            "Atmospheric Att (dB)",
             "Pointing Loss (dB)",
             "Off Boresight Angle (°)",
             "Rx Power (dBW)",
@@ -188,7 +193,7 @@ def run_analysis():
     returned.
     """
 def recalculate_link_budget():
-    global df_all
+    global df_all, atm_label_var
     if df_all.empty:
         messagebox.showwarning("Warning", "Please generate passes first.")
         return
@@ -255,10 +260,15 @@ def recalculate_link_budget():
             cisat_lin,
             other_att,
         )
+        if len(updated_results) == 0:
+            atm_label_var.set(
+                f"Atmospheric Att (dB) @ 5\u00b0 El: {params['Atmospheric Att (dB)']:.2f}"
+            )
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
             "Path Loss (dB)",
+            "Atmospheric Att (dB)",
             "Pointing Loss (dB)",
             "Off Boresight Angle (°)",
             "Rx Power (dBW)",
@@ -365,6 +375,7 @@ def on_contact_select(event):
         "Elevation (°)",
         "Slant Range (km)",
         "Path Loss (dB)",
+        "Atmospheric Att (dB)",
         "Pointing Loss (dB)",
         "Off Boresight Angle (°)",
         "Rx Power (dBW)",
