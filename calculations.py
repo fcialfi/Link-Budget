@@ -187,6 +187,7 @@ t_sky: "Time", # type: ignore
         "Elevation (°)": elev,
         "Slant Range (km)": slant_range_km,
         "Path Loss (dB)": path_loss,
+        "Atmospheric Att (dB)": atm_att,
         "Pointing Loss (dB)": pointing_loss,
         "Off Boresight Angle (°)": off_boresight_angle,
         "Rx Power (dBW)": rx_power,
