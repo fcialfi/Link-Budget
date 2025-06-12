@@ -1,6 +1,7 @@
 # Constants and core calculations for the satellite link budget tool
 import numpy as np
 import itur as itu
+import sys
 import astropy.units as u
 from scipy.interpolate import interp1d
 from typing import Any, Dict, Optional
@@ -146,7 +147,9 @@ t_sky: "Time", # type: ignore
                 include_scintillation=True,
             )
             atm_att = float(A_tot.value if hasattr(A_tot, 'value') else A_tot)
-        except Exception:
+        except Exception as e: # Catch the exception and print it
+            print(f"Error calculating atmospheric attenuation in calculate_link_budget_parameters: {e}", file=sys.stderr)
+            print(f"  Inputs for error: lat={gs.latitude.degrees}, lon={gs.longitude.degrees}, freq_GHz={freq.to(u.GHz).value}, elev={elev}, P={p}, R001={r001}, D={d_gs}, h_s={alt_gs}", file=sys.stderr)
             atm_att = 0.0
 
         r_sat = sat.at(t_sky).position.km
