@@ -7,12 +7,13 @@ import matplotlib.dates as mdates
 from matplotlib.dates import MinuteLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
-import sys
-
+import sys, os
+# Add current directory to sys.path (for PyInstaller or direct execution)
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
 
-from .calculations import (
+from calculations import (
     GROUND_STATIONS,
     calculate_link_budget_parameters,
 )
@@ -436,7 +437,7 @@ def show_antenna_pattern():
     popup.title("Antenna Pattern")
     popup.geometry("600x400")
 
-    from .calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
+    from calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
