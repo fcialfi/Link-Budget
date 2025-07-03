@@ -19,11 +19,11 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 1. Clona il repository e spostati nella cartella:
    ```bash
    git clone <url_del_repository>
-   cd Link-Budget
+   cd link_budget
    ```
 2. Avvia l'applicazione con:
    ```bash
-   python 'Link Budget Tool'
+   python -m link_budget
    ```
 3. Inserisci le due righe TLE, scegli la stazione di terra e gli altri parametri, quindi premi **Start** per calcolare le finestre di contatto.
 4. Seleziona una finestra dalla lista per vedere grafici e tabelle del link budget.
