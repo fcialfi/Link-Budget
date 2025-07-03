@@ -11,8 +11,14 @@ import sys
 
 from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
+import os
 
-from .calculations import (
+
+# Add current script directory to sys.path to allow local imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+
+from calculations import (
     GROUND_STATIONS,
     calculate_link_budget_parameters,
 )
@@ -151,6 +157,7 @@ def run_analysis():
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
+            "Doppler Shift (kHz)",            
         ]:
             if params[key] is not None:
                 params[key] = round(params[key], 2)
@@ -274,6 +281,7 @@ def recalculate_link_budget():
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
+            "Doppler Shift (kHz)",            
         ]:
             if params[key] is not None:
                 params[key] = round(params[key], 2)
@@ -328,8 +336,13 @@ def on_contact_select(event):
     df_pass = df_all[mask].copy()
 
     clear_plot_and_table()
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), gridspec_kw={"width_ratios": [1, 1]})
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        1,
+        3,
+        figsize=(15, 4),
+        gridspec_kw={"width_ratios": [1, 1, 1]},
+    )
+ 
     tk_bg_color = root.cget("bg")
     try:
         r, g, b = root.winfo_rgb(tk_bg_color)
@@ -353,7 +366,13 @@ def on_contact_select(event):
     ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
     ax2_1.set_ylabel("Eb/No (dB)", color="tab:red")
     ax2_1.tick_params(axis="y", labelcolor="tab:red")
-    ax2_2.plot(df_pass["Time (UTC)"], df_pass["C/(No+Io) (dBHz)"], label="C/(No+Io) (dBHz)", color="tab:green", linestyle="--")
+    ax2_2.plot(
+        df_pass["Time (UTC)"],
+        df_pass["C/(No+Io) (dBHz)"],
+        label="C/(No+Io) (dBHz)",
+        color="tab:green",
+        linestyle="--",
+    )    
     ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green")
     ax2_2.tick_params(axis="y", labelcolor="tab:green")
     ax2.set_xlabel("Time (UTC)")
@@ -364,6 +383,15 @@ def on_contact_select(event):
     lines, labels = ax2_1.get_legend_handles_labels()
     lines2, labels2 = ax2_2.get_legend_handles_labels()
     ax2.legend(lines + lines2, labels + labels2, loc="best")
+
+    ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color="tab:purple")
+    ax3.set_xlabel("Time (UTC)")
+    ax3.set_ylabel("Doppler (kHz)", color="tab:purple")
+    ax3.tick_params(axis="y", labelcolor="tab:purple")
+    ax3.xaxis.set_major_locator(MinuteLocator(interval=1))
+    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax3.grid(True, linestyle=":", alpha=0.7)
+    ax3.set_title("Doppler Shift")    
     fig.tight_layout()
 
     canvas_plot_widget = FigureCanvasTkAgg(fig, master=plot_frame)
@@ -381,6 +409,7 @@ def on_contact_select(event):
         "Rx Power (dBW)",
         "C/(No+Io) (dBHz)",
         "Eb/No (dB)",
+        "Doppler Shift (kHz)",        
     ]
     table = ttk.Treeview(table_frame, columns=display_columns, show="headings")
     for col in display_columns:
@@ -413,7 +442,7 @@ def show_antenna_pattern():
     popup.title("Antenna Pattern")
     popup.geometry("600x400")
 
-    from .calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
+    from calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")

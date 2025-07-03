@@ -27,12 +27,43 @@ PATTERN_INTERP = interp1d(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS,
                           kind='linear', fill_value=0.0, bounds_error=False)
 MAX_ANTENNA_GAIN = 5.6
 
+# Speed of light in km/s used for Doppler calculations
+C_KM_S = 299_792.458
 
 def antenna_pattern(angle_deg: float) -> float:
     """Return the antenna pointing loss for a given off-boresight angle."""
     gain_at_angle = PATTERN_INTERP(angle_deg)
     loss = MAX_ANTENNA_GAIN - gain_at_angle
     return max(loss, 0.0)
+
+
+def calculate_doppler_shift(
+    topocentric: "ToposAt",  # type: ignore
+    freq: u.Quantity,
+) -> float:
+    """Compute Doppler shift in Hz for the given topocentric position.
+
+    Parameters
+    ----------
+    topocentric : :class:`~skyfield.positionlib.Geocentric`
+        Relative position of satellite with respect to ground station.
+    freq : :class:`~astropy.units.Quantity`
+        Transmit frequency.
+
+    Returns
+    -------
+    float
+        Doppler frequency shift in Hz. Positive values indicate an
+        approaching satellite (frequency increase).
+    """
+    los = topocentric.position.km
+    rel_vel = topocentric.velocity.km_per_s
+    los_unit = los / np.linalg.norm(los)
+    radial_velocity = np.dot(rel_vel, los_unit)
+    doppler_hz = -radial_velocity / C_KM_S * freq.to(u.Hz).value
+    doppler_khz = doppler_hz/1000
+    return float(doppler_khz)
+
 
 
 def calculate_link_budget_parameters(
@@ -110,11 +141,14 @@ t_sky: "Time", # type: ignore
             Carrier-to-noise-plus-interference density.
         ``"Eb/No (dB)"`` : float
             Energy-per-bit to noise density.
+        ``"Doppler Shift (Hz)"`` : float
+            Instantaneous Doppler frequency shift.            
         ``"Visible"`` : str
             ``"YES"`` if the elevation is above 5°; otherwise ``"NO"``.
     """
     diff = sat - gs
     topocentric = diff.at(t_sky)
+    doppler_khz = calculate_doppler_shift(topocentric, freq)
     alt, az, dist = topocentric.altaz()
     elev = alt.degrees
     visible = elev >= 5
@@ -193,5 +227,6 @@ t_sky: "Time", # type: ignore
         "Rx Power (dBW)": rx_power,
         "C/(No+Io) (dBHz)": cn0,
         "Eb/No (dB)": ebno,
+        "Doppler Shift (kHz)": doppler_khz,        
         "Visible": "YES" if visible else "NO",
     }
