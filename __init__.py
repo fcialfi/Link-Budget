@@ -1,4 +1,5 @@
-from .gui import setup_gui
+"""Package initialization for :mod:`link_budget`."""
 
-if __name__ == "__main__":
-    setup_gui()
+# Re-export the ``setup_gui`` function for external use.
+from .gui import setup_gui
+__all__ = ["setup_gui"]
