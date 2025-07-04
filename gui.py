@@ -7,11 +7,21 @@ import matplotlib.dates as mdates
 from matplotlib.dates import MinuteLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
-import sys, os
-# Add current directory to sys.path (for PyInstaller or direct execution)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
+import os
+import sys
+
+# Add path of the current script (works also in PyInstaller .exe)
+if getattr(sys, 'frozen', False):
+    base_path = sys._MEIPASS  # PyInstaller temp path
+else:
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, base_path)
+print(f"Running from base_path: {base_path}")
+print("Current directory content:", os.listdir(base_path))
+
 
 from calculations import (
     GROUND_STATIONS,
