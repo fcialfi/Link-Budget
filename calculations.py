@@ -29,12 +29,30 @@ MAX_ANTENNA_GAIN = 5.6
 
 # Speed of light in km/s used for Doppler calculations
 C_KM_S = 299_792.458
+def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:
+    """Return the antenna pointing loss for a given off-boresight angle.
 
-def antenna_pattern(angle_deg: float) -> float:
-    """Return the antenna pointing loss for a given off-boresight angle."""
-    gain_at_angle = PATTERN_INTERP(angle_deg)
-    loss = MAX_ANTENNA_GAIN - gain_at_angle
-    return max(loss, 0.0)
+    Parameters
+    ----------
+    angle_deg : float or ndarray
+        Off-boresight angle(s) in degrees.
+
+    Returns
+    -------
+    float or ndarray
+        Corresponding pointing loss in dB. If an array of angles is given,
+        an array of losses with the same shape is returned.
+    """
+
+    angles = np.atleast_1d(angle_deg)
+    gains = PATTERN_INTERP(angles)
+    losses = MAX_ANTENNA_GAIN - gains
+    losses = np.clip(losses, 0.0, None)
+
+    if np.isscalar(angle_deg):
+        return float(losses)
+    return losses
+
 
 
 def calculate_doppler_shift(
@@ -105,6 +123,53 @@ def atmospheric_attenuation(
         return 0.0
 
 
+def prepare_topocentric_data(
+    sat: "Satellite",  # type: ignore
+    gs: "GroundStation",  # type: ignore
+    times: "Time",  # type: ignore
+    freq: u.Quantity,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Pre-compute geometry values for a sequence of times.
+
+    Parameters
+    ----------
+    sat, gs : Skyfield objects
+        Satellite and ground station used for the calculations.
+    times : :class:`~skyfield.timelib.Time`
+        Array of times for which to compute the parameters.
+    freq : :class:`~astropy.units.Quantity`
+        Downlink frequency used for Doppler computation.
+
+    Returns
+    -------
+    tuple of ndarrays
+        ``(altitudes_deg, slant_ranges_km, doppler_khz, off_boresight_deg)``.
+    """
+
+    diff = (sat - gs).at(times)
+    alt, _, dist = diff.altaz()
+    altitudes_deg = alt.degrees
+    slant_ranges_km = dist.km
+
+    los = diff.position.km
+    rel_vel = diff.velocity.km_per_s
+    los_unit = los / np.linalg.norm(los, axis=0)
+    radial_velocity = np.sum(rel_vel * los_unit, axis=0)
+    doppler_hz = -radial_velocity / C_KM_S * freq.to(u.Hz).value
+    doppler_khz = doppler_hz / 1000.0
+
+    r_sat = sat.at(times).position.km
+    r_gs = gs.at(times).position.km
+    bore = -r_sat / np.linalg.norm(r_sat, axis=0)
+    to_gs = r_gs - r_sat
+    to_gs_unit = to_gs / np.linalg.norm(to_gs, axis=0)
+    cos_angle = np.sum(bore * to_gs_unit, axis=0)
+    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    off_boresight_deg = np.degrees(np.arccos(cos_angle))
+
+    return altitudes_deg, slant_ranges_km, doppler_khz, off_boresight_deg
+
+
 
 
 def calculate_link_budget_parameters(
@@ -124,6 +189,10 @@ t_sky: "Time", # type: ignore
     cisat_lin: Optional[float],
     other_att: float,
     atm_att: Optional[float] = None,
+    pre_alt_deg: Optional[float] = None,
+    pre_slant_range_km: Optional[float] = None,
+    pre_doppler_khz: Optional[float] = None,
+    pre_off_boresight_angle: Optional[float] = None,
 ) -> Dict[str, Any]:
     
     """Compute link budget parameters for a single time step.
@@ -162,6 +231,10 @@ t_sky: "Time", # type: ignore
     atm_att : float or None
         Pre-computed atmospheric attenuation in dB. If ``None``, it will be
         calculated for each call.
+    pre_alt_deg, pre_slant_range_km, pre_doppler_khz, pre_off_boresight_angle : float or None
+        Optional pre-computed geometry parameters for this time step. Providing
+        these values avoids repeated calls to Skyfield when iterating over many
+        epochs.
 
     Returns
     -------
@@ -191,14 +264,22 @@ t_sky: "Time", # type: ignore
         ``"Visible"`` : str
             ``"YES"`` if the elevation is above 5°; otherwise ``"NO"``.
     """
-    diff = sat - gs
-    topocentric = diff.at(t_sky)
-    doppler_khz = calculate_doppler_shift(topocentric, freq)
-    alt, az, dist = topocentric.altaz()
-    elev = alt.degrees
+    if pre_alt_deg is None or pre_slant_range_km is None or pre_doppler_khz is None or pre_off_boresight_angle is None:
+        diff = sat - gs
+        topocentric = diff.at(t_sky)
+    if pre_doppler_khz is None:
+        doppler_khz = calculate_doppler_shift(topocentric, freq)
+    else:
+        doppler_khz = pre_doppler_khz
+    if pre_alt_deg is None or pre_slant_range_km is None:
+        alt, _, dist = topocentric.altaz()
+        elev = alt.degrees
+        slant_range_km = dist.km
+    else:
+        elev = pre_alt_deg
+        slant_range_km = pre_slant_range_km
     visible = elev >= 5
 
-    slant_range_km = topocentric.distance().to(u.km).value
     path_loss = (
         20 * np.log10(slant_range_km)
         + 20 * np.log10(freq.to(u.GHz).value)
@@ -216,12 +297,15 @@ t_sky: "Time", # type: ignore
             r001,
         )
 
-    r_sat = sat.at(t_sky).position.km
-    r_gs = gs.at(t_sky).position.km
-    bore = -r_sat / np.linalg.norm(r_sat)
-    to_gs = (r_gs - r_sat) / np.linalg.norm(r_gs - r_sat)
-    angle_rad = np.arccos(np.clip(np.dot(bore, to_gs), -1.0, 1.0))
-    off_boresight_angle = np.degrees(angle_rad)
+    if pre_off_boresight_angle is None:
+        r_sat = sat.at(t_sky).position.km
+        r_gs = gs.at(t_sky).position.km
+        bore = -r_sat / np.linalg.norm(r_sat)
+        to_gs = (r_gs - r_sat) / np.linalg.norm(r_gs - r_sat)
+        angle_rad = np.arccos(np.clip(np.dot(bore, to_gs), -1.0, 1.0))
+        off_boresight_angle = np.degrees(angle_rad)
+    else:
+        off_boresight_angle = pre_off_boresight_angle
     pointing_loss = antenna_pattern(off_boresight_angle)
 
     rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss

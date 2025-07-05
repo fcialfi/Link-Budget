@@ -27,6 +27,7 @@ from calculations import (
     GROUND_STATIONS,
     calculate_link_budget_parameters,
     atmospheric_attenuation,
+    prepare_topocentric_data,
 )
 
 # Global variables
@@ -121,8 +122,9 @@ def run_analysis():
         [t.second for t in times],
     )
 
-    diff_at_all_times = (sat - gs).at(sky_times)
-    altitudes, azimuths, distances = diff_at_all_times.altaz()
+    altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
+        sat, gs, sky_times, freq
+    )
     atm_att = atmospheric_attenuation(
         lat_gs,
         lon_gs,
@@ -139,7 +141,7 @@ def run_analysis():
     contact_start_time = None
 
     for i, t_utc_dt in enumerate(times):
-        elev = altitudes.degrees[i]
+        elev = altitudes[i]
         t_sky = sky_times[i]
         params = calculate_link_budget_parameters(
             t_sky,
@@ -158,6 +160,10 @@ def run_analysis():
             cisat_lin,
             other_att,
             atm_att,
+            elev,
+            slant_ranges[i],
+            dopplers[i],
+            off_boresight[i],
         )
         for key in [
             "Elevation (°)",
@@ -261,16 +267,20 @@ def recalculate_link_budget():
     )
     atm_label_var.set(f"Atmospheric Att (dB) @ 5\u00b0 El: {atm_att:.2f}")
     updated_results = []
-    for _, row in df_all.iterrows():
-        t_utc_dt = row["Time (UTC)"]
-        t_sky = ts.utc(
-            t_utc_dt.year,
-            t_utc_dt.month,
-            t_utc_dt.day,
-            t_utc_dt.hour,
-            t_utc_dt.minute,
-            t_utc_dt.second,
-        )
+    times_dt = df_all["Time (UTC)"].tolist()
+    sky_times = ts.utc(
+        [t.year for t in times_dt],
+        [t.month for t in times_dt],
+        [t.day for t in times_dt],
+        [t.hour for t in times_dt],
+        [t.minute for t in times_dt],
+        [t.second for t in times_dt],
+    )
+    altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
+        sat, gs, sky_times, freq
+    )
+    for i, t_utc_dt in enumerate(times_dt):
+        t_sky = sky_times[i]
         params = calculate_link_budget_parameters(
             t_sky,
             sat,
@@ -288,6 +298,10 @@ def recalculate_link_budget():
             cisat_lin,
             other_att,
             atm_att,
+            altitudes[i],
+            slant_ranges[i],
+            dopplers[i],
+            off_boresight[i],
         )
    
         for key in [
