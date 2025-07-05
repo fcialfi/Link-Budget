@@ -1,22 +1,25 @@
-# gui.spec aggiornato
-block_cipher = None
+# -*- mode: python ; coding: utf-8 -*-
+
+from PyInstaller.utils.hooks import collect_data_files
+
+# Include tutti i file di dati della libreria itur
+itur_datas = collect_data_files('itur', includes=['data/**/*'])
 
 a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('assets/Satellite.ico', '.'),  # Icona
-    ],
-    hiddenimports=['itur.models.itu676'],  # se necessario
+    datas=itur_datas + [('calculations.py', '.')],
+    hiddenimports=['itur'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
+    optimize=0,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
@@ -31,11 +34,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # metti False se non vuoi finestra console
+    console=True,  # Metti a False se vuoi nascondere la console
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/Satellite.ico',
+    icon=['Satellite.ico'],  # Se non serve, puoi anche rimuoverla
 )
