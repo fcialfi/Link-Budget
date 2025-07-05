@@ -64,6 +64,47 @@ def calculate_doppler_shift(
     doppler_khz = doppler_hz/1000
     return float(doppler_khz)
 
+def atmospheric_attenuation(
+    lat: float,
+    lon: float,
+    freq_ghz: float,
+    p: float,
+    d_gs: float,
+    alt_gs: float,
+    r001: float,
+) -> float:
+    """Return slant path atmospheric attenuation in dB."""
+    try:
+        _, _, _, _, A_tot = itu.atmospheric_attenuation_slant_path(
+            lat,
+            lon,
+            freq_ghz,
+            5.0,
+            p,
+            d_gs,
+            hs=alt_gs,
+            R001=r001,
+            return_contributions=True,
+            include_gas=True,
+            include_rain=True,
+            include_clouds=True,
+            include_scintillation=True,
+        )
+        return float(A_tot.value if hasattr(A_tot, "value") else A_tot)
+    except Exception as e:
+        print(
+            f"Error calculating atmospheric attenuation: {e}",
+            file=sys.stderr,
+        )
+        print(
+            "  Inputs for error: "
+            f"lat={lat}, lon={lon}, freq_GHz={freq_ghz}, elev=5.0, P={p}, "
+            f"R001={r001}, D={d_gs}, h_s={alt_gs}",
+            file=sys.stderr,
+        )
+        return 0.0
+
+
 
 
 def calculate_link_budget_parameters(
@@ -82,6 +123,7 @@ t_sky: "Time", # type: ignore
     overhead: float,
     cisat_lin: Optional[float],
     other_att: float,
+    atm_att: Optional[float] = None,
 ) -> Dict[str, Any]:
     
     """Compute link budget parameters for a single time step.
@@ -117,6 +159,9 @@ t_sky: "Time", # type: ignore
         Satellite C/I as a linear ratio, or ``None`` if not used.
     other_att : float
         Any other static attenuation to subtract from the link budget in dB.
+    atm_att : float or None
+        Pre-computed atmospheric attenuation in dB. If ``None``, it will be
+        calculated for each call.
 
     Returns
     -------
@@ -160,38 +205,16 @@ t_sky: "Time", # type: ignore
         + 92.45
     )
 
-    try:
-        Ag, Ac, Ar, As, A_tot = itu.atmospheric_attenuation_slant_path(
+    if atm_att is None:
+        atm_att = atmospheric_attenuation(
             gs.latitude.degrees,
             gs.longitude.degrees,
             freq.to(u.GHz).value,
-            5.0,
             p,
             d_gs,
-            hs=alt_gs,
-            R001=r001,
-            return_contributions=True,
-            include_gas=True,
-            include_rain=True,
-            include_clouds=True,
-            include_scintillation=True,
+            alt_gs,
+            r001,
         )
-
-        atm_att = float(A_tot.value if hasattr(A_tot, 'value') else A_tot)
-    except Exception as e: # Catch the exception and print it
-        print(
-            "Error calculating atmospheric attenuation in calculate_link_budget_parameters: "
-            f"{e}",
-            file=sys.stderr,
-        )
-        print(
-            "  Inputs for error: "
-            f"lat={gs.latitude.degrees}, lon={gs.longitude.degrees}, "
-            f"freq_GHz={freq.to(u.GHz).value}, elev=5.0, P={p}, R001={r001}, "
-            f"D={d_gs}, h_s={alt_gs}",
-            file=sys.stderr,
-        )
-        atm_att = 0.0
 
     r_sat = sat.at(t_sky).position.km
     r_gs = gs.at(t_sky).position.km

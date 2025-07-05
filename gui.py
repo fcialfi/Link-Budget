@@ -26,6 +26,7 @@ print("Current directory content:", os.listdir(base_path))
 from calculations import (
     GROUND_STATIONS,
     calculate_link_budget_parameters,
+    atmospheric_attenuation,
 )
 
 # Global variables
@@ -122,7 +123,16 @@ def run_analysis():
 
     diff_at_all_times = (sat - gs).at(sky_times)
     altitudes, azimuths, distances = diff_at_all_times.altaz()
-
+    atm_att = atmospheric_attenuation(
+        lat_gs,
+        lon_gs,
+        freq.to(u.GHz).value,
+        p,
+        d_gs,
+        alt_gs_km,
+        r001,
+    )
+    atm_label_var.set(f"Atmospheric Att (dB) @ 5\u00b0 El: {atm_att:.2f}")
     results_list = []
     contact_windows.clear()
     in_contact = False
@@ -147,10 +157,7 @@ def run_analysis():
             overhead,
             cisat_lin,
             other_att,
-        )
-        if i == 0:
-            atm_label_var.set(
-                f"Atmospheric Att (dB) @ 5\u00b0 El: {params['Atmospheric Att (dB)']:.2f}"
+            atm_att,
         )
         for key in [
             "Elevation (°)",
@@ -243,7 +250,16 @@ def recalculate_link_budget():
         messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
         return
     gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-
+    atm_att = atmospheric_attenuation(
+        lat_gs,
+        lon_gs,
+        freq.to(u.GHz).value,
+        p,
+        d_gs,
+        alt_gs_km,
+        r001,
+    )
+    atm_label_var.set(f"Atmospheric Att (dB) @ 5\u00b0 El: {atm_att:.2f}")
     updated_results = []
     for _, row in df_all.iterrows():
         t_utc_dt = row["Time (UTC)"]
@@ -271,11 +287,9 @@ def recalculate_link_budget():
             overhead,
             cisat_lin,
             other_att,
+            atm_att,
         )
-        if len(updated_results) == 0:
-            atm_label_var.set(
-                f"Atmospheric Att (dB) @ 5\u00b0 El: {params['Atmospheric Att (dB)']:.2f}"
-            )        
+   
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
