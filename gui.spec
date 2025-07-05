@@ -34,11 +34,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Metti a False se vuoi nascondere la console
+    console=False,  # Metti a False se vuoi nascondere la console
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['Satellite.jpg'],  # Se non serve, puoi anche rimuoverla
+    icon=['Satellite.ico'],  # Se non serve, puoi anche rimuoverla
 )

@@ -27,6 +27,31 @@ PATTERN_INTERP = interp1d(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS,
                           kind='linear', fill_value=0.0, bounds_error=False)
 MAX_ANTENNA_GAIN = 5.6
 
+
+def load_antenna_pattern(file_path: str) -> None:
+    """Load antenna pattern data from a CSV or text file.
+
+    The file must contain two numeric columns: angle in degrees and gain in dB.
+    Existing global pattern arrays are replaced and the interpolation function
+    is updated accordingly.
+    """
+
+    global ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, PATTERN_INTERP, MAX_ANTENNA_GAIN
+
+    data = np.loadtxt(file_path, delimiter=",")
+    if data.ndim != 2 or data.shape[1] < 2:
+        raise ValueError("Antenna pattern file must have at least two columns")
+
+    ANTENNA_PATTERN_ANGLES = data[:, 0]
+    ANTENNA_PATTERN_GAINS = data[:, 1]
+    PATTERN_INTERP = interp1d(
+        ANTENNA_PATTERN_ANGLES,
+        ANTENNA_PATTERN_GAINS,
+        kind="linear",
+        fill_value=0.0,
+        bounds_error=False,
+    )
+    MAX_ANTENNA_GAIN = float(np.max(ANTENNA_PATTERN_GAINS))
 # Speed of light in km/s used for Doppler calculations
 C_KM_S = 299_792.458
 def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:

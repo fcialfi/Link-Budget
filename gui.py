@@ -1,6 +1,6 @@
 """Tkinter GUI for the satellite link budget tool."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta, timezone
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -29,13 +29,14 @@ from calculations import (
     calculate_link_budget_parameters,
     atmospheric_attenuation,
     prepare_topocentric_data,
+    load_antenna_pattern,
 )
 
 # Global variables
 contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
-
+current_table_df = pd.DataFrame()
 
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
@@ -368,6 +369,9 @@ def on_contact_select(event):
     start, end = contact_windows[idx]
     mask = (df_all["Time (UTC)"] >= start) & (df_all["Time (UTC)"] <= end)
     df_pass = df_all[mask].copy()
+    global current_table_df
+    current_table_df = df_pass
+
 
     clear_plot_and_table()
     fig, (ax1, ax2, ax3) = plt.subplots(
@@ -487,6 +491,40 @@ def show_antenna_pattern():
     canvas_popup = FigureCanvasTkAgg(fig, master=popup)
     canvas_popup.draw()
     canvas_popup.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
+
+
+def load_antenna_pattern_file():
+    """Load antenna gain pattern data from a CSV file."""
+    file_path = filedialog.askopenfilename(
+        title="Select Antenna Pattern File",
+        filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")],
+    )
+    if not file_path:
+        return
+    try:
+        load_antenna_pattern(file_path)
+        messagebox.showinfo("Success", "Antenna pattern loaded successfully.")
+        set_analysis_stale()
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load antenna pattern: {e}")
+
+
+def export_table_csv():
+    """Export the currently displayed table to a CSV file."""
+    if current_table_df.empty:
+        messagebox.showwarning("Warning", "Please select a contact window first.")
+        return
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+    )
+    if not file_path:
+        return
+    try:
+        current_table_df.to_csv(file_path, index=False)
+        messagebox.showinfo("Export Successful", f"Data exported to {file_path}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to export CSV: {e}")
 
 
 def update_link_budget_derived(*args):
@@ -701,7 +739,9 @@ def setup_gui():
     start_refresh_button.pack(side=tk.LEFT, padx=5)
     recalc_button = ttk.Button(btn_frame, text="Recalculate Link Budget", command=recalculate_link_budget, state="disabled")
     recalc_button.pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="Load Antenna Pattern", command=load_antenna_pattern_file).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Show Antenna Gain", command=show_antenna_pattern).pack(side=tk.LEFT, padx=5)
+    ttk.Button(btn_frame, text="Export Table CSV", command=export_table_csv).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Exit", command=exit_app).pack(side=tk.RIGHT, padx=5)
 
     contact_frame = ttk.LabelFrame(main_frame, text="Contact Windows (UTC Time)", padding=10)
