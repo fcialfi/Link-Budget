@@ -40,5 +40,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['Satellite.ico'],  # Se non serve, puoi anche rimuoverla
+    icon=['Satellite.jpg'],  # Se non serve, puoi anche rimuoverla
 )
