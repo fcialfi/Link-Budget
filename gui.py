@@ -19,8 +19,9 @@ else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
 sys.path.insert(0, base_path)
-print(f"Running from base_path: {base_path}")
-print("Current directory content:", os.listdir(base_path))
+if os.environ.get("GUI_DEBUG"):
+    print(f"Running from base_path: {base_path}")
+    print("Current directory content:", os.listdir(base_path))
 
 
 from calculations import (
