@@ -398,9 +398,9 @@ def on_contact_select(event):
     fig.patch.set_facecolor(mpl_bg_color)
 
     ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color="tab:blue")
-    ax1.set_ylabel("Elevation (°)", color="tab:blue")
-    ax1.tick_params(axis="y", labelcolor="tab:blue")
-    ax1.set_xlabel("Time (UTC)")
+    ax1.set_ylabel("Elevation (°)", color="tab:blue", fontsize=8)
+    ax1.tick_params(axis="both", labelcolor="tab:blue", labelsize=8)
+    ax1.set_xlabel("Time (UTC)", fontsize=8)
     ax1.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax1.grid(True, linestyle=":", alpha=0.7)
@@ -410,8 +410,8 @@ def on_contact_select(event):
     ax2_1 = ax2
     ax2_2 = ax2.twinx()
     ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
-    ax2_1.set_ylabel("Eb/No (dB)", color="tab:red")
-    ax2_1.tick_params(axis="y", labelcolor="tab:red")
+    ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
+    ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
     ax2_2.plot(
         df_pass["Time (UTC)"],
         df_pass["C/(No+Io) (dBHz)"],
@@ -419,9 +419,9 @@ def on_contact_select(event):
         color="tab:green",
         linestyle="--",
     )    
-    ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green")
-    ax2_2.tick_params(axis="y", labelcolor="tab:green")
-    ax2.set_xlabel("Time (UTC)")
+    ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
+    ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
+    ax2.set_xlabel("Time (UTC)", fontsize=8)
     ax2.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax2.grid(True, linestyle=":", alpha=0.7)
@@ -431,9 +431,9 @@ def on_contact_select(event):
     ax2.legend(lines + lines2, labels + labels2, loc="best")
 
     ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color="tab:purple")
-    ax3.set_xlabel("Time (UTC)")
-    ax3.set_ylabel("Doppler (kHz)", color="tab:purple")
-    ax3.tick_params(axis="y", labelcolor="tab:purple")
+    ax3.set_xlabel("Time (UTC)", fontsize=8)
+    ax3.set_ylabel("Doppler (kHz)", color="tab:purple", fontsize=8)
+    ax3.tick_params(axis="both", labelcolor="tab:purple", labelsize=8)
     ax3.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax3.grid(True, linestyle=":", alpha=0.7)
@@ -492,9 +492,10 @@ def show_antenna_pattern():
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
-    ax.set_xlabel("Angle (degrees)")
-    ax.set_ylabel("Gain (dB)")
+    ax.set_xlabel("Angle (degrees)", fontsize=8)
+    ax.set_ylabel("Gain (dB)", fontsize=8)
     ax.set_title("Antenna Gain Pattern")
+    ax.tick_params(axis="both", labelsize=8)
     ax.grid(True, linestyle=":", alpha=0.7)
     canvas_popup = FigureCanvasTkAgg(fig, master=popup)
     canvas_popup.draw()
