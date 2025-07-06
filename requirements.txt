@@ -1,0 +1,8 @@
+# Dependencies for Link Budget Tool
+numpy
+pandas
+matplotlib
+skyfield
+itur
+astropy
+scipy
