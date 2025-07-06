@@ -10,9 +10,9 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 
 ## Requisiti
 - Python 3.8 o superiore.
-- Dipendenze: `numpy`, `pandas`, `matplotlib`, `skyfield`, `itur`, `astropy`, `scipy`, `tkinter` (incluso in Python). È possibile installare i pacchetti mancanti con:
+- Dipendenze: `numpy`, `pandas`, `matplotlib`, `skyfield`, `itur`, `astropy`, `scipy`, `tkinter` (incluso in Python). È possibile installarle con:
   ```bash
-  pip install numpy pandas matplotlib skyfield itur astropy scipy
+  pip install -r requirements.txt
   ```
 
 ## Utilizzo
