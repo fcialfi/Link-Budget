@@ -6,6 +6,9 @@ import astropy.units as u
 from scipy.interpolate import interp1d
 from typing import Any, Dict, Optional
 
+# Minimum elevation angle (degrees) for visibility calculations
+MIN_ELEVATION_DEG = 5.0
+
 # Define ground stations as a constant dictionary
 GROUND_STATIONS = {
     "Darmstadt": (49.8700, 8.6500, 144),
@@ -122,7 +125,7 @@ def atmospheric_attenuation(
             lat,
             lon,
             freq_ghz,
-            5.0,
+            MIN_ELEVATION_DEG,
             p,
             d_gs,
             hs=alt_gs,
@@ -141,7 +144,8 @@ def atmospheric_attenuation(
         )
         print(
             "  Inputs for error: "
-            f"lat={lat}, lon={lon}, freq_GHz={freq_ghz}, elev=5.0, P={p}, "
+            f"lat={lat}, lon={lon}, freq_GHz={freq_ghz}, "
+            f"elev={MIN_ELEVATION_DEG}, P={p}, "
             f"R001={r001}, D={d_gs}, h_s={alt_gs}",
             file=sys.stderr,
         )
@@ -287,7 +291,7 @@ t_sky: "Time", # type: ignore
         ``"Doppler Shift (Hz)"`` : float
             Instantaneous Doppler frequency shift.            
         ``"Visible"`` : str
-            ``"YES"`` if the elevation is above 5°; otherwise ``"NO"``.
+            ``"YES"`` if the elevation is above ``MIN_ELEVATION_DEG``°; otherwise ``"NO"``.
     """
     if pre_alt_deg is None or pre_slant_range_km is None or pre_doppler_khz is None or pre_off_boresight_angle is None:
         diff = sat - gs
@@ -303,7 +307,7 @@ t_sky: "Time", # type: ignore
     else:
         elev = pre_alt_deg
         slant_range_km = pre_slant_range_km
-    visible = elev >= 5
+    visible = elev >= MIN_ELEVATION_DEG
 
     path_loss = (
         20 * np.log10(slant_range_km)

@@ -30,6 +30,7 @@ from calculations import (
     atmospheric_attenuation,
     prepare_topocentric_data,
     load_antenna_pattern,
+    MIN_ELEVATION_DEG,
 )
 
 # Global variables
@@ -135,7 +136,9 @@ def run_analysis():
         alt_gs_km,
         r001,
     )
-    atm_label_var.set(f"Atmospheric Att (dB) @ 5\u00b0 El: {atm_att:.2f}")
+    atm_label_var.set(
+        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.2f}"
+    )
     results_list = []
     contact_windows.clear()
     in_contact = False
@@ -182,7 +185,7 @@ def run_analysis():
                 params[key] = round(params[key], 2)
         results_list.append(params)
 
-        is_visible_now = elev >= 5
+        is_visible_now = elev >= MIN_ELEVATION_DEG
         if is_visible_now and not in_contact:
             contact_start_time = t_utc_dt
             in_contact = True
@@ -267,7 +270,9 @@ def recalculate_link_budget():
         alt_gs_km,
         r001,
     )
-    atm_label_var.set(f"Atmospheric Att (dB) @ 5\u00b0 El: {atm_att:.2f}")
+    atm_label_var.set(
+        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.2f}"
+    )
     updated_results = []
     times_dt = df_all["Time (UTC)"].tolist()
     sky_times = ts.utc(
@@ -348,7 +353,10 @@ def display_contacts(contacts):
         if not df_all.empty:
             mask = (df_all["Time (UTC)"] >= start) & (df_all["Time (UTC)"] <= end)
             df_segment = df_all[mask]
-            if not df_segment.empty and df_segment["Elevation (°)"].max() >= 5:
+            if (
+                not df_segment.empty
+                and df_segment["Elevation (°)"].max() >= MIN_ELEVATION_DEG
+            ):
                 filtered_contacts.append((start, end))
     global contact_windows
     contact_windows = filtered_contacts
@@ -699,7 +707,9 @@ def setup_gui():
     other_att_entry = ttk.Entry(atm_frame, width=15)
     other_att_entry.insert(0, "0.0")
     other_att_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
-    atm_label_var = tk.StringVar(value="Atmospheric Att (dB) @ 5° El: N/A")
+    atm_label_var = tk.StringVar(
+        value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"
+    )
     ttk.Label(atm_frame, textvariable=atm_label_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
     atm_frame.grid_columnconfigure(1, weight=1)
 
