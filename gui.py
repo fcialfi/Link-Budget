@@ -780,3 +780,4 @@ def setup_gui():
 
 if __name__ == "__main__":
     setup_gui()
+    root.iconbitmap(os.path.join(base_path, "Satellite.ico"))
