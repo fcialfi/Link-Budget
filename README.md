@@ -32,3 +32,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Modifica la variabile `GROUND_STATIONS` nel file Python per aggiungere nuove stazioni di terra.
 - Adatta la tabella dell'antenna (`ANTENNA_PATTERN_ANGLES` e `ANTENNA_PATTERN_GAINS`) al tuo specifico diagramma.
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
+
+## License
+This project is released under the [MIT License](LICENSE).
+
