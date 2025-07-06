@@ -398,9 +398,9 @@ def on_contact_select(event):
     fig.patch.set_facecolor(mpl_bg_color)
 
     ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color="tab:blue")
-    ax1.set_ylabel("Elevation (°)", color="tab:blue")
-    ax1.tick_params(axis="y", labelcolor="tab:blue")
-    ax1.set_xlabel("Time (UTC)")
+    ax1.set_ylabel("Elevation (°)", color="tab:blue", fontsize=8)
+    ax1.tick_params(axis="both", labelcolor="tab:blue", labelsize=8)
+    ax1.set_xlabel("Time (UTC)", fontsize=8)
     ax1.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax1.grid(True, linestyle=":", alpha=0.7)
@@ -410,8 +410,8 @@ def on_contact_select(event):
     ax2_1 = ax2
     ax2_2 = ax2.twinx()
     ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
-    ax2_1.set_ylabel("Eb/No (dB)", color="tab:red")
-    ax2_1.tick_params(axis="y", labelcolor="tab:red")
+    ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
+    ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
     ax2_2.plot(
         df_pass["Time (UTC)"],
         df_pass["C/(No+Io) (dBHz)"],
@@ -419,9 +419,9 @@ def on_contact_select(event):
         color="tab:green",
         linestyle="--",
     )    
-    ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green")
-    ax2_2.tick_params(axis="y", labelcolor="tab:green")
-    ax2.set_xlabel("Time (UTC)")
+    ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
+    ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
+    ax2.set_xlabel("Time (UTC)", fontsize=8)
     ax2.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax2.grid(True, linestyle=":", alpha=0.7)
@@ -431,9 +431,9 @@ def on_contact_select(event):
     ax2.legend(lines + lines2, labels + labels2, loc="best")
 
     ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color="tab:purple")
-    ax3.set_xlabel("Time (UTC)")
-    ax3.set_ylabel("Doppler (kHz)", color="tab:purple")
-    ax3.tick_params(axis="y", labelcolor="tab:purple")
+    ax3.set_xlabel("Time (UTC)", fontsize=8)
+    ax3.set_ylabel("Doppler (kHz)", color="tab:purple", fontsize=8)
+    ax3.tick_params(axis="both", labelcolor="tab:purple", labelsize=8)
     ax3.xaxis.set_major_locator(MinuteLocator(interval=1))
     ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     ax3.grid(True, linestyle=":", alpha=0.7)
@@ -492,9 +492,10 @@ def show_antenna_pattern():
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
-    ax.set_xlabel("Angle (degrees)")
-    ax.set_ylabel("Gain (dB)")
+    ax.set_xlabel("Angle (degrees)", fontsize=8)
+    ax.set_ylabel("Gain (dB)", fontsize=8)
     ax.set_title("Antenna Gain Pattern")
+    ax.tick_params(axis="both", labelsize=8)
     ax.grid(True, linestyle=":", alpha=0.7)
     canvas_popup = FigureCanvasTkAgg(fig, master=popup)
     canvas_popup.draw()
@@ -540,13 +541,15 @@ def update_link_budget_derived(*args):
         bit_rate_mbps = float(bitrate_entry.get())
         roll_off = float(rolloff_entry.get())
         overhead = float(overhead_entry.get())
+        spectral_eff = float(spectral_eff_entry.get())
         info_bit_rate_mbps = bit_rate_mbps / overhead if overhead != 0 else 0
-        channel_bw_mhz = bit_rate_mbps * (1 + roll_off) / 2
+        spectral_eff = spectral_eff if spectral_eff != 0 else 1
+        channel_bw_mhz = bit_rate_mbps * (1 + roll_off) / spectral_eff
         info_bitrate_var.set(f"Info Bit Rate [Mbps]: {info_bit_rate_mbps:.3f}")
-        channel_bw_var.set(f"Channel BW [MHz] (QPSK): {channel_bw_mhz:.3f}")
+        channel_bw_var.set(f"Channel BW [MHz]: {channel_bw_mhz:.3f}")
     except ValueError:
         info_bitrate_var.set("Info Bit Rate [Mbps]: N/A")
-        channel_bw_var.set("Channel BW [MHz] (QPSK): N/A")
+        channel_bw_var.set("Channel BW [MHz]: N/A")
 
 
 # --- GUI Setup ---
@@ -556,7 +559,7 @@ def setup_gui():
     global root, tle1_entry, tle2_entry, date_entry, gs_var, freq_entry
     global LA_entry, r001_entry, d_gs_entry, other_att_entry, eirp_sat_entry
     global gt_gs_entry, CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
-    global overhead_entry, atm_label_var, info_bitrate_var, channel_bw_var
+    global overhead_entry, spectral_eff_entry, atm_label_var, info_bitrate_var, channel_bw_var
     global recalc_button, contact_listbox, plot_frame, table_frame
     global start_refresh_button
 
@@ -732,15 +735,20 @@ def setup_gui():
     overhead_entry = ttk.Entry(baseband_frame, width=15)
     overhead_entry.insert(0, "2.29")
     overhead_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
+    ttk.Label(baseband_frame, text="Spectral Efficiency [b/s/Hz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+    spectral_eff_entry = ttk.Entry(baseband_frame, width=15)
+    spectral_eff_entry.insert(0, "2")
+    spectral_eff_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
     info_bitrate_var = tk.StringVar(value="Info Bit Rate [Mbps]: N/A")
-    channel_bw_var = tk.StringVar(value="Channel BW [MHz] (QPSK): N/A")
-    ttk.Label(baseband_frame, textvariable=info_bitrate_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(5, 0), padx=5)
-    ttk.Label(baseband_frame, textvariable=channel_bw_var).grid(row=2, column=2, columnspan=2, sticky="w", padx=5)
+    channel_bw_var = tk.StringVar(value="Channel BW [MHz]: N/A")
+    ttk.Label(baseband_frame, textvariable=info_bitrate_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(5, 0), padx=5)
+    ttk.Label(baseband_frame, textvariable=channel_bw_var).grid(row=3, column=2, columnspan=2, sticky="w", padx=5)
     baseband_frame.grid_columnconfigure(1, weight=1)
     baseband_frame.grid_columnconfigure(3, weight=1)
     bitrate_entry.bind("<KeyRelease>", update_link_budget_derived)
     rolloff_entry.bind("<KeyRelease>", update_link_budget_derived)
     overhead_entry.bind("<KeyRelease>", update_link_budget_derived)
+    spectral_eff_entry.bind("<KeyRelease>", update_link_budget_derived)
     update_link_budget_derived()
 
     # --- Buttons frame ---
