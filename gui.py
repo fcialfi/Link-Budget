@@ -51,6 +51,7 @@ def set_analysis_stale():
 
 # --- Main Analysis Function ---
 
+def run_analysis():
     """Run a full orbital and link budget analysis using GUI inputs.
 
     The function reads TLE data, ground station parameters and link budget
@@ -63,8 +64,6 @@ def set_analysis_stale():
     No parameters are accepted; all values are taken from the GUI widgets. The
     function updates the global state and returns ``None``.
     """
-
-def run_analysis():
     
     global contact_windows, df_all, analysis_needs_refresh, atm_label_var
 
@@ -208,6 +207,8 @@ def run_analysis():
 
 
 # --- Recalculate Link Budget Function ---
+
+def recalculate_link_budget():
     """Recompute the link budget for previously generated contact times.
 
     This helper function does not re-run the orbital propagation. Instead it
@@ -219,7 +220,6 @@ def run_analysis():
     All configuration values are taken from the GUI widgets and no value is
     returned.
     """
-def recalculate_link_budget():
     global df_all, atm_label_var
     if df_all.empty:
         messagebox.showwarning("Warning", "Please generate passes first.")
@@ -542,8 +542,9 @@ def update_link_budget_derived(*args):
 
 
 # --- GUI Setup ---
-"""Initialise and launch the Tkinter graphical interface."""
+
 def setup_gui():
+    """Initialise and launch the Tkinter graphical interface."""
     global root, tle1_entry, tle2_entry, date_entry, gs_var, freq_entry
     global LA_entry, r001_entry, d_gs_entry, other_att_entry, eirp_sat_entry
     global gt_gs_entry, CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
