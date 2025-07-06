@@ -1,4 +1,9 @@
-# Constants and core calculations for the satellite link budget tool
+"""Constants and helper functions for the satellite link budget tool.
+
+This module provides antenna pattern utilities, Doppler and atmospheric
+attenuation calculations, and functions to compute detailed link budget
+parameters.
+"""
 import numpy as np
 import itur as itu
 import sys
