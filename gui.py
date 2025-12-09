@@ -9,6 +9,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
 from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
+import importlib.util
 import os
 import sys
 
@@ -18,26 +19,114 @@ if getattr(sys, 'frozen', False):
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-sys.path.insert(0, base_path)
+if base_path not in sys.path:
+    sys.path.insert(0, base_path)
 if os.environ.get("GUI_DEBUG"):
     print(f"Running from base_path: {base_path}")
     print("Current directory content:", os.listdir(base_path))
 
 
-from calculations import (
-    GROUND_STATIONS,
-    calculate_link_budget_parameters,
-    atmospheric_attenuation,
-    prepare_topocentric_data,
-    load_antenna_pattern,
-    MIN_ELEVATION_DEG,
-)
+def _load_calculations_module():
+    """Load the :mod:`calculations` module even when it is not on sys.path."""
+
+    try:
+        return __import__("calculations")
+    except ModuleNotFoundError:
+        calc_path = os.path.join(base_path, "calculations.py")
+        if not os.path.isfile(calc_path):
+            raise
+        spec = importlib.util.spec_from_file_location("calculations", calc_path)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["calculations"] = module
+        return module
+
+
+_calculations = _load_calculations_module()
+
+GROUND_STATIONS = _calculations.GROUND_STATIONS
+GROUND_STATIONS_FILE = _calculations.GROUND_STATIONS_FILE
+calculate_link_budget_parameters = _calculations.calculate_link_budget_parameters
+atmospheric_attenuation = _calculations.atmospheric_attenuation
+prepare_topocentric_data = _calculations.prepare_topocentric_data
+load_antenna_pattern = _calculations.load_antenna_pattern
+load_ground_stations = _calculations.load_ground_stations
+MIN_ELEVATION_DEG = _calculations.MIN_ELEVATION_DEG
 
 # Global variables
 contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
+
+
+def load_tle_from_file():
+    """Load TLE lines from a text file and populate the GUI fields."""
+
+    file_path = filedialog.askopenfilename(
+        title="Select TLE file",
+        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+    )
+    if not file_path:
+        return
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if len(lines) < 2:
+            raise ValueError("TLE file must contain at least two non-empty lines.")
+
+        if lines[0].startswith("1 ") and lines[1].startswith("2 "):
+            tle1, tle2 = lines[0], lines[1]
+        elif len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
+            tle1, tle2 = lines[1], lines[2]
+        else:
+            tle1, tle2 = lines[0], lines[1]
+            if not (tle1.startswith("1 ") and tle2.startswith("2 ")):
+                raise ValueError("TLE lines must start with '1 ' and '2 '.")
+    except Exception as exc:
+        messagebox.showerror("TLE Error", f"Failed to load TLE: {exc}")
+        return
+
+    tle1_entry.delete(0, tk.END)
+    tle1_entry.insert(0, tle1)
+    tle2_entry.delete(0, tk.END)
+    tle2_entry.insert(0, tle2)
+    set_analysis_stale()
+
+
+def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -> None:
+    """Replace the ground station dictionary and refresh the dropdown."""
+
+    GROUND_STATIONS.clear()
+    GROUND_STATIONS.update(new_stations)
+
+    gs_menu.configure(values=list(GROUND_STATIONS.keys()))
+    if gs_var.get() not in GROUND_STATIONS and GROUND_STATIONS:
+        gs_var.set(next(iter(GROUND_STATIONS)))
+    set_analysis_stale()
+
+
+def load_ground_stations_from_file(file_path: str | None = None) -> None:
+    """Load ground stations from a file chosen by the user and update the GUI."""
+
+    path = file_path or filedialog.askopenfilename(
+        title="Select Ground Stations file",
+        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+        initialdir=os.path.dirname(GROUND_STATIONS_FILE),
+    )
+    if not path:
+        return
+
+    try:
+        stations = load_ground_stations(path)
+    except Exception as exc:
+        messagebox.showerror("Ground Stations", f"Failed to load ground stations: {exc}")
+        return
+
+    apply_ground_stations(stations)
 
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
@@ -638,6 +727,9 @@ def setup_gui():
     tle2_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     tle2_entry.insert(0, "2 60543  97.7161 238.0908 0000778 210.1805 149.9368 14.89762325 44544")
     tle2_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
+    ttk.Button(tle_frame, text="Load TLE from file", command=load_tle_from_file).grid(
+        row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+    )
     tle_frame.grid_columnconfigure(1, weight=1)
 
     # --- Observation Settings Section ---
@@ -649,10 +741,16 @@ def setup_gui():
     date_entry.insert(0, "2025-06-16")
     date_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Label(obs_frame, text="Ground Station").grid(row=0, column=2, sticky="w", padx=5, pady=2)
-    gs_var = tk.StringVar(value="Darmstadt")
+    default_gs = next(iter(GROUND_STATIONS)) if GROUND_STATIONS else ""
+    gs_var = tk.StringVar(value=default_gs)
     gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=list(GROUND_STATIONS.keys()), state="readonly", width=15)
     gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
     gs_menu.bind("<<ComboboxSelected>>", lambda event: set_analysis_stale())
+    ttk.Button(
+        obs_frame,
+        text="Load Ground Stations",
+        command=load_ground_stations_from_file,
+    ).grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
 

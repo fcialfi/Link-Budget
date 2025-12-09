@@ -7,10 +7,15 @@ itur_datas = collect_data_files('itur', includes=['data/**/*'])
 
 a = Analysis(
     ['gui.py'],
-    pathex=[],
+    pathex=['.'],
     binaries=[],
-    datas=itur_datas + [('calculations.py', '.')],
-    hiddenimports=['itur'],
+    datas=itur_datas
+    + [
+        ('calculations.py', '.'),
+        ('ground_stations.txt', '.'),
+        ('Antenna Pattern Default.txt', '.'),
+    ],
+    hiddenimports=['itur', 'calculations'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
