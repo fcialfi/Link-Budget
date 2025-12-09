@@ -84,14 +84,21 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
     GROUND_STATIONS.update(new_stations)
 
     updated_names = list(GROUND_STATIONS.keys())
-    gs_menu.configure(values=updated_names)
+    gs_menu["values"] = updated_names
 
     # Always pick a valid entry so the list refresh is visible immediately.
     if not updated_names:
         gs_var.set("")
-    elif gs_var.get() not in GROUND_STATIONS:
-        gs_var.set(updated_names[0])
-    gs_menu.set(gs_var.get())
+        gs_menu.set("")
+    else:
+        selected_name = gs_var.get()
+        if selected_name not in GROUND_STATIONS:
+            selected_name = updated_names[0]
+        gs_var.set(selected_name)
+        try:
+            gs_menu.current(updated_names.index(selected_name))
+        except ValueError:
+            gs_menu.set(selected_name)
     gs_menu.event_generate("<<ComboboxSelected>>")
     set_analysis_stale()
 
