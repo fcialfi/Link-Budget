@@ -8,21 +8,67 @@ import numpy as np
 import itur as itu
 import sys
 import astropy.units as u
+import os
 from scipy.interpolate import interp1d
 from typing import Any, Dict, Optional
 
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
 
-# Define ground stations as a constant dictionary
-GROUND_STATIONS = {
-    "Darmstadt": (49.8700, 8.6500, 144),
-    "Lannion": (48.7333, -3.4542, 31),
-    "Maspalomas": (27.7614, -15.5865, 250),
-    "Athens": (37.9838, 23.7275, 70),
-    "Kangerlussuaq": (67.0121, -50.7078, 50),
-    "Svalbard": (78.2232, 15.6267, 10),
-}
+# Define ground stations loaded from external file
+GROUND_STATIONS_FILE = os.path.join(os.path.dirname(__file__), "ground_stations.txt")
+
+
+def load_ground_stations(file_path: str = GROUND_STATIONS_FILE) -> dict[str, tuple[float, float, float]]:
+    """Load ground stations from a text file.
+
+    Each non-empty line must contain four comma-separated values:
+    station name, latitude (deg), longitude (deg) and altitude (m).
+    Lines starting with ``#`` are treated as comments and ignored.
+    """
+
+    stations: dict[str, tuple[float, float, float]] = {}
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"Ground station file not found: {file_path}")
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line_no, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) != 4:
+                raise ValueError(
+                    f"Line {line_no} in {file_path} must have 4 comma-separated fields"
+                )
+            name, lat_str, lon_str, alt_str = parts
+            try:
+                lat = float(lat_str)
+                lon = float(lon_str)
+                alt = float(alt_str)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
+                ) from exc
+            stations[name] = (lat, lon, alt)
+
+    if not stations:
+        raise ValueError(f"No ground stations found in file: {file_path}")
+    return stations
+
+
+try:
+    GROUND_STATIONS = load_ground_stations()
+except Exception as exc:  # pragma: no cover - fallback for packaging/runtime errors
+    print(f"Warning: using fallback ground stations: {exc}", file=sys.stderr)
+    GROUND_STATIONS = {
+        "Darmstadt": (49.8700, 8.6500, 144),
+        "Lannion": (48.7333, -3.4542, 31),
+        "Maspalomas": (27.7614, -15.5865, 250),
+        "Athens": (37.9838, 23.7275, 70),
+        "Kangerlussuaq": (67.0121, -50.7078, 50),
+        "Svalbard": (78.2232, 15.6267, 10),
+    }
 
 # Antenna pattern data as constants
 ANTENNA_PATTERN_ANGLES = np.array([
