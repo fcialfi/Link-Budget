@@ -83,9 +83,14 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
     GROUND_STATIONS.clear()
     GROUND_STATIONS.update(new_stations)
 
-    gs_menu.configure(values=list(GROUND_STATIONS.keys()))
-    if gs_var.get() not in GROUND_STATIONS and GROUND_STATIONS:
-        gs_var.set(next(iter(GROUND_STATIONS)))
+    updated_names = list(GROUND_STATIONS.keys())
+    gs_menu["values"] = updated_names
+
+    # Always pick a valid entry so the list refresh is visible immediately.
+    if not updated_names:
+        gs_var.set("")
+    elif gs_var.get() not in GROUND_STATIONS:
+        gs_var.set(updated_names[0])
     set_analysis_stale()
 
 

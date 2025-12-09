@@ -34,6 +34,22 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
 
+## Creare un eseguibile
+Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
+
+1. Installa i pacchetti necessari (incluso PyInstaller):
+   ```bash
+   pip install -r requirements.txt
+   pip install pyinstaller
+   ```
+2. Dalla cartella del progetto esegui PyInstaller usando lo spec già configurato:
+   ```bash
+   pyinstaller gui.spec
+   ```
+3. Al termine troverai l'eseguibile in `dist/gui/` (su Windows, `dist/gui/gui.exe`).
+
+Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
+
 ## License
 This project is released under the [MIT License](LICENSE).
 
