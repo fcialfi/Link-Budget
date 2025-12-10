@@ -12,6 +12,8 @@ import astropy.units as u
 import os
 import sys
 
+import calculations
+
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS  # PyInstaller temp path
@@ -40,6 +42,7 @@ contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
+current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
 
 
 def load_tle_from_file():
@@ -77,25 +80,63 @@ def load_tle_from_file():
     set_analysis_stale()
 
 
-def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -> None:
+def apply_ground_stations(
+    new_stations: dict[str, tuple[float, float, float]], source_path: str | None = None
+) -> None:
     """Replace the ground station dictionary and refresh the dropdown."""
+
+    global current_gs_file
 
     GROUND_STATIONS.clear()
     GROUND_STATIONS.update(new_stations)
 
-    gs_menu.configure(values=list(GROUND_STATIONS.keys()))
-    if gs_var.get() not in GROUND_STATIONS and GROUND_STATIONS:
-        gs_var.set(next(iter(GROUND_STATIONS)))
+    updated_names = list(GROUND_STATIONS.keys())
+
+    # Toggle the state to ensure ttk rebuilds its internal list.
+    gs_menu.configure(state="normal")
+
+    # Clear the displayed value first to force the widget to redraw options.
+    gs_var.set("")
+    gs_menu.set("")
+
+    # Reset the choices so the dropdown content is rebuilt even if the
+    # previous and new station names overlap.
+    gs_menu.configure(values=[])
+    gs_menu.configure(values=updated_names)
+
+    # Always pick a valid entry so the list refresh is visible immediately.
+    if updated_names:
+        selected_name = gs_var.get() or updated_names[0]
+        if selected_name not in GROUND_STATIONS:
+            selected_name = updated_names[0]
+        gs_var.set(selected_name)
+        try:
+            gs_menu.current(updated_names.index(selected_name))
+        except ValueError:
+            gs_menu.set(selected_name)
+    gs_menu.configure(state="readonly")
+
+    if source_path:
+        current_gs_file = os.path.abspath(source_path)
+        calculations.GROUND_STATIONS_FILE = current_gs_file
+        gs_file_var.set(f"Ground stations: {current_gs_file}")
+    elif not gs_file_var.get():
+        gs_file_var.set("Ground stations loaded")
+
+    gs_menu.update_idletasks()
+    gs_menu.event_generate("<<ComboboxSelected>>")
     set_analysis_stale()
 
 
 def load_ground_stations_from_file(file_path: str | None = None) -> None:
     """Load ground stations from a file chosen by the user and update the GUI."""
 
+    initial_dir = os.path.dirname(current_gs_file) if current_gs_file else None
+
     path = file_path or filedialog.askopenfilename(
         title="Select Ground Stations file",
         filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-        initialdir=os.path.dirname(GROUND_STATIONS_FILE),
+        initialdir=initial_dir or os.getcwd(),
     )
     if not path:
         return
@@ -106,7 +147,7 @@ def load_ground_stations_from_file(file_path: str | None = None) -> None:
         messagebox.showerror("Ground Stations", f"Failed to load ground stations: {exc}")
         return
 
-    apply_ground_stations(stations)
+    apply_ground_stations(stations, source_path=path)
 
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
@@ -731,6 +772,16 @@ def setup_gui():
         text="Load Ground Stations",
         command=load_ground_stations_from_file,
     ).grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+    gs_file_var = tk.StringVar(
+        value=(
+            f"Ground stations: {current_gs_file}"
+            if os.path.isfile(current_gs_file)
+            else "Ground stations: built-in defaults"
+        )
+    )
+    ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
+        row=1, column=2, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+    )
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
 
