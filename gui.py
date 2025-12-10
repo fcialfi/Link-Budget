@@ -12,6 +12,8 @@ import astropy.units as u
 import os
 import sys
 
+import calculations
+
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS  # PyInstaller temp path
@@ -31,7 +33,6 @@ from calculations import (
     atmospheric_attenuation,
     prepare_topocentric_data,
     load_antenna_pattern,
-    load_ground_stations,
     MIN_ELEVATION_DEG,
 )
 
@@ -40,6 +41,7 @@ contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
+current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
 
 
 def load_tle_from_file():
@@ -76,37 +78,6 @@ def load_tle_from_file():
     tle2_entry.insert(0, tle2)
     set_analysis_stale()
 
-
-def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -> None:
-    """Replace the ground station dictionary and refresh the dropdown."""
-
-    GROUND_STATIONS.clear()
-    GROUND_STATIONS.update(new_stations)
-
-    gs_menu.configure(values=list(GROUND_STATIONS.keys()))
-    if gs_var.get() not in GROUND_STATIONS and GROUND_STATIONS:
-        gs_var.set(next(iter(GROUND_STATIONS)))
-    set_analysis_stale()
-
-
-def load_ground_stations_from_file(file_path: str | None = None) -> None:
-    """Load ground stations from a file chosen by the user and update the GUI."""
-
-    path = file_path or filedialog.askopenfilename(
-        title="Select Ground Stations file",
-        filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-        initialdir=os.path.dirname(GROUND_STATIONS_FILE),
-    )
-    if not path:
-        return
-
-    try:
-        stations = load_ground_stations(path)
-    except Exception as exc:
-        messagebox.showerror("Ground Stations", f"Failed to load ground stations: {exc}")
-        return
-
-    apply_ground_stations(stations)
 
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
@@ -726,11 +697,16 @@ def setup_gui():
     gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=list(GROUND_STATIONS.keys()), state="readonly", width=15)
     gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
     gs_menu.bind("<<ComboboxSelected>>", lambda event: set_analysis_stale())
-    ttk.Button(
-        obs_frame,
-        text="Load Ground Stations",
-        command=load_ground_stations_from_file,
-    ).grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+    gs_file_var = tk.StringVar(
+        value=(
+            f"Ground stations: {current_gs_file}"
+            if os.path.isfile(current_gs_file)
+            else "Ground stations: built-in defaults"
+        )
+    )
+    ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
+        row=1, column=0, columnspan=4, sticky="w", padx=5, pady=(6, 0)
+    )
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
 

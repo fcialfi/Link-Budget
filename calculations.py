@@ -15,8 +15,45 @@ from typing import Any, Dict, Optional
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
 
+# Define ground stations loaded from an external text file. The file is **not**
+# packaged into the PyInstaller bundle so it can be edited or replaced after
+# compilation. When running a frozen executable, the loader first looks for a
+# `ground_stations.txt` next to the EXE (or in the current working directory)
+# and only falls back to the repository copy when running from source.
+def _resolve_ground_stations_file() -> str:
+    """Pick the most appropriate ground stations file path."""
+
+    candidates = []
+
+    # Highest priority: an explicit environment override.
+    env_path = os.environ.get("GROUND_STATIONS_FILE")
+    if env_path:
+        candidates.append(env_path)
+
+    # If bundled, allow a file next to the executable to override packaged data.
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "ground_stations.txt"))
+
+    # Local working directory comes next so users can drop in a custom file while
+    # running from source.
+    candidates.append(os.path.join(os.getcwd(), "ground_stations.txt"))
+
+    # Fallback to the repository/module path only when running from source.
+    if not getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(__file__), "ground_stations.txt"))
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+
+    # If none exist, still return the last candidate so the caller can emit a
+    # meaningful error.
+    return candidates[-1]
+
+
 # Define ground stations loaded from external file
-GROUND_STATIONS_FILE = os.path.join(os.path.dirname(__file__), "ground_stations.txt")
+GROUND_STATIONS_FILE = _resolve_ground_stations_file()
 
 
 def load_ground_stations(file_path: str = GROUND_STATIONS_FILE) -> dict[str, tuple[float, float, float]]:
