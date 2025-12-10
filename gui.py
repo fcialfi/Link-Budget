@@ -85,6 +85,16 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
 
     updated_names = list(GROUND_STATIONS.keys())
 
+    # Toggle the state to ensure ttk rebuilds its internal list.
+    gs_menu.configure(state="normal")
+
+    # Clear the displayed value first to force the widget to redraw options.
+    gs_var.set("")
+    gs_menu.set("")
+
+    # Reset the choices so the dropdown content is rebuilt even if the
+    # previous and new station names overlap.
+    gs_menu.configure(values=[])
     # Clear the displayed value first to force the widget to redraw options.
     gs_var.set("")
     gs_menu.set("")
@@ -100,6 +110,8 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
             gs_menu.current(updated_names.index(selected_name))
         except ValueError:
             gs_menu.set(selected_name)
+    gs_menu.configure(state="readonly")
+
     gs_menu.update_idletasks()
     gs_menu.event_generate("<<ComboboxSelected>>")
     set_analysis_stale()
