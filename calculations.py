@@ -15,31 +15,39 @@ from typing import Any, Dict, Optional
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
 
-# Define ground stations loaded
-#  from external file. When running from a PyInstaller
+# Define ground stations loaded from external file. When running from a PyInstaller
 # bundle, prefer a file placed alongside the executable (or in the current working
 # directory) so users can override the packaged defaults without rebuilding.
 def _resolve_ground_stations_file() -> str:
-    """
-    Always prefer a ground_stations.txt located next to the executable
-    (or next to the .py script), so users can edit it.
+    """Pick the most appropriate ground stations file path."""
 
-    Only fall back to the embedded PyInstaller version if no external file exists.
-    """
-    # 1. Directory of the .exe (when frozen) or directory of this script
-    if getattr(sys, 'frozen', False):
-        base_dir = os.path.dirname(sys.executable)
-    else:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
 
-    external_path = os.path.join(base_dir, "ground_stations.txt")
+    # Highest priority: an explicit environment override.
+    env_path = os.environ.get("GROUND_STATIONS_FILE")
+    if env_path:
+        candidates.append(env_path)
 
-    # Se esiste un file esterno, usalo SEMPRE
-    if os.path.isfile(external_path):
-        return external_path
+    # If bundled, allow a file next to the executable to override packaged data.
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "ground_stations.txt"))
 
-    # Altrimenti usa quello incorporato in PyInstaller (read-only)
-    return os.path.join(sys._MEIPASS, "ground_stations.txt") if getattr(sys, 'frozen', False) else external_path
+    # Local working directory comes next so users can drop in a custom file while
+    # running from source.
+    candidates.append(os.path.join(os.getcwd(), "ground_stations.txt"))
+
+    # Fallback to the repository/module path.
+    candidates.append(os.path.join(os.path.dirname(__file__), "ground_stations.txt"))
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+
+    # If none exist, still return the last candidate so the caller can emit a
+    # meaningful error.
+    return candidates[-1]
+
 
 # Define ground stations loaded from external file
 GROUND_STATIONS_FILE = _resolve_ground_stations_file()
