@@ -15,9 +15,11 @@ from typing import Any, Dict, Optional
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
 
-# Define ground stations loaded from external file. When running from a PyInstaller
-# bundle, prefer a file placed alongside the executable (or in the current working
-# directory) so users can override the packaged defaults without rebuilding.
+# Define ground stations loaded from an external text file. The file is **not**
+# packaged into the PyInstaller bundle so it can be edited or replaced after
+# compilation. When running a frozen executable, the loader first looks for a
+# `ground_stations.txt` next to the EXE (or in the current working directory)
+# and only falls back to the repository copy when running from source.
 def _resolve_ground_stations_file() -> str:
     """Pick the most appropriate ground stations file path."""
 
@@ -37,8 +39,9 @@ def _resolve_ground_stations_file() -> str:
     # running from source.
     candidates.append(os.path.join(os.getcwd(), "ground_stations.txt"))
 
-    # Fallback to the repository/module path.
-    candidates.append(os.path.join(os.path.dirname(__file__), "ground_stations.txt"))
+    # Fallback to the repository/module path only when running from source.
+    if not getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(__file__), "ground_stations.txt"))
 
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):

@@ -11,7 +11,6 @@ a = Analysis(
     binaries=[],
     datas=itur_datas + [
         ('calculations.py', '.'),
-        ('ground_stations.txt', '.'),
     ],
     hiddenimports=[
         'itur',

@@ -50,6 +50,11 @@ Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
 
 Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
 
+### File delle ground stations
+- **Non** viene incluso nel bundle PyInstaller: il file `ground_stations.txt` deve stare nella stessa cartella dell'eseguibile (e dei file Excel che usi insieme al programma).
+- All'avvio l'applicazione legge quel file e popola il menu a tendina delle stazioni di terra; puoi modificarlo o sostituirlo senza ricostruire l'eseguibile.
+- In alternativa puoi specificare un percorso diverso impostando la variabile d'ambiente `GROUND_STATIONS_FILE` prima di avviare il programma.
+
 ### Note sugli avvisi di PyInstaller
 - Lo spec `gui.spec` include esplicitamente `astropy.tests.runner` e `pytest` per evitare l'errore `ModuleNotFoundError: No module named 'astropy.tests.runner'` durante l'esecuzione del binario.
 - Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.
