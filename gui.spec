@@ -9,12 +9,29 @@ a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[],
-    datas=itur_datas + [('calculations.py', '.')],
-    hiddenimports=['itur'],
+    datas=itur_datas + [
+        ('calculations.py', '.'),
+        ('ground_stations.txt', '.'),
+    ],
+    hiddenimports=[
+        'itur',
+        # SciPy special functions with compiled extensions that PyInstaller
+        # sometimes misses without an explicit hint.
+        'scipy.special._ufuncs',
+        'scipy.special._ufuncs_cxx',
+        # Ensure astropy's optional test runner import can resolve even when
+        # pytest is not bundled.
+        'astropy.tests.runner',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # Avoid optional test-only modules that trigger warnings when they are
+        # not present in the runtime environment.
+        'pytest',
+        'scipy.special._cdflib',
+    ],
     noarchive=False,
     optimize=0,
 )
