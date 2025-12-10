@@ -37,10 +37,10 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 ## Creare un eseguibile
 Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
 
-1. Installa i pacchetti necessari (incluso PyInstaller):
+1. Installa i pacchetti necessari (inclusi PyInstaller e `pytest`, richiesto da `astropy.tests.runner` usato durante il packaging):
    ```bash
    pip install -r requirements.txt
-   pip install pyinstaller
+   pip install pyinstaller pytest
    ```
 2. Dalla cartella del progetto esegui PyInstaller usando lo spec già configurato:
    ```bash
@@ -51,8 +51,8 @@ Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
 Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
 
 ### Note sugli avvisi di PyInstaller
-- Lo spec `gui.spec` esclude i moduli di test di Astropy e il pacchetto `pytest` per evitare l'avviso `ModuleNotFoundError: No module named 'pytest'`.
-- Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude anche il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.
+- Lo spec `gui.spec` include esplicitamente `astropy.tests.runner` e `pytest` per evitare l'errore `ModuleNotFoundError: No module named 'astropy.tests.runner'` durante l'esecuzione del binario.
+- Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.
 
 ## License
 This project is released under the [MIT License](LICENSE).

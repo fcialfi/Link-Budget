@@ -12,6 +12,8 @@ import astropy.units as u
 import os
 import sys
 
+import calculations
+
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
     base_path = sys._MEIPASS  # PyInstaller temp path
@@ -40,6 +42,7 @@ contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
+current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
 
 
 def load_tle_from_file():
@@ -82,6 +85,8 @@ def apply_ground_stations(
 ) -> None:
     """Replace the ground station dictionary and refresh the dropdown."""
 
+    global current_gs_file
+
     GROUND_STATIONS.clear()
     GROUND_STATIONS.update(new_stations)
 
@@ -112,7 +117,9 @@ def apply_ground_stations(
     gs_menu.configure(state="readonly")
 
     if source_path:
-        gs_file_var.set(f"Ground stations: {os.path.abspath(source_path)}")
+        current_gs_file = os.path.abspath(source_path)
+        calculations.GROUND_STATIONS_FILE = current_gs_file
+        gs_file_var.set(f"Ground stations: {current_gs_file}")
     elif not gs_file_var.get():
         gs_file_var.set("Ground stations loaded")
 
@@ -124,10 +131,12 @@ def apply_ground_stations(
 def load_ground_stations_from_file(file_path: str | None = None) -> None:
     """Load ground stations from a file chosen by the user and update the GUI."""
 
+    initial_dir = os.path.dirname(current_gs_file) if current_gs_file else None
+
     path = file_path or filedialog.askopenfilename(
         title="Select Ground Stations file",
         filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
-        initialdir=os.path.dirname(GROUND_STATIONS_FILE),
+        initialdir=initial_dir or os.getcwd(),
     )
     if not path:
         return
@@ -765,8 +774,8 @@ def setup_gui():
     ).grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
     gs_file_var = tk.StringVar(
         value=(
-            f"Ground stations: {os.path.abspath(GROUND_STATIONS_FILE)}"
-            if os.path.isfile(GROUND_STATIONS_FILE)
+            f"Ground stations: {current_gs_file}"
+            if os.path.isfile(current_gs_file)
             else "Ground stations: built-in defaults"
         )
     )
