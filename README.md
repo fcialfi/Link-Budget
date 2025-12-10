@@ -50,6 +50,10 @@ Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
 
 Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
 
+### Note sugli avvisi di PyInstaller
+- Lo spec `gui.spec` esclude i moduli di test di Astropy e il pacchetto `pytest` per evitare l'avviso `ModuleNotFoundError: No module named 'pytest'`.
+- Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude anche il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.
+
 ## License
 This project is released under the [MIT License](LICENSE).
 

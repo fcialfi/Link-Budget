@@ -10,11 +10,23 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=itur_datas + [('calculations.py', '.')],
-    hiddenimports=['itur'],
+    hiddenimports=[
+        'itur',
+        # SciPy special functions with compiled extensions that PyInstaller
+        # sometimes misses without an explicit hint.
+        'scipy.special._ufuncs',
+        'scipy.special._ufuncs_cxx',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # Avoid optional test-only modules that trigger warnings when they are
+        # not present in the runtime environment.
+        'astropy.tests',
+        'pytest',
+        'scipy.special._cdflib',
+    ],
     noarchive=False,
     optimize=0,
 )

@@ -77,7 +77,9 @@ def load_tle_from_file():
     set_analysis_stale()
 
 
-def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -> None:
+def apply_ground_stations(
+    new_stations: dict[str, tuple[float, float, float]], source_path: str | None = None
+) -> None:
     """Replace the ground station dictionary and refresh the dropdown."""
 
     GROUND_STATIONS.clear()
@@ -95,9 +97,6 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
     # Reset the choices so the dropdown content is rebuilt even if the
     # previous and new station names overlap.
     gs_menu.configure(values=[])
-    # Clear the displayed value first to force the widget to redraw options.
-    gs_var.set("")
-    gs_menu.set("")
     gs_menu.configure(values=updated_names)
 
     # Always pick a valid entry so the list refresh is visible immediately.
@@ -111,6 +110,11 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
         except ValueError:
             gs_menu.set(selected_name)
     gs_menu.configure(state="readonly")
+
+    if source_path:
+        gs_file_var.set(f"Ground stations: {os.path.abspath(source_path)}")
+    elif not gs_file_var.get():
+        gs_file_var.set("Ground stations loaded")
 
     gs_menu.update_idletasks()
     gs_menu.event_generate("<<ComboboxSelected>>")
@@ -134,7 +138,7 @@ def load_ground_stations_from_file(file_path: str | None = None) -> None:
         messagebox.showerror("Ground Stations", f"Failed to load ground stations: {exc}")
         return
 
-    apply_ground_stations(stations)
+    apply_ground_stations(stations, source_path=path)
 
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
@@ -759,6 +763,16 @@ def setup_gui():
         text="Load Ground Stations",
         command=load_ground_stations_from_file,
     ).grid(row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+    gs_file_var = tk.StringVar(
+        value=(
+            f"Ground stations: {os.path.abspath(GROUND_STATIONS_FILE)}"
+            if os.path.isfile(GROUND_STATIONS_FILE)
+            else "Ground stations: built-in defaults"
+        )
+    )
+    ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
+        row=1, column=2, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+    )
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
 
