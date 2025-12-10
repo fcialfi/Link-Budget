@@ -53,13 +53,18 @@ def _resolve_ground_stations_file() -> str:
 GROUND_STATIONS_FILE = _resolve_ground_stations_file()
 
 
-def load_ground_stations(file_path: str = GROUND_STATIONS_FILE) -> dict[str, tuple[float, float, float]]:
+def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float, float, float]]:
     """Load ground stations from a text file.
 
     Each non-empty line must contain four comma-separated values:
     station name, latitude (deg), longitude (deg) and altitude (m).
     Lines starting with ``#`` are treated as comments and ignored.
     """
+
+    # 🔴 NOVITÀ: se non viene passato nulla, usa il valore *corrente*
+    # di GROUND_STATIONS_FILE (che la GUI può aggiornare a runtime).
+    if file_path is None:
+        file_path = GROUND_STATIONS_FILE
 
     stations: dict[str, tuple[float, float, float]] = {}
     if not os.path.isfile(file_path):
@@ -103,6 +108,7 @@ except Exception as exc:  # pragma: no cover - fallback for packaging/runtime er
         "Kangerlussuaq": (67.0121, -50.7078, 50),
         "Svalbard": (78.2232, 15.6267, 10),
     }
+
 
 # Antenna pattern data as constants
 ANTENNA_PATTERN_ANGLES = np.array([
