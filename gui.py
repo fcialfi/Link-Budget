@@ -95,6 +95,9 @@ def apply_ground_stations(new_stations: dict[str, tuple[float, float, float]]) -
     # Reset the choices so the dropdown content is rebuilt even if the
     # previous and new station names overlap.
     gs_menu.configure(values=[])
+    # Clear the displayed value first to force the widget to redraw options.
+    gs_var.set("")
+    gs_menu.set("")
     gs_menu.configure(values=updated_names)
 
     # Always pick a valid entry so the list refresh is visible immediately.
