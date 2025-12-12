@@ -695,11 +695,25 @@ def setup_gui():
 
     style = ttk.Style()
     style.theme_use("clam")
-    style.configure("Red.TButton", background="red", foreground="white", font=("TkDefaultFont", 10, "bold"))
+    style.configure("TButton", padding=(10, 6), relief="raised", borderwidth=2)
+    style.map(
+        "TButton",
+        relief=[("pressed", "sunken"), ("!pressed", "raised")],
+    )
+    style.configure(
+        "Red.TButton",
+        background="red",
+        foreground="white",
+        font=("TkDefaultFont", 10, "bold"),
+        padding=(10, 6),
+        relief="raised",
+        borderwidth=2,
+    )
     style.map(
         "Red.TButton",
         background=[("active", "darkred"), ("!active", "red")],
         foreground=[("active", "white"), ("!active", "white")],
+        relief=[("pressed", "sunken"), ("!pressed", "raised")],
     )
 
     root.grid_rowconfigure(0, weight=1)
