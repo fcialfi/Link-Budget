@@ -929,6 +929,7 @@ def setup_gui():
     global info_bitrate_ul_var, channel_bw_ul_var
     global recalc_button, contact_listbox, plot_frame, table_frame
     global start_refresh_button, gs_menu, gs_file_var, param_file_var
+    global uplink_table_frame
 
     root = tk.Tk()
     root.title("Satellite Link Budget Tool")
