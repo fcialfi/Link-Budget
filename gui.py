@@ -259,7 +259,7 @@ def run_analysis():
         r001,
     )
     atm_label_var.set(
-        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.2f}"
+        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
     )
     results_list = []
     contact_windows.clear()
@@ -291,6 +291,7 @@ def run_analysis():
             dopplers[i],
             off_boresight[i],
         )
+        rounding_rules = {"Atmospheric Att (dB)": 3}
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
@@ -301,10 +302,11 @@ def run_analysis():
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
-            "Doppler Shift (kHz)",            
+            "Doppler Shift (kHz)",
         ]:
             if params[key] is not None:
-                params[key] = round(params[key], 2)
+                decimals = rounding_rules.get(key, 2)
+                params[key] = round(params[key], decimals)
         results_list.append(params)
 
         is_visible_now = elev >= MIN_ELEVATION_DEG
@@ -393,7 +395,7 @@ def recalculate_link_budget():
         r001,
     )
     atm_label_var.set(
-        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.2f}"
+        f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
     )
     updated_results = []
     times_dt = df_all["Time (UTC)"].tolist()
@@ -433,6 +435,7 @@ def recalculate_link_budget():
             off_boresight[i],
         )
    
+        rounding_rules = {"Atmospheric Att (dB)": 3}
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
@@ -443,10 +446,11 @@ def recalculate_link_budget():
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
-            "Doppler Shift (kHz)",            
+            "Doppler Shift (kHz)",
         ]:
             if params[key] is not None:
-                params[key] = round(params[key], 2)
+                decimals = rounding_rules.get(key, 2)
+                params[key] = round(params[key], decimals)
         updated_results.append(params)
 
     df_all = pd.DataFrame(updated_results)
