@@ -99,6 +99,23 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
     return stations
 
 
+def reload_ground_stations(file_path: str) -> dict[str, tuple[float, float, float]]:
+    """Reload the global ground station list from ``file_path``.
+
+    This helper validates the file by reusing :func:`load_ground_stations`, then
+    updates :data:`GROUND_STATIONS_FILE` and :data:`GROUND_STATIONS` in-place so
+    other modules (e.g. the GUI) immediately see the refreshed catalogue.
+    """
+
+    global GROUND_STATIONS_FILE, GROUND_STATIONS
+
+    file_path = os.path.abspath(file_path)
+    stations = load_ground_stations(file_path)
+    GROUND_STATIONS_FILE = file_path
+    GROUND_STATIONS = stations
+    return stations
+
+
 try:
     GROUND_STATIONS = load_ground_stations()
 except Exception as exc:  # pragma: no cover - fallback for packaging/runtime errors
