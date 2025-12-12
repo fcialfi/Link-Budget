@@ -51,6 +51,7 @@ uplink_overhead_entry: ttk.Entry | None = None
 uplink_spectral_eff_entry: ttk.Entry | None = None
 info_bitrate_ul_var: tk.StringVar | None = None
 channel_bw_ul_var: tk.StringVar | None = None
+uplink_table_frame: ttk.Frame | None = None
 
 
 def load_tle_from_file():
@@ -176,6 +177,15 @@ def load_ground_stations_from_file():
     set_analysis_stale()
 
 
+def clear_uplink_table():
+    """Remove any existing uplink-only table widgets."""
+
+    if uplink_table_frame is None:
+        return
+    for widget in uplink_table_frame.winfo_children():
+        widget.destroy()
+
+
 def set_analysis_stale():
     """Mark the analysis as stale so the user must recompute."""
     global analysis_needs_refresh
@@ -184,6 +194,7 @@ def set_analysis_stale():
         start_refresh_button.config(style="Red.TButton")
         recalc_button.config(state="disabled")
         clear_plot_and_table()
+        clear_uplink_table()
         contact_listbox.delete(0, tk.END)
 
 
@@ -585,6 +596,7 @@ def on_contact_select(event):
     selection = contact_listbox.curselection()
     if not selection:
         clear_plot_and_table()
+        clear_uplink_table()
         return
 
     idx = selection[0]
@@ -593,6 +605,8 @@ def on_contact_select(event):
     df_pass = df_all[mask].copy()
     global current_table_df
     current_table_df = df_pass
+
+    clear_uplink_table()
 
 
     clear_plot_and_table()
@@ -770,6 +784,76 @@ def export_table_csv():
         messagebox.showinfo("Export Successful", f"Data exported to {file_path}")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to export CSV: {e}")
+
+
+def calculate_ul_link_budget():
+    """Render an uplink-only link budget table for the selected contact window."""
+
+    if analysis_needs_refresh:
+        messagebox.showwarning("Warning", "Please refresh the analysis first.")
+        return
+
+    if current_table_df.empty:
+        messagebox.showwarning("Warning", "Please select a contact window first.")
+        return
+
+    required_columns = {
+        "Time (UTC)",
+        "Elevation (°)",
+        "Slant Range (km)",
+        "UL Path Loss (dB)",
+        "UL Atmospheric Att (dB)",
+        "UL Rx Power (dBW)",
+        "UL C/No (dBHz)",
+        "UL Eb/No (dB)",
+    }
+    missing_columns = required_columns - set(current_table_df.columns)
+    if missing_columns:
+        messagebox.showerror(
+            "Data Error",
+            "Uplink link budget values are not available. Please run the analysis again.",
+        )
+        return
+
+    if uplink_table_frame is None:
+        messagebox.showerror("UI Error", "Uplink results area is not initialised.")
+        return
+
+    clear_uplink_table()
+
+    display_columns = [
+        "Time (UTC)",
+        "Elevation (°)",
+        "Slant Range (km)",
+        "UL Path Loss (dB)",
+        "UL Atmospheric Att (dB)",
+        "UL Rx Power (dBW)",
+        "UL C/No (dBHz)",
+        "UL Eb/No (dB)",
+    ]
+
+    def _format_cell(value):
+        return "" if pd.isna(value) else value
+
+    table = ttk.Treeview(uplink_table_frame, columns=display_columns, show="headings")
+    for col in display_columns:
+        table.heading(col, text=col)
+        if col == "Time (UTC)":
+            table.column(col, anchor="center", width=150)
+        else:
+            table.column(col, anchor="center", width=130)
+
+    for _, row in current_table_df.iterrows():
+        formatted_time = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M:%S")
+        values = [formatted_time] + [_format_cell(row.get(col, "")) for col in display_columns[1:]]
+        table.insert("", "end", values=values)
+
+    table_vscroll = ttk.Scrollbar(uplink_table_frame, orient=tk.VERTICAL, command=table.yview)
+    table_hscroll = ttk.Scrollbar(uplink_table_frame, orient=tk.HORIZONTAL, command=table.xview)
+    table.configure(yscrollcommand=table_vscroll.set, xscrollcommand=table_hscroll.set)
+    table_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+    table_hscroll.pack(side=tk.BOTTOM, fill=tk.X)
+    table.pack(fill=tk.BOTH, expand=True)
 
 
 def _update_baseband_info(
@@ -1063,6 +1147,29 @@ def setup_gui():
     spectral_eff_entry.bind("<KeyRelease>", update_link_budget_derived)
     update_link_budget_derived()
 
+    downlink_btn_frame = ttk.Frame(downlink_tab)
+    downlink_btn_frame.pack(fill=tk.X, pady=10, padx=5)
+    start_refresh_button = ttk.Button(
+        downlink_btn_frame,
+        text="Start/Refresh Analysis",
+        command=run_analysis,
+        style="Red.TButton",
+    )
+    start_refresh_button.pack(side=tk.LEFT, padx=5)
+    recalc_button = ttk.Button(
+        downlink_btn_frame,
+        text="Calculate DL Link Budget",
+        command=recalculate_link_budget,
+        state="disabled",
+    )
+    recalc_button.pack(side=tk.LEFT, padx=5)
+    ttk.Button(downlink_btn_frame, text="Load Antenna Pattern", command=load_antenna_pattern_file).pack(
+        side=tk.LEFT, padx=5
+    )
+    ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=show_antenna_pattern).pack(
+        side=tk.LEFT, padx=5
+    )
+
     # Uplink Parameters frame
     uplink_container = ttk.Frame(uplink_tab)
     uplink_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1146,15 +1253,22 @@ def setup_gui():
     ]:
         entry.bind("<KeyRelease>", update_link_budget_derived)
 
+    uplink_actions_frame = ttk.Frame(uplink_tab)
+    uplink_actions_frame.pack(fill=tk.X, pady=10, padx=5)
+    ttk.Button(
+        uplink_actions_frame,
+        text="Calculate UL Link Budget",
+        command=calculate_ul_link_budget,
+    ).pack(side=tk.LEFT, padx=5)
+
+    uplink_results_frame = ttk.LabelFrame(uplink_tab, text="Uplink Results", padding=10)
+    uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+    uplink_table_frame = ttk.Frame(uplink_results_frame)
+    uplink_table_frame.pack(fill=tk.BOTH, expand=True)
+
     # --- Buttons frame ---
     btn_frame = ttk.Frame(main_frame)
     btn_frame.pack(fill=tk.X, pady=10)
-    start_refresh_button = ttk.Button(btn_frame, text="Start/Refresh Analysis", command=run_analysis, style="Red.TButton")
-    start_refresh_button.pack(side=tk.LEFT, padx=5)
-    recalc_button = ttk.Button(btn_frame, text="Recalculate Link Budget", command=recalculate_link_budget, state="disabled")
-    recalc_button.pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Load Antenna Pattern", command=load_antenna_pattern_file).pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Show Antenna Gain", command=show_antenna_pattern).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Export Table CSV", command=export_table_csv).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Exit", command=exit_app).pack(side=tk.RIGHT, padx=5)
 
