@@ -1,6 +1,4 @@
 {
-  "date": "2024-02-20",
-  "ground_station": "Darmstadt",
   "eirp_sat_dbw": 11.0,
   "frequency_ghz": 1.707,
   "c_io_dbhz": 50.0,

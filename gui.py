@@ -125,17 +125,6 @@ def load_parameters_from_file():
             entry.delete(0, tk.END)
             entry.insert(0, str(payload[key]))
 
-    if "date" in payload:
-        try:
-            datetime.strptime(payload["date"], "%Y-%m-%d")
-            date_entry.delete(0, tk.END)
-            date_entry.insert(0, payload["date"])
-        except ValueError:
-            messagebox.showwarning("Parameters", "Ignored invalid date format; expected YYYY-MM-DD.")
-    if "ground_station" in payload and gs_menu is not None:
-        if payload["ground_station"] in gs_menu["values"]:
-            gs_var.set(payload["ground_station"])
-
     if param_file_var is not None:
         param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
 
