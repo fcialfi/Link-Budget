@@ -11,6 +11,7 @@ from skyfield.api import load, EarthSatellite, wgs84
 import astropy.units as u
 import os
 import sys
+import json
 
 import calculations
 
@@ -27,12 +28,11 @@ if os.environ.get("GUI_DEBUG"):
 
 
 from calculations import (
-    GROUND_STATIONS,
-    GROUND_STATIONS_FILE,
     calculate_link_budget_parameters,
     atmospheric_attenuation,
     prepare_topocentric_data,
     load_antenna_pattern,
+    reload_ground_stations,
     MIN_ELEVATION_DEG,
 )
 
@@ -41,7 +41,10 @@ contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
-current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
+current_gs_file = ""
+gs_menu: ttk.Combobox | None = None
+gs_file_var: tk.StringVar | None = None
+param_file_var: tk.StringVar | None = None
 
 
 def load_tle_from_file():
@@ -76,6 +79,103 @@ def load_tle_from_file():
     tle1_entry.insert(0, tle1)
     tle2_entry.delete(0, tk.END)
     tle2_entry.insert(0, tle2)
+    set_analysis_stale()
+
+
+def load_parameters_from_file():
+    """Load all configurable parameters from a JSON file.
+
+    The JSON structure should provide keys such as ``eirp_sat_dbw`` or
+    ``frequency_ghz``. See the README for the full schema and example. Missing
+    keys are ignored so the user can provide only the fields they need.
+    """
+
+    file_path = filedialog.askopenfilename(
+        title="Select Parameters File",
+        filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+    )
+    if not file_path:
+        return
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as exc:
+        messagebox.showerror("Parameters", f"Unable to load parameters: {exc}")
+        return
+
+    field_map = {
+        "eirp_sat_dbw": eirp_sat_entry,
+        "frequency_ghz": freq_entry,
+        "c_io_dbhz": CIo_entry,
+        "gt_gs_dbk": gt_gs_entry,
+        "antenna_diameter_m": d_gs_entry,
+        "link_availability_pct": LA_entry,
+        "r001_mm_per_h": r001_entry,
+        "other_attenuations_db": other_att_entry,
+        "bitrate_mbps": bitrate_entry,
+        "rolloff": rolloff_entry,
+        "demod_loss_db": demod_loss_entry,
+        "overhead": overhead_entry,
+        "spectral_efficiency_bpshz": spectral_eff_entry,
+    }
+
+    for key, entry in field_map.items():
+        if key in payload and entry is not None:
+            entry.delete(0, tk.END)
+            entry.insert(0, str(payload[key]))
+
+    if "tle" in payload:
+        tle_values = payload["tle"]
+        if isinstance(tle_values, list) and len(tle_values) >= 2:
+            tle1_entry.delete(0, tk.END)
+            tle1_entry.insert(0, tle_values[0])
+            tle2_entry.delete(0, tk.END)
+            tle2_entry.insert(0, tle_values[1])
+    if "date" in payload:
+        try:
+            datetime.strptime(payload["date"], "%Y-%m-%d")
+            date_entry.delete(0, tk.END)
+            date_entry.insert(0, payload["date"])
+        except ValueError:
+            messagebox.showwarning("Parameters", "Ignored invalid date format; expected YYYY-MM-DD.")
+    if "ground_station" in payload and gs_menu is not None:
+        if payload["ground_station"] in gs_menu["values"]:
+            gs_var.set(payload["ground_station"])
+
+    if param_file_var is not None:
+        param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
+
+    update_link_budget_derived()
+    set_analysis_stale()
+
+
+def load_ground_stations_from_file():
+    """Let the user pick a ground station catalogue and refresh the UI."""
+
+    global current_gs_file
+    file_path = filedialog.askopenfilename(
+        title="Select Ground Stations File",
+        filetypes=[("Text Files", "*.txt"), ("CSV Files", "*.csv"), ("All Files", "*.*")],
+    )
+    if not file_path:
+        return
+
+    try:
+        stations = reload_ground_stations(file_path)
+    except Exception as exc:
+        messagebox.showerror("Ground Stations", f"Unable to load ground stations: {exc}")
+        return
+
+    current_gs_file = os.path.abspath(file_path)
+    if gs_file_var is not None:
+        gs_file_var.set(f"Ground stations: {current_gs_file}")
+    if gs_menu is not None:
+        gs_menu["values"] = list(stations.keys())
+    if stations:
+        selected = gs_var.get()
+        if selected not in stations:
+            gs_var.set(next(iter(stations)))
     set_analysis_stale()
 
 
@@ -142,7 +242,7 @@ def run_analysis():
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
 
-    lat_gs, lon_gs, alt_gs_m = GROUND_STATIONS[gs_name]
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
     alt_gs_km = alt_gs_m / 1000.0
 
     ts = load.timescale()
@@ -289,7 +389,7 @@ def recalculate_link_budget():
         return
 
     gs_name = gs_var.get()
-    lat_gs, lon_gs, alt_gs_m = GROUND_STATIONS[gs_name]
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
     alt_gs_km = alt_gs_m / 1000.0
 
     ts = load.timescale()
@@ -601,7 +701,7 @@ def setup_gui():
     global gt_gs_entry, CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
     global overhead_entry, spectral_eff_entry, atm_label_var, info_bitrate_var, channel_bw_var
     global recalc_button, contact_listbox, plot_frame, table_frame
-    global start_refresh_button
+    global start_refresh_button, gs_menu, gs_file_var, param_file_var
 
     root = tk.Tk()
     root.title("Satellite Link Budget Tool")
@@ -671,12 +771,10 @@ def setup_gui():
     ttk.Label(tle_frame, text="TLE Line 1").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     tle1_entry = ttk.Entry(tle_frame, width=80)
     tle1_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-    tle1_entry.insert(0, "1 60543U 24149CD  25162.94191792  .00000746  00000-0  83463-4 0  9991")
     tle1_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Label(tle_frame, text="TLE Line 2").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     tle2_entry = ttk.Entry(tle_frame, width=80)
     tle2_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-    tle2_entry.insert(0, "2 60543  97.7161 238.0908 0000778 210.1805 149.9368 14.89762325 44544")
     tle2_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Button(tle_frame, text="Load TLE from file", command=load_tle_from_file).grid(
         row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
@@ -689,26 +787,33 @@ def setup_gui():
     ttk.Label(obs_frame, text="Date (YYYY-MM-DD)").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     date_entry = ttk.Entry(obs_frame, width=15)
     date_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
-    date_entry.insert(0, "2025-06-16")
+    date_entry.insert(0, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     date_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Label(obs_frame, text="Ground Station").grid(row=0, column=2, sticky="w", padx=5, pady=2)
-    default_gs = next(iter(GROUND_STATIONS)) if GROUND_STATIONS else ""
-    gs_var = tk.StringVar(value=default_gs)
-    gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=list(GROUND_STATIONS.keys()), state="readonly", width=15)
+    gs_var = tk.StringVar(value="")
+    gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=[], state="readonly", width=15)
     gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
     gs_menu.bind("<<ComboboxSelected>>", lambda event: set_analysis_stale())
-    gs_file_var = tk.StringVar(
-        value=(
-            f"Ground stations: {current_gs_file}"
-            if os.path.isfile(current_gs_file)
-            else "Ground stations: built-in defaults"
-        )
+    ttk.Button(
+        obs_frame,
+        text="Load Ground Stations",
+        command=load_ground_stations_from_file,
+    ).grid(row=0, column=4, sticky="w", padx=5, pady=2)
+    ttk.Button(obs_frame, text="Load Parameters", command=load_parameters_from_file).grid(
+        row=0, column=5, sticky="w", padx=5, pady=2
     )
+    gs_file_var = tk.StringVar(value="Ground stations: none loaded")
     ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
-        row=1, column=0, columnspan=4, sticky="w", padx=5, pady=(6, 0)
+        row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(6, 0)
+    )
+    param_file_var = tk.StringVar(value="Parameters: none loaded")
+    ttk.Label(obs_frame, textvariable=param_file_var, foreground="gray25").grid(
+        row=2, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 0)
     )
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
+    obs_frame.grid_columnconfigure(4, weight=1)
+    obs_frame.grid_columnconfigure(5, weight=1)
 
     param_container = ttk.Frame(main_frame)
     param_container.pack(fill=tk.X, pady=5, expand=True)
@@ -724,15 +829,12 @@ def setup_gui():
     sat_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=5)
     ttk.Label(sat_frame, text="EIRP SAT [dBW]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     eirp_sat_entry = ttk.Entry(sat_frame, width=15)
-    eirp_sat_entry.insert(0, "11")
     eirp_sat_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(sat_frame, text="Frequency [GHz]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     freq_entry = ttk.Entry(sat_frame, width=15)
-    freq_entry.insert(0, "1.707")
     freq_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(sat_frame, text="C/Io [dBHz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
     CIo_entry = ttk.Entry(sat_frame, width=15)
-    CIo_entry.insert(0, "")
     CIo_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
     sat_frame.grid_columnconfigure(1, weight=1)
 
@@ -741,11 +843,9 @@ def setup_gui():
     gs_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10), pady=5)
     ttk.Label(gs_frame, text="G/T GS [dB/K]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     gt_gs_entry = ttk.Entry(gs_frame, width=15)
-    gt_gs_entry.insert(0, "8.5")
     gt_gs_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(gs_frame, text="Antenna Diameter GS [m]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     d_gs_entry = ttk.Entry(gs_frame, width=15)
-    d_gs_entry.insert(0, "3.7")
     d_gs_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     gs_frame.grid_columnconfigure(1, weight=1)
 
@@ -754,15 +854,12 @@ def setup_gui():
     atm_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 10), pady=5)
     ttk.Label(atm_frame, text="Link Availability [%]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     LA_entry = ttk.Entry(atm_frame, width=15)
-    LA_entry.insert(0, "99")
     LA_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(atm_frame, text="R001 [mm/h]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     r001_entry = ttk.Entry(atm_frame, width=15)
-    r001_entry.insert(0, "12.5")
     r001_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(atm_frame, text="Other Attenuations [dB]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
     other_att_entry = ttk.Entry(atm_frame, width=15)
-    other_att_entry.insert(0, "0.0")
     other_att_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
     atm_label_var = tk.StringVar(
         value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"
@@ -775,23 +872,18 @@ def setup_gui():
     baseband_frame.grid(row=0, column=3, sticky="nsew", pady=5)
     ttk.Label(baseband_frame, text="Bit Rate [Mbps]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     bitrate_entry = ttk.Entry(baseband_frame, width=15)
-    bitrate_entry.insert(0, "3.57")
     bitrate_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(baseband_frame, text="Roll-off Factor").grid(row=0, column=2, sticky="w", padx=5, pady=2)
     rolloff_entry = ttk.Entry(baseband_frame, width=15)
-    rolloff_entry.insert(0, "0.45")
     rolloff_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=2)
     ttk.Label(baseband_frame, text="Demodulator Loss [dB]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     demod_loss_entry = ttk.Entry(baseband_frame, width=15)
-    demod_loss_entry.insert(0, "1.5")
     demod_loss_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     ttk.Label(baseband_frame, text="Overhead (Conv. + RS)").grid(row=1, column=2, sticky="w", padx=5, pady=2)
     overhead_entry = ttk.Entry(baseband_frame, width=15)
-    overhead_entry.insert(0, "2.29")
     overhead_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
     ttk.Label(baseband_frame, text="Spectral Efficiency [b/s/Hz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
     spectral_eff_entry = ttk.Entry(baseband_frame, width=15)
-    spectral_eff_entry.insert(0, "2")
     spectral_eff_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
     info_bitrate_var = tk.StringVar(value="Info Bit Rate [Mbps]: N/A")
     channel_bw_var = tk.StringVar(value="Channel BW [MHz]: N/A")

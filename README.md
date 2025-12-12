@@ -25,8 +25,32 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
    ```bash
    python -m link_budget
    ```
-3. Inserisci le due righe TLE, scegli la stazione di terra e gli altri parametri, quindi premi **Start** per calcolare le finestre di contatto.
+3. Inserisci manualmente (o carica dai pulsanti **Load TLE from file**, **Load Ground Stations** e **Load Parameters**) le righe TLE, la stazione di terra e gli altri parametri, quindi premi **Start** per calcolare le finestre di contatto.
 4. Seleziona una finestra dalla lista per vedere grafici e tabelle del link budget.
+
+### Formato dei file di ingresso
+- **Ground stations (`ground_stations.txt`)**: ogni riga non vuota deve avere 4 campi separati da virgola: `nome, latitudine_deg, longitudine_deg, altitudine_m`. Le righe che iniziano con `#` sono commenti. Esempio:
+  ```text
+  # name, lat [deg], lon [deg], alt [m]
+  Darmstadt, 49.8700, 8.6500, 144
+  Lannion, 48.7333, -3.4542, 31
+  ```
+- **File TLE**: devono contenere almeno due righe consecutive che iniziano con `1 ` e `2 ` (la prima riga del nome è facoltativa). Il pulsante **Load TLE from file** accetta file con tre righe (nome + linee 1-2) o due righe (solo linee 1-2).
+- **Parametri di simulazione (`parameters.json`)**: è possibile caricare tutti i campi numerici della GUI (oltre a TLE, data e stazione di terra) da un JSON. Le chiavi supportate sono:
+  - `tle`: array con due stringhe TLE
+  - `date`: stringa `YYYY-MM-DD`
+  - `ground_station`: nome presente nel catalogo caricato
+  - `eirp_sat_dbw`, `frequency_ghz`, `c_io_dbhz`, `gt_gs_dbk`, `antenna_diameter_m`, `link_availability_pct`, `r001_mm_per_h`, `other_attenuations_db`, `bitrate_mbps`, `rolloff`, `demod_loss_db`, `overhead`, `spectral_efficiency_bpshz`
+  Esempio:
+  ```json
+  {
+    "ground_station": "Darmstadt",
+    "frequency_ghz": 1.707,
+    "bitrate_mbps": 3.57,
+    "rolloff": 0.45,
+    "spectral_efficiency_bpshz": 2.0
+  }
+  ```
 
 ## Spunti per personalizzazioni
 - Modifica la variabile `GROUND_STATIONS` nel file Python per aggiungere nuove stazioni di terra.
@@ -54,6 +78,7 @@ Il file `__main__.py` è predisposto per essere usato come entry point anche qua
 - **Non** viene incluso nel bundle PyInstaller: il file `ground_stations.txt` deve stare nella stessa cartella dell'eseguibile (e dei file Excel che usi insieme al programma).
 - All'avvio l'applicazione legge quel file e popola il menu a tendina delle stazioni di terra; puoi modificarlo o sostituirlo senza ricostruire l'eseguibile.
 - In alternativa puoi specificare un percorso diverso impostando la variabile d'ambiente `GROUND_STATIONS_FILE` prima di avviare il programma.
+- Dalla GUI puoi selezionare rapidamente un catalogo personalizzato con il pulsante **Load Ground Stations** nella sezione "Observation Settings"; l'elenco viene aggiornato immediatamente.
 
 ### Note sugli avvisi di PyInstaller
 - Lo spec `gui.spec` include esplicitamente `astropy.tests.runner` e `pytest` per evitare l'errore `ModuleNotFoundError: No module named 'astropy.tests.runner'` durante l'esecuzione del binario.
