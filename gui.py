@@ -33,6 +33,7 @@ from calculations import (
     atmospheric_attenuation,
     prepare_topocentric_data,
     load_antenna_pattern,
+    reload_ground_stations,
     MIN_ELEVATION_DEG,
 )
 
@@ -42,6 +43,8 @@ df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
 current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
+gs_menu: ttk.Combobox | None = None
+gs_file_var: tk.StringVar | None = None
 
 
 def load_tle_from_file():
@@ -76,6 +79,35 @@ def load_tle_from_file():
     tle1_entry.insert(0, tle1)
     tle2_entry.delete(0, tk.END)
     tle2_entry.insert(0, tle2)
+    set_analysis_stale()
+
+
+def load_ground_stations_from_file():
+    """Let the user pick a ground station catalogue and refresh the UI."""
+
+    global current_gs_file
+    file_path = filedialog.askopenfilename(
+        title="Select Ground Stations File",
+        filetypes=[("Text Files", "*.txt"), ("CSV Files", "*.csv"), ("All Files", "*.*")],
+    )
+    if not file_path:
+        return
+
+    try:
+        stations = reload_ground_stations(file_path)
+    except Exception as exc:
+        messagebox.showerror("Ground Stations", f"Unable to load ground stations: {exc}")
+        return
+
+    current_gs_file = os.path.abspath(file_path)
+    if gs_file_var is not None:
+        gs_file_var.set(f"Ground stations: {current_gs_file}")
+    if gs_menu is not None:
+        gs_menu["values"] = list(stations.keys())
+    if stations:
+        selected = gs_var.get()
+        if selected not in stations:
+            gs_var.set(next(iter(stations)))
     set_analysis_stale()
 
 
@@ -601,7 +633,7 @@ def setup_gui():
     global gt_gs_entry, CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
     global overhead_entry, spectral_eff_entry, atm_label_var, info_bitrate_var, channel_bw_var
     global recalc_button, contact_listbox, plot_frame, table_frame
-    global start_refresh_button
+    global start_refresh_button, gs_menu, gs_file_var
 
     root = tk.Tk()
     root.title("Satellite Link Budget Tool")
@@ -697,6 +729,11 @@ def setup_gui():
     gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=list(GROUND_STATIONS.keys()), state="readonly", width=15)
     gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
     gs_menu.bind("<<ComboboxSelected>>", lambda event: set_analysis_stale())
+    ttk.Button(
+        obs_frame,
+        text="Load Ground Stations",
+        command=load_ground_stations_from_file,
+    ).grid(row=0, column=4, sticky="w", padx=5, pady=2)
     gs_file_var = tk.StringVar(
         value=(
             f"Ground stations: {current_gs_file}"
@@ -705,10 +742,11 @@ def setup_gui():
         )
     )
     ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
-        row=1, column=0, columnspan=4, sticky="w", padx=5, pady=(6, 0)
+        row=1, column=0, columnspan=5, sticky="w", padx=5, pady=(6, 0)
     )
     obs_frame.grid_columnconfigure(1, weight=1)
     obs_frame.grid_columnconfigure(3, weight=1)
+    obs_frame.grid_columnconfigure(4, weight=1)
 
     param_container = ttk.Frame(main_frame)
     param_container.pack(fill=tk.X, pady=5, expand=True)
