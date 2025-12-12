@@ -40,6 +40,7 @@ from calculations import (
 contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
+uplink_needs_refresh = False
 current_table_df = pd.DataFrame()
 current_gs_file = ""
 gs_menu: ttk.Combobox | None = None
@@ -52,6 +53,7 @@ uplink_spectral_eff_entry: ttk.Entry | None = None
 info_bitrate_ul_var: tk.StringVar | None = None
 channel_bw_ul_var: tk.StringVar | None = None
 uplink_table_frame: ttk.Frame | None = None
+uplink_recalc_button: ttk.Button | None = None
 
 
 def load_tle_from_file():
@@ -196,6 +198,27 @@ def set_analysis_stale():
         clear_plot_and_table()
         clear_uplink_table()
         contact_listbox.delete(0, tk.END)
+
+
+def set_uplink_budget_stale():
+    """Mark the uplink-only link budget as stale."""
+
+    global uplink_needs_refresh
+    if not uplink_needs_refresh:
+        uplink_needs_refresh = True
+        clear_uplink_table()
+        if uplink_recalc_button is not None:
+            uplink_recalc_button.config(style="Red.TButton")
+
+
+def set_uplink_budget_fresh():
+    """Reset the uplink-only link budget stale flag."""
+
+    global uplink_needs_refresh
+    if uplink_needs_refresh:
+        uplink_needs_refresh = False
+        if uplink_recalc_button is not None:
+            uplink_recalc_button.config(style="TButton")
 
 
 def _get_optional_float(entry: ttk.Entry) -> float | None:
@@ -832,6 +855,7 @@ def calculate_ul_link_budget():
     table_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
     table_hscroll.pack(side=tk.BOTTOM, fill=tk.X)
     table.pack(fill=tk.BOTH, expand=True)
+    set_uplink_budget_fresh()
 
 
 def _update_baseband_info(
@@ -893,6 +917,13 @@ def update_link_budget_derived(*args):
         )
 
 
+def on_uplink_baseband_change(event=None):
+    """Refresh derived UL metrics and mark uplink budget for recalculation."""
+
+    update_link_budget_derived()
+    set_uplink_budget_stale()
+
+
 # --- GUI Setup ---
 
 def setup_gui():
@@ -907,7 +938,7 @@ def setup_gui():
     global info_bitrate_ul_var, channel_bw_ul_var
     global recalc_button, contact_listbox, plot_frame, table_frame
     global start_refresh_button, gs_menu, gs_file_var, param_file_var
-    global uplink_table_frame
+    global uplink_table_frame, uplink_recalc_button
 
     root = tk.Tk()
     root.title("Satellite Link Budget Tool")
@@ -1045,7 +1076,7 @@ def setup_gui():
     param_tabs.add(uplink_tab, text="Uplink")
 
     param_container = ttk.Frame(downlink_tab)
-    param_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    param_container.pack(fill=tk.X, expand=False, padx=5, pady=5)
     param_container.grid_columnconfigure(0, weight=1)
     param_container.grid_columnconfigure(1, weight=1)
     param_container.grid_columnconfigure(2, weight=1)
@@ -1129,7 +1160,7 @@ def setup_gui():
     downlink_btn_frame = ttk.LabelFrame(
         downlink_tab, text="Downlink Actions", padding=10
     )
-    downlink_btn_frame.pack(fill=tk.X, pady=10, padx=5)
+    downlink_btn_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
     start_refresh_button = ttk.Button(
         downlink_btn_frame,
         text="Start/Refresh Analysis",
@@ -1223,8 +1254,14 @@ def setup_gui():
     uplink_baseband_frame.grid_columnconfigure(1, weight=1)
     uplink_baseband_frame.grid_columnconfigure(3, weight=1)
 
-    for entry in [eirp_gs_entry, uplink_freq_entry, gt_sat_entry, demod_loss_ul_entry, other_att_ul_entry]:
-        entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
+    for entry in [
+        eirp_gs_entry,
+        uplink_freq_entry,
+        gt_sat_entry,
+        demod_loss_ul_entry,
+        other_att_ul_entry,
+    ]:
+        entry.bind("<KeyRelease>", lambda event: set_uplink_budget_stale())
 
     for entry in [
         uplink_bitrate_entry,
@@ -1232,17 +1269,18 @@ def setup_gui():
         uplink_overhead_entry,
         uplink_spectral_eff_entry,
     ]:
-        entry.bind("<KeyRelease>", update_link_budget_derived)
+        entry.bind("<KeyRelease>", on_uplink_baseband_change)
 
     uplink_actions_frame = ttk.LabelFrame(
         uplink_tab, text="Uplink Actions", padding=10
     )
     uplink_actions_frame.pack(fill=tk.X, pady=10, padx=5)
-    ttk.Button(
+    uplink_recalc_button = ttk.Button(
         uplink_actions_frame,
         text="Calculate UL Link Budget",
         command=calculate_ul_link_budget,
-    ).pack(side=tk.LEFT, padx=5)
+    )
+    uplink_recalc_button.pack(side=tk.LEFT, padx=5)
 
     uplink_results_frame = ttk.LabelFrame(uplink_tab, text="Uplink Results", padding=10)
     uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
