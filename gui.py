@@ -1182,6 +1182,34 @@ def setup_gui():
         side=tk.LEFT, padx=5
     )
 
+    downlink_results_container = ttk.Frame(downlink_tab)
+    downlink_results_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+    btn_frame = ttk.Frame(downlink_results_container)
+    btn_frame.pack(fill=tk.X, pady=(0, 10))
+    ttk.Button(btn_frame, text="Export Table CSV", command=export_table_csv).pack(
+        side=tk.LEFT, padx=5
+    )
+    ttk.Button(btn_frame, text="Exit", command=exit_app).pack(side=tk.RIGHT, padx=5)
+
+    contact_frame = ttk.LabelFrame(
+        downlink_results_container, text="Contact Windows (UTC Time)", padding=10
+    )
+    contact_frame.pack(fill=tk.X, pady=(0, 5))
+    contact_listbox = tk.Listbox(contact_frame, height=6, exportselection=False)
+    contact_listbox.pack(fill=tk.X, expand=True)
+    contact_listbox.bind("<<ListboxSelect>>", on_contact_select)
+
+    plot_frame = ttk.Frame(downlink_results_container)
+    plot_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+    downlink_results_frame = ttk.LabelFrame(
+        downlink_results_container, text="Downlink Results", padding=10
+    )
+    downlink_results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+    table_frame = ttk.Frame(downlink_results_frame)
+    table_frame.pack(fill=tk.BOTH, expand=True)
+
     # Uplink Parameters frame
     uplink_container = ttk.Frame(uplink_tab)
     uplink_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -1286,26 +1314,6 @@ def setup_gui():
     uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
     uplink_table_frame = ttk.Frame(uplink_results_frame)
     uplink_table_frame.pack(fill=tk.BOTH, expand=True)
-
-    # --- Buttons frame ---
-    btn_frame = ttk.Frame(main_frame)
-    btn_frame.pack(fill=tk.X, pady=10)
-    ttk.Button(btn_frame, text="Export Table CSV", command=export_table_csv).pack(side=tk.LEFT, padx=5)
-    ttk.Button(btn_frame, text="Exit", command=exit_app).pack(side=tk.RIGHT, padx=5)
-
-    contact_frame = ttk.LabelFrame(main_frame, text="Contact Windows (UTC Time)", padding=10)
-    contact_frame.pack(fill=tk.X, pady=5)
-    contact_listbox = tk.Listbox(contact_frame, height=6, exportselection=False)
-    contact_listbox.pack(fill=tk.X, expand=True)
-    contact_listbox.bind("<<ListboxSelect>>", on_contact_select)
-
-    plot_frame = ttk.Frame(main_frame)
-    plot_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-    downlink_results_frame = ttk.LabelFrame(main_frame, text="Downlink Results", padding=10)
-    downlink_results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-    table_frame = ttk.Frame(downlink_results_frame)
-    table_frame.pack(fill=tk.BOTH, expand=True)
 
     root.mainloop()
 
