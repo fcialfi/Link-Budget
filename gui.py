@@ -106,16 +106,21 @@ def load_parameters_from_file():
 
     field_map = {
         "eirp_sat_dbw": eirp_sat_entry,
+        "eirp_gs_dbw": eirp_gs_entry,
         "frequency_ghz": freq_entry,
+        "uplink_frequency_ghz": uplink_freq_entry,
         "c_io_dbhz": CIo_entry,
         "gt_gs_dbk": gt_gs_entry,
+        "gt_sat_dbk": gt_sat_entry,
         "antenna_diameter_m": d_gs_entry,
         "link_availability_pct": LA_entry,
         "r001_mm_per_h": r001_entry,
         "other_attenuations_db": other_att_entry,
+        "uplink_other_attenuations_db": other_att_ul_entry,
         "bitrate_mbps": bitrate_entry,
         "rolloff": rolloff_entry,
         "demod_loss_db": demod_loss_entry,
+        "demod_loss_sat_db": demod_loss_ul_entry,
         "overhead": overhead_entry,
         "spectral_efficiency_bpshz": spectral_eff_entry,
     }
@@ -172,6 +177,13 @@ def set_analysis_stale():
         contact_listbox.delete(0, tk.END)
 
 
+def _get_optional_float(entry: ttk.Entry) -> float | None:
+    """Return ``float(entry.get())`` or ``None`` when the field is empty."""
+
+    text = entry.get().strip()
+    return float(text) if text else None
+
+
 # --- Main Analysis Function ---
 
 def run_analysis():
@@ -220,6 +232,12 @@ def run_analysis():
         rolloff = float(rolloff_entry.get())
         demod_loss = float(demod_loss_entry.get())
         overhead = float(overhead_entry.get())
+        uplink_freq_val = _get_optional_float(uplink_freq_entry)
+        uplink_freq = uplink_freq_val * u.GHz if uplink_freq_val is not None else None
+        eirp_gs = _get_optional_float(eirp_gs_entry)
+        gt_sat = _get_optional_float(gt_sat_entry)
+        demod_loss_ul = _get_optional_float(demod_loss_ul_entry)
+        other_att_ul = _get_optional_float(other_att_ul_entry)
     except ValueError as e:
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
@@ -258,6 +276,17 @@ def run_analysis():
         alt_gs_km,
         r001,
     )
+    uplink_atm_att = None
+    if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+        uplink_atm_att = atmospheric_attenuation(
+            lat_gs,
+            lon_gs,
+            uplink_freq.to(u.GHz).value,
+            p,
+            d_gs,
+            alt_gs_km,
+            r001,
+        )
     atm_label_var.set(
         f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
     )
@@ -290,8 +319,14 @@ def run_analysis():
             slant_ranges[i],
             dopplers[i],
             off_boresight[i],
+            uplink_freq,
+            eirp_gs,
+            gt_sat,
+            demod_loss_ul,
+            other_att_ul,
+            uplink_atm_att,
         )
-        rounding_rules = {"Atmospheric Att (dB)": 3}
+        rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
@@ -303,8 +338,14 @@ def run_analysis():
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
             "Doppler Shift (kHz)",
+            "UL Path Loss (dB)",
+            "UL Atmospheric Att (dB)",
+            "UL Pointing Loss (dB)",
+            "UL Rx Power (dBW)",
+            "UL C/No (dBHz)",
+            "UL Eb/No (dB)",
         ]:
-            if params[key] is not None:
+            if params.get(key) is not None:
                 decimals = rounding_rules.get(key, 2)
                 params[key] = round(params[key], decimals)
         results_list.append(params)
@@ -368,6 +409,12 @@ def recalculate_link_budget():
         bitrate = float(bitrate_entry.get()) * 1e6
         demod_loss = float(demod_loss_entry.get())
         overhead = float(overhead_entry.get())
+        uplink_freq_val = _get_optional_float(uplink_freq_entry)
+        uplink_freq = uplink_freq_val * u.GHz if uplink_freq_val is not None else None
+        eirp_gs = _get_optional_float(eirp_gs_entry)
+        gt_sat = _get_optional_float(gt_sat_entry)
+        demod_loss_ul = _get_optional_float(demod_loss_ul_entry)
+        other_att_ul = _get_optional_float(other_att_ul_entry)
     except ValueError as e:
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
@@ -394,6 +441,17 @@ def recalculate_link_budget():
         alt_gs_km,
         r001,
     )
+    uplink_atm_att = None
+    if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+        uplink_atm_att = atmospheric_attenuation(
+            lat_gs,
+            lon_gs,
+            uplink_freq.to(u.GHz).value,
+            p,
+            d_gs,
+            alt_gs_km,
+            r001,
+        )
     atm_label_var.set(
         f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
     )
@@ -433,9 +491,15 @@ def recalculate_link_budget():
             slant_ranges[i],
             dopplers[i],
             off_boresight[i],
+            uplink_freq,
+            eirp_gs,
+            gt_sat,
+            demod_loss_ul,
+            other_att_ul,
+            uplink_atm_att,
         )
-   
-        rounding_rules = {"Atmospheric Att (dB)": 3}
+
+        rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
         for key in [
             "Elevation (°)",
             "Slant Range (km)",
@@ -447,8 +511,14 @@ def recalculate_link_budget():
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
             "Doppler Shift (kHz)",
+            "UL Path Loss (dB)",
+            "UL Atmospheric Att (dB)",
+            "UL Pointing Loss (dB)",
+            "UL Rx Power (dBW)",
+            "UL C/No (dBHz)",
+            "UL Eb/No (dB)",
         ]:
-            if params[key] is not None:
+            if params.get(key) is not None:
                 decimals = rounding_rules.get(key, 2)
                 params[key] = round(params[key], decimals)
         updated_results.append(params)
@@ -538,13 +608,29 @@ def on_contact_select(event):
     ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
     ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
     ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
+    if "UL Eb/No (dB)" in df_pass and not df_pass["UL Eb/No (dB)"].isnull().all():
+        ax2_1.plot(
+            df_pass["Time (UTC)"],
+            df_pass["UL Eb/No (dB)"],
+            label="UL Eb/No (dB)",
+            color="tab:orange",
+            linestyle=":",
+        )
     ax2_2.plot(
         df_pass["Time (UTC)"],
         df_pass["C/(No+Io) (dBHz)"],
         label="C/(No+Io) (dBHz)",
         color="tab:green",
         linestyle="--",
-    )    
+    )
+    if "UL C/No (dBHz)" in df_pass and not df_pass["UL C/No (dBHz)"].isnull().all():
+        ax2_2.plot(
+            df_pass["Time (UTC)"],
+            df_pass["UL C/No (dBHz)"],
+            label="UL C/No (dBHz)",
+            color="tab:olive",
+            linestyle=":",
+        )
     ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
     ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
     ax2.set_xlabel("Time (UTC)", fontsize=8)
@@ -581,7 +667,13 @@ def on_contact_select(event):
         "Rx Power (dBW)",
         "C/(No+Io) (dBHz)",
         "Eb/No (dB)",
-        "Doppler Shift (kHz)",        
+        "Doppler Shift (kHz)",
+        "UL Path Loss (dB)",
+        "UL Atmospheric Att (dB)",
+        "UL Pointing Loss (dB)",
+        "UL Rx Power (dBW)",
+        "UL C/No (dBHz)",
+        "UL Eb/No (dB)",
     ]
     table = ttk.Treeview(table_frame, columns=display_columns, show="headings")
     for col in display_columns:
@@ -684,7 +776,9 @@ def setup_gui():
     """Initialise and launch the Tkinter graphical interface."""
     global root, tle1_entry, tle2_entry, date_entry, gs_var, freq_entry
     global LA_entry, r001_entry, d_gs_entry, other_att_entry, eirp_sat_entry
-    global gt_gs_entry, CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
+    global eirp_gs_entry, uplink_freq_entry, gt_gs_entry, gt_sat_entry
+    global demod_loss_ul_entry, other_att_ul_entry
+    global CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
     global overhead_entry, spectral_eff_entry, atm_label_var, info_bitrate_var, channel_bw_var
     global recalc_button, contact_listbox, plot_frame, table_frame
     global start_refresh_button, gs_menu, gs_file_var, param_file_var
@@ -896,6 +990,29 @@ def setup_gui():
     overhead_entry.bind("<KeyRelease>", update_link_budget_derived)
     spectral_eff_entry.bind("<KeyRelease>", update_link_budget_derived)
     update_link_budget_derived()
+
+    # Uplink Parameters frame
+    uplink_frame = ttk.LabelFrame(param_container, text="Uplink Parameters", padding=10)
+    uplink_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 10), pady=5)
+    ttk.Label(uplink_frame, text="EIRP GS [dBW]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+    eirp_gs_entry = ttk.Entry(uplink_frame, width=15)
+    eirp_gs_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_frame, text="Uplink Frequency [GHz]").grid(row=0, column=2, sticky="w", padx=5, pady=2)
+    uplink_freq_entry = ttk.Entry(uplink_frame, width=15)
+    uplink_freq_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_frame, text="G/T SAT [dB/K]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+    gt_sat_entry = ttk.Entry(uplink_frame, width=15)
+    gt_sat_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_frame, text="Sat Demod Loss [dB]").grid(row=1, column=2, sticky="w", padx=5, pady=2)
+    demod_loss_ul_entry = ttk.Entry(uplink_frame, width=15)
+    demod_loss_ul_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_frame, text="Uplink Other Attenuations [dB]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+    other_att_ul_entry = ttk.Entry(uplink_frame, width=15)
+    other_att_ul_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+    uplink_frame.grid_columnconfigure(1, weight=1)
+    uplink_frame.grid_columnconfigure(3, weight=1)
+    for entry in [eirp_gs_entry, uplink_freq_entry, gt_sat_entry, demod_loss_ul_entry, other_att_ul_entry]:
+        entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
 
     # --- Buttons frame ---
     btn_frame = ttk.Frame(main_frame)
