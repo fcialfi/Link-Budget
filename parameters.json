@@ -16,5 +16,9 @@
   "demod_loss_db": 1.5,
   "demod_loss_sat_db": 1.0,
   "overhead": 2.29,
-  "spectral_efficiency_bpshz": 2.0
+  "spectral_efficiency_bpshz": 2.0,
+  "uplink_bitrate_mbps": 1.0,
+  "uplink_rolloff": 0.35,
+  "uplink_overhead": 1.1,
+  "uplink_spectral_efficiency_bpshz": 1.5
 }

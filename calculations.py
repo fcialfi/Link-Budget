@@ -339,6 +339,8 @@ def calculate_link_budget_parameters(
     demod_loss_ul: float | None = None,
     other_att_ul: float | None = None,
     atm_att_ul: Optional[float] = None,
+    uplink_bitrate: float | None = None,
+    uplink_overhead: float | None = None,
 ) -> Dict[str, Any]:
     
     """Compute link budget parameters for a single time step.
@@ -395,6 +397,12 @@ def calculate_link_budget_parameters(
     atm_att_ul : float, optional
         Pre-computed uplink atmospheric attenuation in dB. If ``None`` it is
         recomputed using :func:`atmospheric_attenuation` with ``uplink_freq``.
+    uplink_bitrate : float, optional
+        Optional uplink bit rate in bits per second used to derive uplink
+        Eb/No. If omitted, the downlink ``bitrate`` is reused.
+    uplink_overhead : float, optional
+        Optional uplink coding overhead. If omitted, the downlink ``overhead``
+        factor is reused for uplink Eb/No calculations.
 
     Returns
     -------
@@ -509,6 +517,9 @@ def calculate_link_budget_parameters(
     }
 
     if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+        ul_bitrate = bitrate if uplink_bitrate is None else uplink_bitrate
+        ul_overhead = overhead if uplink_overhead is None else uplink_overhead
+
         ul_path_loss = (
             20 * np.log10(slant_range_km)
             + 20 * np.log10(uplink_freq.to(u.GHz).value)
@@ -532,7 +543,7 @@ def calculate_link_budget_parameters(
 
         ul_rx_power = eirp_gs - ul_path_loss - atm_att_ul - ul_other_att - ul_pointing_loss
         ul_cno = ul_rx_power + gt_sat + 228.6 - ul_demod_loss
-        ul_ebno = ul_cno - 10 * np.log10(bitrate / overhead) if bitrate > 0 and overhead > 0 else np.nan
+        ul_ebno = ul_cno - 10 * np.log10(ul_bitrate / ul_overhead) if ul_bitrate > 0 and ul_overhead > 0 else np.nan
 
         results.update(
             {

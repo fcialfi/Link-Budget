@@ -45,6 +45,12 @@ current_gs_file = ""
 gs_menu: ttk.Combobox | None = None
 gs_file_var: tk.StringVar | None = None
 param_file_var: tk.StringVar | None = None
+uplink_bitrate_entry: ttk.Entry | None = None
+uplink_rolloff_entry: ttk.Entry | None = None
+uplink_overhead_entry: ttk.Entry | None = None
+uplink_spectral_eff_entry: ttk.Entry | None = None
+info_bitrate_ul_var: tk.StringVar | None = None
+channel_bw_ul_var: tk.StringVar | None = None
 
 
 def load_tle_from_file():
@@ -123,6 +129,10 @@ def load_parameters_from_file():
         "demod_loss_sat_db": demod_loss_ul_entry,
         "overhead": overhead_entry,
         "spectral_efficiency_bpshz": spectral_eff_entry,
+        "uplink_bitrate_mbps": uplink_bitrate_entry,
+        "uplink_rolloff": uplink_rolloff_entry,
+        "uplink_overhead": uplink_overhead_entry,
+        "uplink_spectral_efficiency_bpshz": uplink_spectral_eff_entry,
     }
 
     for key, entry in field_map.items():
@@ -238,6 +248,8 @@ def run_analysis():
         gt_sat = _get_optional_float(gt_sat_entry)
         demod_loss_ul = _get_optional_float(demod_loss_ul_entry)
         other_att_ul = _get_optional_float(other_att_ul_entry)
+        uplink_bitrate_val = _get_optional_float(uplink_bitrate_entry) if uplink_bitrate_entry else None
+        uplink_overhead = _get_optional_float(uplink_overhead_entry) if uplink_overhead_entry else None
     except ValueError as e:
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
@@ -325,6 +337,8 @@ def run_analysis():
             demod_loss_ul,
             other_att_ul,
             uplink_atm_att,
+            uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
+            uplink_overhead,
         )
         rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
         for key in [
@@ -415,6 +429,8 @@ def recalculate_link_budget():
         gt_sat = _get_optional_float(gt_sat_entry)
         demod_loss_ul = _get_optional_float(demod_loss_ul_entry)
         other_att_ul = _get_optional_float(other_att_ul_entry)
+        uplink_bitrate_val = _get_optional_float(uplink_bitrate_entry) if uplink_bitrate_entry else None
+        uplink_overhead = _get_optional_float(uplink_overhead_entry) if uplink_overhead_entry else None
     except ValueError as e:
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
@@ -497,6 +513,8 @@ def recalculate_link_budget():
             demod_loss_ul,
             other_att_ul,
             uplink_atm_att,
+            uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
+            uplink_overhead,
         )
 
         rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
@@ -754,20 +772,63 @@ def export_table_csv():
         messagebox.showerror("Error", f"Failed to export CSV: {e}")
 
 
-def update_link_budget_derived(*args):
+def _update_baseband_info(
+    bit_rate_entry: ttk.Entry,
+    roll_off_entry: ttk.Entry,
+    overhead_entry: ttk.Entry,
+    spectral_eff_entry: ttk.Entry,
+    info_var: tk.StringVar,
+    channel_bw_display: tk.StringVar,
+    label_prefix: str,
+):
+    """Compute and display baseband derived metrics for a given entry set."""
+
+    prefix = f"{label_prefix} " if label_prefix else ""
+
     try:
-        bit_rate_mbps = float(bitrate_entry.get())
-        roll_off = float(rolloff_entry.get())
+        bit_rate_mbps = float(bit_rate_entry.get())
+        roll_off = float(roll_off_entry.get())
         overhead = float(overhead_entry.get())
         spectral_eff = float(spectral_eff_entry.get())
         info_bit_rate_mbps = bit_rate_mbps / overhead if overhead != 0 else 0
         spectral_eff = spectral_eff if spectral_eff != 0 else 1
         channel_bw_mhz = bit_rate_mbps * (1 + roll_off) / spectral_eff
-        info_bitrate_var.set(f"Info Bit Rate [Mbps]: {info_bit_rate_mbps:.3f}")
-        channel_bw_var.set(f"Channel BW [MHz]: {channel_bw_mhz:.3f}")
+        info_var.set(f"{prefix}Info Bit Rate [Mbps]: {info_bit_rate_mbps:.3f}")
+        channel_bw_display.set(f"{prefix}Channel BW [MHz]: {channel_bw_mhz:.3f}")
     except ValueError:
-        info_bitrate_var.set("Info Bit Rate [Mbps]: N/A")
-        channel_bw_var.set("Channel BW [MHz]: N/A")
+        info_var.set(f"{prefix}Info Bit Rate [Mbps]: N/A")
+        channel_bw_display.set(f"{prefix}Channel BW [MHz]: N/A")
+
+
+def update_link_budget_derived(*args):
+    _update_baseband_info(
+        bitrate_entry,
+        rolloff_entry,
+        overhead_entry,
+        spectral_eff_entry,
+        info_bitrate_var,
+        channel_bw_var,
+        "",
+    )
+
+    if info_bitrate_ul_var is not None and channel_bw_ul_var is not None and all(
+        entry is not None
+        for entry in (
+            uplink_bitrate_entry,
+            uplink_rolloff_entry,
+            uplink_overhead_entry,
+            uplink_spectral_eff_entry,
+        )
+    ):
+        _update_baseband_info(
+            uplink_bitrate_entry,
+            uplink_rolloff_entry,
+            uplink_overhead_entry,
+            uplink_spectral_eff_entry,
+            info_bitrate_ul_var,
+            channel_bw_ul_var,
+            "UL",
+        )
 
 
 # --- GUI Setup ---
@@ -780,6 +841,8 @@ def setup_gui():
     global demod_loss_ul_entry, other_att_ul_entry
     global CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
     global overhead_entry, spectral_eff_entry, atm_label_var, info_bitrate_var, channel_bw_var
+    global uplink_bitrate_entry, uplink_rolloff_entry, uplink_overhead_entry, uplink_spectral_eff_entry
+    global info_bitrate_ul_var, channel_bw_ul_var
     global recalc_button, contact_listbox, plot_frame, table_frame
     global start_refresh_button, gs_menu, gs_file_var, param_file_var
 
@@ -1007,6 +1070,7 @@ def setup_gui():
     uplink_container.grid_columnconfigure(1, weight=1)
     uplink_container.grid_columnconfigure(2, weight=1)
     uplink_container.grid_rowconfigure(0, weight=1)
+    uplink_container.grid_rowconfigure(1, weight=1)
 
     uplink_gs_frame = ttk.LabelFrame(uplink_container, text="Ground Station Parameters", padding=10)
     uplink_gs_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=5)
@@ -1035,8 +1099,52 @@ def setup_gui():
     other_att_ul_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
     uplink_atm_frame.grid_columnconfigure(1, weight=1)
 
+    uplink_baseband_frame = ttk.LabelFrame(
+        uplink_container, text="Uplink Baseband Parameters", padding=10
+    )
+    uplink_baseband_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(0, 5))
+    ttk.Label(uplink_baseband_frame, text="UL Bit Rate [Mbps]").grid(
+        row=0, column=0, sticky="w", padx=5, pady=2
+    )
+    uplink_bitrate_entry = ttk.Entry(uplink_baseband_frame, width=15)
+    uplink_bitrate_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_baseband_frame, text="UL Roll-off Factor").grid(
+        row=0, column=2, sticky="w", padx=5, pady=2
+    )
+    uplink_rolloff_entry = ttk.Entry(uplink_baseband_frame, width=15)
+    uplink_rolloff_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_baseband_frame, text="UL Overhead (Conv. + RS)").grid(
+        row=1, column=0, sticky="w", padx=5, pady=2
+    )
+    uplink_overhead_entry = ttk.Entry(uplink_baseband_frame, width=15)
+    uplink_overhead_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+    ttk.Label(uplink_baseband_frame, text="UL Spectral Efficiency [b/s/Hz]").grid(
+        row=1, column=2, sticky="w", padx=5, pady=2
+    )
+    uplink_spectral_eff_entry = ttk.Entry(uplink_baseband_frame, width=15)
+    uplink_spectral_eff_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
+    info_bitrate_ul_var = tk.StringVar(value="UL Info Bit Rate [Mbps]: N/A")
+    channel_bw_ul_var = tk.StringVar(value="UL Channel BW [MHz]: N/A")
+    ttk.Label(uplink_baseband_frame, textvariable=info_bitrate_ul_var).grid(
+        row=2, column=0, columnspan=2, sticky="w", pady=(5, 0), padx=5
+    )
+    ttk.Label(uplink_baseband_frame, textvariable=channel_bw_ul_var).grid(
+        row=2, column=2, columnspan=2, sticky="w", padx=5
+    )
+
+    uplink_baseband_frame.grid_columnconfigure(1, weight=1)
+    uplink_baseband_frame.grid_columnconfigure(3, weight=1)
+
     for entry in [eirp_gs_entry, uplink_freq_entry, gt_sat_entry, demod_loss_ul_entry, other_att_ul_entry]:
         entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
+
+    for entry in [
+        uplink_bitrate_entry,
+        uplink_rolloff_entry,
+        uplink_overhead_entry,
+        uplink_spectral_eff_entry,
+    ]:
+        entry.bind("<KeyRelease>", update_link_budget_derived)
 
     # --- Buttons frame ---
     btn_frame = ttk.Frame(main_frame)
