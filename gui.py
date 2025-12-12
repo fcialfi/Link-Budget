@@ -125,13 +125,6 @@ def load_parameters_from_file():
             entry.delete(0, tk.END)
             entry.insert(0, str(payload[key]))
 
-    if "tle" in payload:
-        tle_values = payload["tle"]
-        if isinstance(tle_values, list) and len(tle_values) >= 2:
-            tle1_entry.delete(0, tk.END)
-            tle1_entry.insert(0, tle_values[0])
-            tle2_entry.delete(0, tk.END)
-            tle2_entry.insert(0, tle_values[1])
     if "date" in payload:
         try:
             datetime.strptime(payload["date"], "%Y-%m-%d")

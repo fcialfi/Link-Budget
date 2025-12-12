@@ -36,8 +36,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
   Lannion, 48.7333, -3.4542, 31
   ```
 - **File TLE**: devono contenere almeno due righe consecutive che iniziano con `1 ` e `2 ` (la prima riga del nome è facoltativa). Il pulsante **Load TLE from file** accetta file con tre righe (nome + linee 1-2) o due righe (solo linee 1-2).
-- **Parametri di simulazione (`parameters.json`)**: è possibile caricare tutti i campi numerici della GUI (oltre a TLE, data e stazione di terra) da un JSON. Le chiavi supportate sono:
-  - `tle`: array con due stringhe TLE
+- **Parametri di simulazione (`parameters.json`)**: è possibile caricare tutti i campi numerici della GUI (oltre a data e stazione di terra) da un JSON. Le chiavi supportate sono:
   - `date`: stringa `YYYY-MM-DD`
   - `ground_station`: nome presente nel catalogo caricato
   - `eirp_sat_dbw`, `frequency_ghz`, `c_io_dbhz`, `gt_gs_dbk`, `antenna_diameter_m`, `link_availability_pct`, `r001_mm_per_h`, `other_attenuations_db`, `bitrate_mbps`, `rolloff`, `demod_loss_db`, `overhead`, `spectral_efficiency_bpshz`
