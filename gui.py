@@ -27,8 +27,6 @@ if os.environ.get("GUI_DEBUG"):
 
 
 from calculations import (
-    GROUND_STATIONS,
-    GROUND_STATIONS_FILE,
     calculate_link_budget_parameters,
     atmospheric_attenuation,
     prepare_topocentric_data,
@@ -42,7 +40,7 @@ contact_windows = []
 df_all = pd.DataFrame()
 analysis_needs_refresh = True
 current_table_df = pd.DataFrame()
-current_gs_file = os.path.abspath(GROUND_STATIONS_FILE)
+current_gs_file = ""
 gs_menu: ttk.Combobox | None = None
 gs_file_var: tk.StringVar | None = None
 
@@ -174,7 +172,7 @@ def run_analysis():
         messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
         return
 
-    lat_gs, lon_gs, alt_gs_m = GROUND_STATIONS[gs_name]
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
     alt_gs_km = alt_gs_m / 1000.0
 
     ts = load.timescale()
@@ -321,7 +319,7 @@ def recalculate_link_budget():
         return
 
     gs_name = gs_var.get()
-    lat_gs, lon_gs, alt_gs_m = GROUND_STATIONS[gs_name]
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
     alt_gs_km = alt_gs_m / 1000.0
 
     ts = load.timescale()
@@ -703,12 +701,10 @@ def setup_gui():
     ttk.Label(tle_frame, text="TLE Line 1").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     tle1_entry = ttk.Entry(tle_frame, width=80)
     tle1_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-    tle1_entry.insert(0, "1 60543U 24149CD  25162.94191792  .00000746  00000-0  83463-4 0  9991")
     tle1_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Label(tle_frame, text="TLE Line 2").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     tle2_entry = ttk.Entry(tle_frame, width=80)
     tle2_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-    tle2_entry.insert(0, "2 60543  97.7161 238.0908 0000778 210.1805 149.9368 14.89762325 44544")
     tle2_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Button(tle_frame, text="Load TLE from file", command=load_tle_from_file).grid(
         row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
@@ -721,12 +717,11 @@ def setup_gui():
     ttk.Label(obs_frame, text="Date (YYYY-MM-DD)").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     date_entry = ttk.Entry(obs_frame, width=15)
     date_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
-    date_entry.insert(0, "2025-06-16")
+    date_entry.insert(0, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     date_entry.bind("<KeyRelease>", lambda event: set_analysis_stale())
     ttk.Label(obs_frame, text="Ground Station").grid(row=0, column=2, sticky="w", padx=5, pady=2)
-    default_gs = next(iter(GROUND_STATIONS)) if GROUND_STATIONS else ""
-    gs_var = tk.StringVar(value=default_gs)
-    gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=list(GROUND_STATIONS.keys()), state="readonly", width=15)
+    gs_var = tk.StringVar(value="")
+    gs_menu = ttk.Combobox(obs_frame, textvariable=gs_var, values=[], state="readonly", width=15)
     gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
     gs_menu.bind("<<ComboboxSelected>>", lambda event: set_analysis_stale())
     ttk.Button(
@@ -734,13 +729,7 @@ def setup_gui():
         text="Load Ground Stations",
         command=load_ground_stations_from_file,
     ).grid(row=0, column=4, sticky="w", padx=5, pady=2)
-    gs_file_var = tk.StringVar(
-        value=(
-            f"Ground stations: {current_gs_file}"
-            if os.path.isfile(current_gs_file)
-            else "Ground stations: built-in defaults"
-        )
-    )
+    gs_file_var = tk.StringVar(value="Ground stations: none loaded")
     ttk.Label(obs_frame, textvariable=gs_file_var, foreground="gray25").grid(
         row=1, column=0, columnspan=5, sticky="w", padx=5, pady=(6, 0)
     )
