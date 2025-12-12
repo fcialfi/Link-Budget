@@ -794,6 +794,9 @@ def calculate_ul_link_budget():
         messagebox.showwarning("Warning", "Please refresh the analysis first.")
         return
 
+    if uplink_needs_refresh:
+        recalculate_link_budget()
+
     if current_table_df.empty:
         messagebox.showwarning("Warning", "Please select a contact window first.")
         return
