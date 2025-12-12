@@ -1,15 +1,20 @@
 {
   "eirp_sat_dbw": 11.0,
+  "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,
+  "uplink_frequency_ghz": 7.2,
   "c_io_dbhz": 50.0,
   "gt_gs_dbk": 8.5,
+  "gt_sat_dbk": 0.5,
   "antenna_diameter_m": 3.7,
   "link_availability_pct": 99.0,
   "r001_mm_per_h": 12.5,
   "other_attenuations_db": 0.0,
+  "uplink_other_attenuations_db": 0.5,
   "bitrate_mbps": 3.57,
   "rolloff": 0.45,
   "demod_loss_db": 1.5,
+  "demod_loss_sat_db": 1.0,
   "overhead": 2.29,
   "spectral_efficiency_bpshz": 2.0
 }

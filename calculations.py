@@ -313,9 +313,9 @@ def prepare_topocentric_data(
 
 
 def calculate_link_budget_parameters(
-t_sky: "Time", # type: ignore
-    sat: "Satellite", # type: ignore
-    gs: "GroundStation", # type: ignore
+    t_sky: "Time",  # type: ignore
+    sat: "Satellite",  # type: ignore
+    gs: "GroundStation",  # type: ignore
     freq: u.Quantity,
     p: float,
     r001: float,
@@ -333,6 +333,12 @@ t_sky: "Time", # type: ignore
     pre_slant_range_km: Optional[float] = None,
     pre_doppler_khz: Optional[float] = None,
     pre_off_boresight_angle: Optional[float] = None,
+    uplink_freq: Optional[u.Quantity] = None,
+    eirp_gs: Optional[float] = None,
+    gt_sat: Optional[float] = None,
+    demod_loss_ul: float | None = None,
+    other_att_ul: float | None = None,
+    atm_att_ul: Optional[float] = None,
 ) -> Dict[str, Any]:
     
     """Compute link budget parameters for a single time step.
@@ -375,6 +381,20 @@ t_sky: "Time", # type: ignore
         Optional pre-computed geometry parameters for this time step. Providing
         these values avoids repeated calls to Skyfield when iterating over many
         epochs.
+    uplink_freq : :class:`~astropy.units.Quantity`, optional
+        Uplink frequency used to compute the reverse link budget. If omitted,
+        uplink metrics are not calculated.
+    eirp_gs : float, optional
+        Ground station EIRP in dBW used for the uplink budget.
+    gt_sat : float, optional
+        Satellite G/T in dB/K used for the uplink budget.
+    demod_loss_ul : float, optional
+        Implementation loss on the satellite receiver for the uplink, in dB.
+    other_att_ul : float, optional
+        Additional static uplink attenuations in dB.
+    atm_att_ul : float, optional
+        Pre-computed uplink atmospheric attenuation in dB. If ``None`` it is
+        recomputed using :func:`atmospheric_attenuation` with ``uplink_freq``.
 
     Returns
     -------
@@ -403,6 +423,10 @@ t_sky: "Time", # type: ignore
             Instantaneous Doppler frequency shift expressed in kilohertz.
         ``"Visible"`` : str
             ``"YES"`` if the elevation is above ``MIN_ELEVATION_DEG``°; otherwise ``"NO"``.
+
+        When all uplink parameters are provided, the dictionary also includes
+        ``"UL Path Loss (dB)"``, ``"UL Atmospheric Att (dB)"``,
+        ``"UL Rx Power (dBW)"``, ``"UL C/No (dBHz)"`` and ``"UL Eb/No (dB)"``.
     """
     if pre_alt_deg is None or pre_slant_range_km is None or pre_doppler_khz is None or pre_off_boresight_angle is None:
         diff = sat - gs
@@ -463,7 +487,7 @@ t_sky: "Time", # type: ignore
     else:
         ebno = np.nan
 
-    return {
+    results: Dict[str, Any] = {
         "Time (UTC)": t_sky.utc_datetime(),
         "Elevation (°)": elev,
         "Slant Range (km)": slant_range_km,
@@ -474,6 +498,51 @@ t_sky: "Time", # type: ignore
         "Rx Power (dBW)": rx_power,
         "C/(No+Io) (dBHz)": cn0,
         "Eb/No (dB)": ebno,
-        "Doppler Shift (kHz)": doppler_khz,        
+        "Doppler Shift (kHz)": doppler_khz,
         "Visible": "YES" if visible else "NO",
+        "UL Path Loss (dB)": None,
+        "UL Atmospheric Att (dB)": None,
+        "UL Pointing Loss (dB)": None,
+        "UL Rx Power (dBW)": None,
+        "UL C/No (dBHz)": None,
+        "UL Eb/No (dB)": None,
     }
+
+    if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+        ul_path_loss = (
+            20 * np.log10(slant_range_km)
+            + 20 * np.log10(uplink_freq.to(u.GHz).value)
+            + 92.45
+        )
+
+        if atm_att_ul is None:
+            atm_att_ul = atmospheric_attenuation(
+                gs.latitude.degrees,
+                gs.longitude.degrees,
+                uplink_freq.to(u.GHz).value,
+                p,
+                d_gs,
+                alt_gs,
+                r001,
+            )
+
+        ul_pointing_loss = pointing_loss
+        ul_other_att = 0.0 if other_att_ul is None else other_att_ul
+        ul_demod_loss = 0.0 if demod_loss_ul is None else demod_loss_ul
+
+        ul_rx_power = eirp_gs - ul_path_loss - atm_att_ul - ul_other_att - ul_pointing_loss
+        ul_cno = ul_rx_power + gt_sat + 228.6 - ul_demod_loss
+        ul_ebno = ul_cno - 10 * np.log10(bitrate / overhead) if bitrate > 0 and overhead > 0 else np.nan
+
+        results.update(
+            {
+                "UL Path Loss (dB)": ul_path_loss,
+                "UL Atmospheric Att (dB)": atm_att_ul,
+                "UL Pointing Loss (dB)": ul_pointing_loss,
+                "UL Rx Power (dBW)": ul_rx_power,
+                "UL C/No (dBHz)": ul_cno,
+                "UL Eb/No (dB)": ul_ebno,
+            }
+        )
+
+    return results
