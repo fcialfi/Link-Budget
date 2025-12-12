@@ -909,8 +909,17 @@ def setup_gui():
     obs_frame.grid_columnconfigure(4, weight=1)
     obs_frame.grid_columnconfigure(5, weight=1)
 
-    param_container = ttk.Frame(main_frame)
-    param_container.pack(fill=tk.X, pady=5, expand=True)
+    param_tabs = ttk.Notebook(main_frame)
+    param_tabs.pack(fill=tk.BOTH, pady=5, expand=True)
+
+    downlink_tab = ttk.Frame(param_tabs)
+    param_tabs.add(downlink_tab, text="Downlink")
+
+    uplink_tab = ttk.Frame(param_tabs)
+    param_tabs.add(uplink_tab, text="Uplink")
+
+    param_container = ttk.Frame(downlink_tab)
+    param_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
     param_container.grid_columnconfigure(0, weight=1)
     param_container.grid_columnconfigure(1, weight=1)
     param_container.grid_columnconfigure(2, weight=1)
@@ -992,8 +1001,12 @@ def setup_gui():
     update_link_budget_derived()
 
     # Uplink Parameters frame
-    uplink_frame = ttk.LabelFrame(param_container, text="Uplink Parameters", padding=10)
-    uplink_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 10), pady=5)
+    uplink_container = ttk.Frame(uplink_tab)
+    uplink_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    uplink_container.grid_columnconfigure(0, weight=1)
+
+    uplink_frame = ttk.LabelFrame(uplink_container, text="Uplink Parameters", padding=10)
+    uplink_frame.grid(row=0, column=0, sticky="nsew")
     ttk.Label(uplink_frame, text="EIRP GS [dBW]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     eirp_gs_entry = ttk.Entry(uplink_frame, width=15)
     eirp_gs_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
