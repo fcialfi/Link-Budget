@@ -1147,7 +1147,9 @@ def setup_gui():
     spectral_eff_entry.bind("<KeyRelease>", update_link_budget_derived)
     update_link_budget_derived()
 
-    downlink_btn_frame = ttk.Frame(downlink_tab)
+    downlink_btn_frame = ttk.LabelFrame(
+        downlink_tab, text="Downlink Actions", padding=10
+    )
     downlink_btn_frame.pack(fill=tk.X, pady=10, padx=5)
     start_refresh_button = ttk.Button(
         downlink_btn_frame,
@@ -1253,7 +1255,9 @@ def setup_gui():
     ]:
         entry.bind("<KeyRelease>", update_link_budget_derived)
 
-    uplink_actions_frame = ttk.Frame(uplink_tab)
+    uplink_actions_frame = ttk.LabelFrame(
+        uplink_tab, text="Uplink Actions", padding=10
+    )
     uplink_actions_frame.pack(fill=tk.X, pady=10, padx=5)
     ttk.Button(
         uplink_actions_frame,
