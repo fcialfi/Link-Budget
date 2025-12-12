@@ -640,14 +640,6 @@ def on_contact_select(event):
     ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
     ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
     ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
-    if "UL Eb/No (dB)" in df_pass and not df_pass["UL Eb/No (dB)"].isnull().all():
-        ax2_1.plot(
-            df_pass["Time (UTC)"],
-            df_pass["UL Eb/No (dB)"],
-            label="UL Eb/No (dB)",
-            color="tab:orange",
-            linestyle=":",
-        )
     ax2_2.plot(
         df_pass["Time (UTC)"],
         df_pass["C/(No+Io) (dBHz)"],
@@ -655,14 +647,6 @@ def on_contact_select(event):
         color="tab:green",
         linestyle="--",
     )
-    if "UL C/No (dBHz)" in df_pass and not df_pass["UL C/No (dBHz)"].isnull().all():
-        ax2_2.plot(
-            df_pass["Time (UTC)"],
-            df_pass["UL C/No (dBHz)"],
-            label="UL C/No (dBHz)",
-            color="tab:olive",
-            linestyle=":",
-        )
     ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
     ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
     ax2.set_xlabel("Time (UTC)", fontsize=8)
@@ -700,12 +684,6 @@ def on_contact_select(event):
         "C/(No+Io) (dBHz)",
         "Eb/No (dB)",
         "Doppler Shift (kHz)",
-        "UL Path Loss (dB)",
-        "UL Atmospheric Att (dB)",
-        "UL Pointing Loss (dB)",
-        "UL Rx Power (dBW)",
-        "UL C/No (dBHz)",
-        "UL Eb/No (dB)",
     ]
     table = ttk.Treeview(table_frame, columns=display_columns, show="headings")
     for col in display_columns:
@@ -1286,8 +1264,10 @@ def setup_gui():
     plot_frame = ttk.Frame(main_frame)
     plot_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-    table_frame = ttk.Frame(main_frame)
-    table_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+    downlink_results_frame = ttk.LabelFrame(main_frame, text="Downlink Results", padding=10)
+    downlink_results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+    table_frame = ttk.Frame(downlink_results_frame)
+    table_frame.pack(fill=tk.BOTH, expand=True)
 
     root.mainloop()
 
