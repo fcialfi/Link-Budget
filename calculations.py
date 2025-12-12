@@ -181,7 +181,7 @@ def calculate_doppler_shift(
     topocentric: "ToposAt",  # type: ignore
     freq: u.Quantity,
 ) -> float:
-    """Compute Doppler shift in Hz for the given topocentric position.
+    """Compute Doppler shift in kHz for the given topocentric position.
 
     Parameters
     ----------
@@ -193,7 +193,7 @@ def calculate_doppler_shift(
     Returns
     -------
     float
-        Doppler frequency shift in Hz. Positive values indicate an
+        Doppler frequency shift in **kHz**. Positive values indicate an
         approaching satellite (frequency increase).
     """
     los = topocentric.position.km
@@ -382,8 +382,8 @@ t_sky: "Time", # type: ignore
             Carrier-to-noise-plus-interference density.
         ``"Eb/No (dB)"`` : float
             Energy-per-bit to noise density.
-        ``"Doppler Shift (Hz)"`` : float
-            Instantaneous Doppler frequency shift.            
+        ``"Doppler Shift (kHz)"`` : float
+            Instantaneous Doppler frequency shift expressed in kilohertz.
         ``"Visible"`` : str
             ``"YES"`` if the elevation is above ``MIN_ELEVATION_DEG``°; otherwise ``"NO"``.
     """
