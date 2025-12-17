@@ -37,7 +37,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
   Lannion, 48.7333, -3.4542, 31
   ```
 - **File TLE**: devono contenere almeno due righe consecutive che iniziano con `1 ` e `2 ` (la prima riga del nome è facoltativa). Il pulsante **Load TLE from file** accetta file con tre righe (nome + linee 1-2) o due righe (solo linee 1-2).
-- **Parametri di simulazione (`parameters.json`)**: è possibile caricare tutti i campi numerici della GUI da un JSON. Le chiavi supportate sono `eirp_sat_dbw`, `eirp_gs_dbw`, `frequency_ghz`, `uplink_frequency_ghz`, `c_io_dbhz`, `gt_gs_dbk`, `gt_sat_dbk`, `antenna_diameter_m`, `link_availability_pct`, `r001_mm_per_h`, `other_attenuations_db`, `uplink_other_attenuations_db`, `bitrate_mbps`, `rolloff`, `demod_loss_db`, `demod_loss_sat_db`, `overhead`, `spectral_efficiency_bpshz`, `uplink_bitrate_mbps`, `uplink_rolloff`, `uplink_overhead`, `uplink_spectral_efficiency_bpshz`.
+- **Parametri di simulazione (`parameters.json`)**: è possibile caricare tutti i campi numerici della GUI da un JSON. Le chiavi supportate sono `eirp_sat_dbw`, `eirp_gs_dbw`, `frequency_ghz`, `uplink_frequency_ghz`, `c_io_dbhz`, `gt_gs_dbk`, `gt_sat_dbk`, `antenna_diameter_m`, `link_availability_pct`, `other_attenuations_db`, `uplink_other_attenuations_db`, `bitrate_mbps`, `rolloff`, `demod_loss_db`, `demod_loss_sat_db`, `overhead`, `spectral_efficiency_bpshz`, `uplink_bitrate_mbps`, `uplink_rolloff`, `uplink_overhead`, `uplink_spectral_efficiency_bpshz`. Il tasso di pioggia per R001 viene stimato automaticamente dalla libreria ITU-R e non deve essere specificato.
   Esempio:
   ```json
   {
@@ -86,4 +86,3 @@ Il file `__main__.py` è predisposto per essere usato come entry point anche qua
 
 ## License
 This project is released under the [MIT License](LICENSE).
-

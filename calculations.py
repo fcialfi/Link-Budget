@@ -228,9 +228,12 @@ def atmospheric_attenuation(
     p: float,
     d_gs: float,
     alt_gs: float,
-    r001: float,
 ) -> float:
-    """Return slant path atmospheric attenuation in dB."""
+    """Return slant path atmospheric attenuation in dB.
+
+    The ITU-R model internally estimates the point rainfall rate (R001) from
+    Recommendation P.837 when it is not provided explicitly.
+    """
     try:
         _, _, _, _, A_tot = itu.atmospheric_attenuation_slant_path(
             lat,
@@ -240,7 +243,6 @@ def atmospheric_attenuation(
             p,
             d_gs,
             hs=alt_gs,
-            R001=r001,
             return_contributions=True,
             include_gas=True,
             include_rain=True,
@@ -257,7 +259,7 @@ def atmospheric_attenuation(
             "  Inputs for error: "
             f"lat={lat}, lon={lon}, freq_GHz={freq_ghz}, "
             f"elev={MIN_ELEVATION_DEG}, P={p}, "
-            f"R001={r001}, D={d_gs}, h_s={alt_gs}",
+            f"D={d_gs}, h_s={alt_gs}",
             file=sys.stderr,
         )
         return 0.0
@@ -318,7 +320,6 @@ def calculate_link_budget_parameters(
     gs: "GroundStation",  # type: ignore
     freq: u.Quantity,
     p: float,
-    r001: float,
     d_gs: float,
     alt_gs: float,
     eirp_sat: float,
@@ -356,8 +357,6 @@ def calculate_link_budget_parameters(
         Downlink frequency.
     p : float
         Percentage of time attenuation is exceeded (100 - link availability).
-    r001 : float
-        Rain rate exceeded for 0.01% of the time in mm/h.
     d_gs : float
         Ground station antenna diameter in metres.
     alt_gs : float
@@ -466,7 +465,6 @@ def calculate_link_budget_parameters(
             p,
             d_gs,
             alt_gs,
-            r001,
         )
 
     if pre_off_boresight_angle is None:
@@ -534,7 +532,6 @@ def calculate_link_budget_parameters(
                 p,
                 d_gs,
                 alt_gs,
-                r001,
             )
 
         ul_pointing_loss = pointing_loss
