@@ -123,7 +123,6 @@ def load_parameters_from_file():
         "gt_sat_dbk": gt_sat_entry,
         "antenna_diameter_m": d_gs_entry,
         "link_availability_pct": LA_entry,
-        "r001_mm_per_h": r001_entry,
         "other_attenuations_db": other_att_entry,
         "uplink_other_attenuations_db": other_att_ul_entry,
         "bitrate_mbps": bitrate_entry,
@@ -265,7 +264,6 @@ def run_analysis():
         freq = float(freq_entry.get()) * u.GHz
         link_availability = float(LA_entry.get())
         p = 100.0 - link_availability
-        r001 = float(r001_entry.get())
         d_gs = float(d_gs_entry.get())
         other_att = float(other_att_entry.get() or 0.0)
         eirp_sat = float(eirp_sat_entry.get())
@@ -320,7 +318,6 @@ def run_analysis():
         p,
         d_gs,
         alt_gs_km,
-        r001,
     )
     uplink_atm_att = None
     if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
@@ -331,7 +328,6 @@ def run_analysis():
             p,
             d_gs,
             alt_gs_km,
-            r001,
         )
     atm_label_var.set(
         f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
@@ -350,7 +346,6 @@ def run_analysis():
             gs,
             freq,
             p,
-            r001,
             d_gs,
             alt_gs_km,
             eirp_sat,
@@ -447,7 +442,6 @@ def recalculate_link_budget():
         freq = float(freq_entry.get()) * u.GHz
         link_availability = float(LA_entry.get())
         p = 100.0 - link_availability
-        r001 = float(r001_entry.get())
         d_gs = float(d_gs_entry.get())
         other_att = float(other_att_entry.get() or 0.0)
         eirp_sat = float(eirp_sat_entry.get())
@@ -489,7 +483,6 @@ def recalculate_link_budget():
         p,
         d_gs,
         alt_gs_km,
-        r001,
     )
     uplink_atm_att = None
     if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
@@ -500,7 +493,6 @@ def recalculate_link_budget():
             p,
             d_gs,
             alt_gs_km,
-            r001,
         )
     atm_label_var.set(
         f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}\u00b0 El: {atm_att:.3f}"
@@ -526,7 +518,6 @@ def recalculate_link_budget():
             gs,
             freq,
             p,
-            r001,
             d_gs,
             alt_gs_km,
             eirp_sat,
@@ -932,7 +923,7 @@ def on_uplink_baseband_change(event=None):
 def setup_gui():
     """Initialise and launch the Tkinter graphical interface."""
     global root, tle1_entry, tle2_entry, date_entry, gs_var, freq_entry
-    global LA_entry, r001_entry, d_gs_entry, other_att_entry, eirp_sat_entry
+    global LA_entry, d_gs_entry, other_att_entry, eirp_sat_entry
     global eirp_gs_entry, uplink_freq_entry, gt_gs_entry, gt_sat_entry
     global demod_loss_ul_entry, other_att_ul_entry
     global CIo_entry, bitrate_entry, rolloff_entry, demod_loss_entry
@@ -1118,16 +1109,13 @@ def setup_gui():
     ttk.Label(atm_frame, text="Link Availability [%]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
     LA_entry = ttk.Entry(atm_frame, width=15)
     LA_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-    ttk.Label(atm_frame, text="R001 [mm/h]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-    r001_entry = ttk.Entry(atm_frame, width=15)
-    r001_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-    ttk.Label(atm_frame, text="Other Attenuations [dB]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+    ttk.Label(atm_frame, text="Other Attenuations [dB]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
     other_att_entry = ttk.Entry(atm_frame, width=15)
-    other_att_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+    other_att_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
     atm_label_var = tk.StringVar(
         value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"
     )
-    ttk.Label(atm_frame, textvariable=atm_label_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
+    ttk.Label(atm_frame, textvariable=atm_label_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
     atm_frame.grid_columnconfigure(1, weight=1)
 
     # Baseband Parameters frame
