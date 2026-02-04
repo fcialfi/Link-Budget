@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
+import tempfile
 from typing import Iterable, Sequence
 
 from skyfield.api import EarthSatellite, load, wgs84
@@ -239,6 +240,37 @@ def export_cesium_bundle(
             pass
 
     return CesiumExportPaths(czml_path=czml_path, html_path=html_path)
+
+
+def preview_cesium_view(
+    tle1: str,
+    tle2: str,
+    gs_name: str,
+    gs_lat: float,
+    gs_lon: float,
+    gs_alt_m: float,
+    times: Sequence[datetime],
+    title: str = "Link Budget Cesium Preview",
+) -> CesiumExportPaths:
+    """Create a temporary Cesium bundle and return the paths."""
+
+    if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
+        raise RuntimeError("CesiumPy is not available.")
+
+    tmp_dir = tempfile.mkdtemp(prefix="link_budget_cesium_")
+    output_base = os.path.join(tmp_dir, "cesium_preview")
+    paths = export_cesium_bundle(
+        tle1,
+        tle2,
+        gs_name,
+        gs_lat,
+        gs_lon,
+        gs_alt_m,
+        times,
+        output_base,
+        title=title,
+    )
+    return paths
 
 
 def slice_times(
