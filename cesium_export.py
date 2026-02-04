@@ -288,6 +288,8 @@ def _build_cesiumpy_viewer(czml_path: str, google_api_key: str | None = None):
 
     key = google_api_key or _cesiumpy_google_api_key
     if key:
+        os.environ.setdefault("GOOGLE_API_KEY", key)
+        os.environ.setdefault("GOOGLE_MAPS_API_KEY", key)
         try:
             return cesiumpy.Cesium(czml_path, google_api_key=key)
         except TypeError:

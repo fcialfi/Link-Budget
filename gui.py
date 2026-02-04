@@ -909,7 +909,7 @@ def preview_cesium_view_gui():
         available, detail = cesiumpy_status()
         google_hint = (
             "\nTip: set the CESIUMPY_GOOGLE_API_KEY environment variable "
-            "to your Google Maps API key."
+            "to your Google Maps API key (and verify the key is valid)."
         )
         messagebox.showerror(
             "Cesium Preview",
