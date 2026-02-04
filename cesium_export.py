@@ -10,10 +10,12 @@ from typing import Iterable, Sequence
 
 from skyfield.api import EarthSatellite, load, wgs84
 
+_cesiumpy_import_error: str | None = None
 try:  # Optional dependency
     import cesiumpy  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
+except Exception as exc:  # pragma: no cover - optional dependency
     cesiumpy = None
+    _cesiumpy_import_error = str(exc)
 
 
 DEFAULT_CESIUM_JS_URL = (
@@ -255,7 +257,8 @@ def preview_cesium_view(
     """Create a temporary Cesium bundle and return the paths."""
 
     if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
-        raise RuntimeError("CesiumPy is not available.")
+        detail = _cesiumpy_import_error or "Missing CesiumPy or Cesium class."
+        raise RuntimeError(f"CesiumPy is not available: {detail}")
 
     tmp_dir = tempfile.mkdtemp(prefix="link_budget_cesium_")
     output_base = os.path.join(tmp_dir, "cesium_preview")
@@ -271,6 +274,15 @@ def preview_cesium_view(
         title=title,
     )
     return paths
+
+
+def cesiumpy_status() -> tuple[bool, str]:
+    """Return whether CesiumPy is available and a human-readable detail."""
+
+    if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
+        detail = _cesiumpy_import_error or "Missing CesiumPy or Cesium class."
+        return False, detail
+    return True, "CesiumPy is available."
 
 
 def slice_times(

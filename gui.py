@@ -15,7 +15,12 @@ import json
 import webbrowser
 
 import calculations
-from cesium_export import export_cesium_bundle, preview_cesium_view, slice_times
+from cesium_export import (
+    cesiumpy_status,
+    export_cesium_bundle,
+    preview_cesium_view,
+    slice_times,
+)
 
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
@@ -878,10 +883,12 @@ def preview_cesium_view_gui():
             times,
         )
     except Exception as exc:
+        available, detail = cesiumpy_status()
         messagebox.showerror(
             "Cesium Preview",
             "CesiumPy preview is not available.\n"
             f"Details: {exc}\n"
+            f"CesiumPy status: {'available' if available else 'missing'} ({detail})\n"
             "Tip: use 'Export Cesium View' to create HTML/CZML without CesiumPy.",
         )
         return
