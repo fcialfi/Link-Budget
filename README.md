@@ -72,6 +72,8 @@ L'export funziona senza dipendenze extra, ma se hai già installato `cesiumpy` v
 ### Preview Cesium (CesiumPy)
 Se `cesiumpy` è disponibile, il pulsante **Preview Cesium (CesiumPy)** crea un bundle temporaneo e apre il viewer automaticamente nel browser. È utile per un'anteprima rapida, mentre l'export serve per condividere i file HTML/CZML o conservarli in una cartella specifica.
 
+> Nota: alcune versioni di CesiumPy richiedono una Google Maps API key. In tal caso, imposta la variabile d'ambiente `CESIUMPY_GOOGLE_API_KEY` prima di avviare il programma.
+
 ## Creare un eseguibile
 Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
 

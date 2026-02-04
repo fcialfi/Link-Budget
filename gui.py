@@ -884,12 +884,19 @@ def preview_cesium_view_gui():
         )
     except Exception as exc:
         available, detail = cesiumpy_status()
+        google_hint = ""
+        if "Google requires" in str(exc) or "google_api_key" in str(exc):
+            google_hint = (
+                "\nTip: set the CESIUMPY_GOOGLE_API_KEY environment variable "
+                "to your Google Maps API key."
+            )
         messagebox.showerror(
             "Cesium Preview",
             "CesiumPy preview is not available.\n"
             f"Details: {exc}\n"
             f"CesiumPy status: {'available' if available else 'missing'} ({detail})\n"
-            "Tip: use 'Export Cesium View' to create HTML/CZML without CesiumPy.",
+            "Tip: use 'Export Cesium View' to create HTML/CZML without CesiumPy."
+            f"{google_hint}",
         )
         return
 

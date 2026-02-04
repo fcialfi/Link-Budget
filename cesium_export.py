@@ -11,6 +11,7 @@ from typing import Iterable, Sequence
 from skyfield.api import EarthSatellite, load, wgs84
 
 _cesiumpy_import_error: str | None = None
+_cesiumpy_google_api_key = os.environ.get("CESIUMPY_GOOGLE_API_KEY")
 try:  # Optional dependency
     import cesiumpy  # type: ignore
 except Exception as exc:  # pragma: no cover - optional dependency
@@ -236,7 +237,7 @@ def export_cesium_bundle(
 
     if cesiumpy is not None and hasattr(cesiumpy, "Cesium"):
         try:  # Best-effort CesiumPy integration
-            viewer = cesiumpy.Cesium(czml_path)
+            viewer = _build_cesiumpy_viewer(czml_path)
             viewer.save(html_path)
         except Exception:
             pass
@@ -276,13 +277,29 @@ def preview_cesium_view(
     return paths
 
 
+def _build_cesiumpy_viewer(czml_path: str):
+    """Create a CesiumPy viewer with optional Google API key support."""
+
+    if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
+        raise RuntimeError("CesiumPy is not available.")
+
+    if _cesiumpy_google_api_key:
+        try:
+            return cesiumpy.Cesium(czml_path, google_api_key=_cesiumpy_google_api_key)
+        except TypeError:
+            return cesiumpy.Cesium(czml_path)
+    return cesiumpy.Cesium(czml_path)
+
+
 def cesiumpy_status() -> tuple[bool, str]:
     """Return whether CesiumPy is available and a human-readable detail."""
 
     if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
         detail = _cesiumpy_import_error or "Missing CesiumPy or Cesium class."
         return False, detail
-    return True, "CesiumPy is available."
+    if _cesiumpy_google_api_key:
+        return True, "CesiumPy is available (Google API key set)."
+    return True, "CesiumPy is available (no Google API key set)."
 
 
 def slice_times(
