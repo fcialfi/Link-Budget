@@ -213,6 +213,7 @@ def export_cesium_bundle(
     title: str = "Link Budget Cesium View",
     cesium_js_url: str = DEFAULT_CESIUM_JS_URL,
     cesium_css_url: str = DEFAULT_CESIUM_CSS_URL,
+    google_api_key: str | None = None,
 ) -> CesiumExportPaths:
     """Write CZML + HTML bundle for the selected time window."""
 
@@ -237,7 +238,7 @@ def export_cesium_bundle(
 
     if cesiumpy is not None and hasattr(cesiumpy, "Cesium"):
         try:  # Best-effort CesiumPy integration
-            viewer = _build_cesiumpy_viewer(czml_path)
+            viewer = _build_cesiumpy_viewer(czml_path, google_api_key=google_api_key)
             viewer.save(html_path)
         except Exception:
             pass
@@ -254,6 +255,7 @@ def preview_cesium_view(
     gs_alt_m: float,
     times: Sequence[datetime],
     title: str = "Link Budget Cesium Preview",
+    google_api_key: str | None = None,
 ) -> CesiumExportPaths:
     """Create a temporary Cesium bundle and return the paths."""
 
@@ -273,19 +275,21 @@ def preview_cesium_view(
         times,
         output_base,
         title=title,
+        google_api_key=google_api_key,
     )
     return paths
 
 
-def _build_cesiumpy_viewer(czml_path: str):
+def _build_cesiumpy_viewer(czml_path: str, google_api_key: str | None = None):
     """Create a CesiumPy viewer with optional Google API key support."""
 
     if cesiumpy is None or not hasattr(cesiumpy, "Cesium"):
         raise RuntimeError("CesiumPy is not available.")
 
-    if _cesiumpy_google_api_key:
+    key = google_api_key or _cesiumpy_google_api_key
+    if key:
         try:
-            return cesiumpy.Cesium(czml_path, google_api_key=_cesiumpy_google_api_key)
+            return cesiumpy.Cesium(czml_path, google_api_key=key)
         except TypeError:
             return cesiumpy.Cesium(czml_path)
     return cesiumpy.Cesium(czml_path)

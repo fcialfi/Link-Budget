@@ -1,6 +1,6 @@
 """Tkinter GUI for the satellite link budget tool."""
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import datetime, timedelta, timezone
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -872,8 +872,8 @@ def preview_cesium_view_gui():
     gs_name = gs_var.get()
     lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
 
-    try:
-        paths = preview_cesium_view(
+    def _run_preview(google_api_key: str | None = None):
+        return preview_cesium_view(
             tle1,
             tle2,
             gs_name,
@@ -881,15 +881,36 @@ def preview_cesium_view_gui():
             lon_gs,
             alt_gs_m,
             times,
+            google_api_key=google_api_key,
         )
+
+    try:
+        paths = _run_preview()
     except Exception as exc:
-        available, detail = cesiumpy_status()
-        google_hint = ""
         if "Google requires" in str(exc) or "google_api_key" in str(exc):
-            google_hint = (
-                "\nTip: set the CESIUMPY_GOOGLE_API_KEY environment variable "
-                "to your Google Maps API key."
+            key = simpledialog.askstring(
+                "Cesium Preview",
+                "Inserisci la Google Maps API key per CesiumPy:",
+                show="*",
             )
+            if key:
+                try:
+                    paths = _run_preview(google_api_key=key)
+                except Exception as retry_exc:
+                    exc = retry_exc
+                else:
+                    messagebox.showinfo(
+                        "Cesium Preview",
+                        "Opening Cesium preview in your browser.\n"
+                        f"HTML: {paths.html_path}",
+                    )
+                    webbrowser.open(f"file://{paths.html_path}")
+                    return
+        available, detail = cesiumpy_status()
+        google_hint = (
+            "\nTip: set the CESIUMPY_GOOGLE_API_KEY environment variable "
+            "to your Google Maps API key."
+        )
         messagebox.showerror(
             "Cesium Preview",
             "CesiumPy preview is not available.\n"
