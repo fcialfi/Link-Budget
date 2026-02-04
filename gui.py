@@ -12,8 +12,10 @@ import astropy.units as u
 import os
 import sys
 import json
+import webbrowser
 
 import calculations
+from cesium_export import export_cesium_bundle, preview_cesium_view, slice_times
 
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
@@ -778,6 +780,120 @@ def export_table_csv():
         messagebox.showerror("Error", f"Failed to export CSV: {e}")
 
 
+def export_cesium_view():
+    """Export a Cesium CZML/HTML bundle for the selected contact window."""
+
+    if analysis_needs_refresh:
+        messagebox.showwarning("Warning", "Please refresh the analysis first.")
+        return
+
+    if df_all.empty:
+        messagebox.showwarning("Warning", "No analysis data available to export.")
+        return
+
+    selection = contact_listbox.curselection()
+    if not selection:
+        messagebox.showwarning("Warning", "Please select a contact window first.")
+        return
+
+    idx = selection[0]
+    start, end = contact_windows[idx]
+    times = slice_times(df_all["Time (UTC)"].tolist(), start, end)
+    if not times:
+        messagebox.showwarning("Warning", "No timestamps found for this contact window.")
+        return
+
+    output_base = filedialog.asksaveasfilename(
+        defaultextension=".html",
+        filetypes=[("HTML files", "*.html"), ("All files", "*.*")],
+        title="Save Cesium HTML",
+    )
+    if not output_base:
+        return
+
+    tle1 = tle1_entry.get().strip()
+    tle2 = tle2_entry.get().strip()
+    gs_name = gs_var.get()
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+
+    try:
+        paths = export_cesium_bundle(
+            tle1,
+            tle2,
+            gs_name,
+            lat_gs,
+            lon_gs,
+            alt_gs_m,
+            times,
+            output_base,
+        )
+    except Exception as exc:
+        messagebox.showerror("Cesium Export", f"Unable to export Cesium bundle: {exc}")
+        return
+
+    messagebox.showinfo(
+        "Cesium Export",
+        "Export completed. Opening HTML in your browser.\n"
+        f"HTML: {paths.html_path}\nCZML: {paths.czml_path}",
+    )
+    webbrowser.open(f"file://{paths.html_path}")
+
+
+def preview_cesium_view_gui():
+    """Render a Cesium preview (requires CesiumPy)."""
+
+    if analysis_needs_refresh:
+        messagebox.showwarning("Warning", "Please refresh the analysis first.")
+        return
+
+    if df_all.empty:
+        messagebox.showwarning("Warning", "No analysis data available to export.")
+        return
+
+    selection = contact_listbox.curselection()
+    if not selection:
+        messagebox.showwarning("Warning", "Please select a contact window first.")
+        return
+
+    idx = selection[0]
+    start, end = contact_windows[idx]
+    times = slice_times(df_all["Time (UTC)"].tolist(), start, end)
+    if not times:
+        messagebox.showwarning("Warning", "No timestamps found for this contact window.")
+        return
+
+    tle1 = tle1_entry.get().strip()
+    tle2 = tle2_entry.get().strip()
+    gs_name = gs_var.get()
+    lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+
+    try:
+        paths = preview_cesium_view(
+            tle1,
+            tle2,
+            gs_name,
+            lat_gs,
+            lon_gs,
+            alt_gs_m,
+            times,
+        )
+    except Exception as exc:
+        messagebox.showerror(
+            "Cesium Preview",
+            "CesiumPy preview is not available.\n"
+            f"Details: {exc}\n"
+            "Tip: use 'Export Cesium View' to create HTML/CZML without CesiumPy.",
+        )
+        return
+
+    messagebox.showinfo(
+        "Cesium Preview",
+        "Opening Cesium preview in your browser.\n"
+        f"HTML: {paths.html_path}",
+    )
+    webbrowser.open(f"file://{paths.html_path}")
+
+
 def calculate_ul_link_budget():
     """Render an uplink-only link budget table for the selected contact window."""
 
@@ -1181,6 +1297,14 @@ def setup_gui():
     ttk.Button(btn_frame, text="Export Table CSV", command=export_table_csv).pack(
         side=tk.LEFT, padx=5
     )
+    ttk.Button(btn_frame, text="Export Cesium View", command=export_cesium_view).pack(
+        side=tk.LEFT, padx=5
+    )
+    ttk.Button(
+        btn_frame,
+        text="Preview Cesium (CesiumPy)",
+        command=preview_cesium_view_gui,
+    ).pack(side=tk.LEFT, padx=5)
     ttk.Button(btn_frame, text="Exit", command=exit_app).pack(side=tk.RIGHT, padx=5)
 
     contact_frame = ttk.LabelFrame(

@@ -57,6 +57,20 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Adatta la tabella dell'antenna (`ANTENNA_PATTERN_ANGLES` e `ANTENNA_PATTERN_GAINS`) al tuo specifico diagramma.
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
+- Usa il pulsante **Export Cesium View** per generare un bundle HTML/CZML e visualizzare la traiettoria e la stazione di terra in 3D su CesiumJS.
+- Se hai installato `cesiumpy`, puoi usare **Preview Cesium (CesiumPy)** per aprire subito una preview senza scegliere un percorso di export.
+
+### Export Cesium (CZML + HTML)
+È disponibile un export in formato CZML con un viewer HTML pronto all'uso. Il pulsante **Export Cesium View**:
+
+1. Usa i dati di analisi già calcolati per il contatto selezionato.
+2. Genera un file `.czml` e un file `.html` nella posizione scelta.
+3. Apre automaticamente l'HTML nel browser.
+
+L'export funziona senza dipendenze extra, ma se hai già installato `cesiumpy` verrà utilizzato in modo opzionale. Il viewer HTML usa CesiumJS da CDN, quindi serve una connessione internet quando apri l'HTML.
+
+### Preview Cesium (CesiumPy)
+Se `cesiumpy` è disponibile, il pulsante **Preview Cesium (CesiumPy)** crea un bundle temporaneo e apre il viewer automaticamente nel browser. È utile per un'anteprima rapida, mentre l'export serve per condividere i file HTML/CZML o conservarli in una cartella specifica.
 
 ## Creare un eseguibile
 Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
