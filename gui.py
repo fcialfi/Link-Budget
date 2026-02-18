@@ -234,6 +234,30 @@ def _get_optional_float(entry: ttk.Entry) -> float | None:
     return float(text) if text else None
 
 
+def _classify_pass_direction(sat, ts, start_time: datetime, end_time: datetime) -> str:
+    """Return ``A`` for ascending passes and ``D`` for descending passes."""
+
+    t_start = ts.utc(
+        start_time.year,
+        start_time.month,
+        start_time.day,
+        start_time.hour,
+        start_time.minute,
+        start_time.second,
+    )
+    t_end = ts.utc(
+        end_time.year,
+        end_time.month,
+        end_time.day,
+        end_time.hour,
+        end_time.minute,
+        end_time.second,
+    )
+    lat_start = sat.at(t_start).subpoint().latitude.degrees
+    lat_end = sat.at(t_end).subpoint().latitude.degrees
+    return "A" if lat_end >= lat_start else "D"
+
+
 # --- Main Analysis Function ---
 
 def run_analysis():
@@ -406,10 +430,12 @@ def run_analysis():
             in_contact = True
         elif not is_visible_now and in_contact:
             contact_end_time = t_utc_dt
-            contact_windows.append((contact_start_time, contact_end_time))
+            pass_direction = _classify_pass_direction(sat, ts, contact_start_time, contact_end_time)
+            contact_windows.append((contact_start_time, contact_end_time, pass_direction))
             in_contact = False
     if in_contact:
-        contact_windows.append((contact_start_time, times[-1]))
+        pass_direction = _classify_pass_direction(sat, ts, contact_start_time, times[-1])
+        contact_windows.append((contact_start_time, times[-1], pass_direction))
 
     df_all = pd.DataFrame(results_list)
     display_contacts(contact_windows)
@@ -595,7 +621,12 @@ def clear_plot_and_table():
 def display_contacts(contacts):
     contact_listbox.delete(0, tk.END)
     filtered_contacts = []
-    for start, end in contacts:
+    for contact in contacts:
+        if len(contact) == 3:
+            start, end, pass_direction = contact
+        else:
+            start, end = contact
+            pass_direction = "A"
         if not df_all.empty:
             mask = (df_all["Time (UTC)"] >= start) & (df_all["Time (UTC)"] <= end)
             df_segment = df_all[mask]
@@ -603,13 +634,13 @@ def display_contacts(contacts):
                 not df_segment.empty
                 and df_segment["Elevation (°)"].max() >= MIN_ELEVATION_DEG
             ):
-                filtered_contacts.append((start, end))
+                filtered_contacts.append((start, end, pass_direction))
     global contact_windows
     contact_windows = filtered_contacts
-    for i, (start, end) in enumerate(contact_windows):
+    for i, (start, end, pass_direction) in enumerate(contact_windows):
         contact_listbox.insert(
             tk.END,
-            f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')}",
+            f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})",
         )
 
 
@@ -621,7 +652,7 @@ def on_contact_select(event):
         return
 
     idx = selection[0]
-    start, end = contact_windows[idx]
+    start, end, _ = contact_windows[idx]
     mask = (df_all["Time (UTC)"] >= start) & (df_all["Time (UTC)"] <= end)
     df_pass = df_all[mask].copy()
     global current_table_df
@@ -802,7 +833,7 @@ def export_cesium_view():
         return
 
     idx = selection[0]
-    start, end = contact_windows[idx]
+    start, end, _ = contact_windows[idx]
     times = slice_times(df_all["Time (UTC)"].tolist(), start, end)
     if not times:
         messagebox.showwarning("Warning", "No timestamps found for this contact window.")
@@ -861,7 +892,7 @@ def preview_cesium_view_gui():
         return
 
     idx = selection[0]
-    start, end = contact_windows[idx]
+    start, end, _ = contact_windows[idx]
     times = slice_times(df_all["Time (UTC)"].tolist(), start, end)
     if not times:
         messagebox.showwarning("Warning", "No timestamps found for this contact window.")
