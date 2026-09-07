@@ -64,8 +64,8 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
     Lines starting with ``#`` are treated as comments and ignored.
     """
 
-    # 🔴 NOVITÀ: se non viene passato nulla, usa il valore *corrente*
-    # di GROUND_STATIONS_FILE (che la GUI può aggiornare a runtime).
+    # Default to the current GROUND_STATIONS_FILE, which the GUI may have
+    # updated at runtime via reload_ground_stations().
     if file_path is None:
         file_path = GROUND_STATIONS_FILE
 
@@ -189,7 +189,7 @@ def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:
     losses = np.clip(losses, 0.0, None)
 
     if np.isscalar(angle_deg):
-        return float(losses)
+        return float(losses[0])
     return losses
 
 
