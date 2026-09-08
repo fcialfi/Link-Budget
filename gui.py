@@ -1036,12 +1036,19 @@ class LinkBudgetApp:
         self._open_fixed_link_budget_window(
             "Fixed-Elevation Downlink Link Budget",
             freq_entry=self.freq_entry,
+            freq_label="Frequency [GHz]",
             eirp_entry=self.eirp_sat_entry,
+            eirp_label="EIRP SAT [dBW]",
             gt_entry=self.gt_gs_entry,
+            gt_label="G/T GS [dB/K]",
             demod_loss_entry=self.demod_loss_entry,
+            demod_loss_label="Demodulator Loss [dB]",
             bitrate_entry=self.bitrate_entry,
+            bitrate_label="Bit Rate [Mbps]",
             overhead_entry=self.overhead_entry,
+            overhead_label="Overhead (Conv. + RS)",
             other_att_entry=self.other_att_entry,
+            other_att_label="Other Attenuations [dB]",
         )
 
     def show_fixed_uplink_link_budget(self):
@@ -1050,24 +1057,38 @@ class LinkBudgetApp:
         self._open_fixed_link_budget_window(
             "Fixed-Elevation Uplink Link Budget",
             freq_entry=self.uplink_freq_entry,
+            freq_label="Uplink Frequency [GHz]",
             eirp_entry=self.eirp_gs_entry,
+            eirp_label="EIRP GS [dBW]",
             gt_entry=self.gt_sat_entry,
+            gt_label="G/T SAT [dB/K]",
             demod_loss_entry=self.demod_loss_ul_entry,
+            demod_loss_label="Sat Demod Loss [dB]",
             bitrate_entry=self.uplink_bitrate_entry,
+            bitrate_label="UL Bit Rate [Mbps]",
             overhead_entry=self.uplink_overhead_entry,
+            overhead_label="UL Overhead (Conv. + RS)",
             other_att_entry=self.other_att_ul_entry,
+            other_att_label="Uplink Other Attenuations [dB]",
         )
 
     def _open_fixed_link_budget_window(
         self,
         title: str,
         freq_entry: ttk.Entry,
+        freq_label: str,
         eirp_entry: ttk.Entry,
+        eirp_label: str,
         gt_entry: ttk.Entry,
+        gt_label: str,
         demod_loss_entry: ttk.Entry,
+        demod_loss_label: str,
         bitrate_entry: ttk.Entry,
+        bitrate_label: str,
         overhead_entry: ttk.Entry,
+        overhead_label: str,
         other_att_entry: ttk.Entry,
+        other_att_label: str,
     ):
         """Open a popup computing a TLE-independent, fixed-elevation link budget.
 
@@ -1127,26 +1148,48 @@ class LinkBudgetApp:
         results_frame = ttk.Frame(win, padding=(15, 0, 15, 15))
         results_frame.pack(fill=tk.BOTH, expand=True)
 
+        def _parse_required(entry: ttk.Entry, label: str) -> float:
+            text = entry.get().strip()
+            if not text:
+                raise ValueError(f"'{label}' is empty. Please enter a value.")
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' must be a number (got '{text}').")
+
+        def _parse_optional(entry: ttk.Entry, label: str, default: float = 0.0) -> float:
+            text = entry.get().strip()
+            if not text:
+                return default
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' must be a number (got '{text}').")
+
         def _calculate():
             for widget in results_frame.winfo_children():
                 widget.destroy()
             try:
-                elevation_deg = float(elevation_entry.get())
-                sat_altitude_km = float(altitude_entry.get())
-                pointing_loss_db = float(mispoint_entry.get() or 0.0)
-                required_ebno_str = required_ebno_entry.get().strip()
-                required_ebno = float(required_ebno_str) if required_ebno_str else None
+                elevation_deg = _parse_required(elevation_entry, "Elevation Angle [deg]")
+                sat_altitude_km = _parse_required(altitude_entry, "Satellite Altitude [km]")
+                pointing_loss_db = _parse_optional(mispoint_entry, "Pointing / Mispoint Loss [dB]")
+                required_ebno = (
+                    _parse_required(required_ebno_entry, "Required Eb/No [dB]")
+                    if required_ebno_entry.get().strip()
+                    else None
+                )
 
-                freq = float(freq_entry.get()) * u.GHz
-                eirp = float(eirp_entry.get())
-                gt = float(gt_entry.get())
-                demod_loss = float(demod_loss_entry.get())
-                bitrate = float(bitrate_entry.get()) * 1e6
-                overhead = float(overhead_entry.get())
-                other_att = float(other_att_entry.get() or 0.0)
-                link_availability = float(self.LA_entry.get())
+                freq = _parse_required(freq_entry, freq_label) * u.GHz
+                eirp = _parse_required(eirp_entry, eirp_label)
+                gt = _parse_required(gt_entry, gt_label)
+                demod_loss = _parse_required(demod_loss_entry, demod_loss_label)
+                bitrate = _parse_required(bitrate_entry, bitrate_label) * 1e6
+                overhead = _parse_required(overhead_entry, overhead_label)
+                other_att = _parse_optional(other_att_entry, other_att_label)
+                link_availability = _parse_required(self.LA_entry, "Link Availability [%]")
+                d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
             except ValueError as exc:
-                messagebox.showerror("Input Error", f"Invalid numerical input: {exc}.", parent=win)
+                messagebox.showerror("Input Error", str(exc), parent=win)
                 return
 
             gs_name = self.gs_var.get()
@@ -1154,11 +1197,6 @@ class LinkBudgetApp:
                 messagebox.showerror("Error", "Please select a valid Ground Station first.", parent=win)
                 return
             lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
-            try:
-                d_gs = float(self.d_gs_entry.get())
-            except ValueError:
-                messagebox.showerror("Input Error", "Invalid Antenna Diameter GS value.", parent=win)
-                return
 
             budget = calculate_fixed_elevation_link_budget(
                 freq=freq,
