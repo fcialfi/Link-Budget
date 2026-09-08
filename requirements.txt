@@ -6,5 +6,8 @@ skyfield
 itur
 astropy
 scipy
+# pytest is required both to run the test suite and as a PyInstaller hidden
+# import: astropy.tests.runner optionally imports it, and gui.spec bundles it
+# so the frozen executable does not fail to import astropy at runtime.
 pytest
 
