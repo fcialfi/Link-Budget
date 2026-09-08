@@ -1036,12 +1036,19 @@ class LinkBudgetApp:
         self._open_fixed_link_budget_window(
             "Fixed-Elevation Downlink Link Budget",
             freq_entry=self.freq_entry,
+            freq_label="Frequency [GHz]",
             eirp_entry=self.eirp_sat_entry,
+            eirp_label="EIRP SAT [dBW]",
             gt_entry=self.gt_gs_entry,
+            gt_label="G/T GS [dB/K]",
             demod_loss_entry=self.demod_loss_entry,
+            demod_loss_label="Demodulator Loss [dB]",
             bitrate_entry=self.bitrate_entry,
+            bitrate_label="Bit Rate [Mbps]",
             overhead_entry=self.overhead_entry,
+            overhead_label="Overhead (Conv. + RS)",
             other_att_entry=self.other_att_entry,
+            other_att_label="Other Attenuations [dB]",
         )
 
     def show_fixed_uplink_link_budget(self):
@@ -1050,24 +1057,38 @@ class LinkBudgetApp:
         self._open_fixed_link_budget_window(
             "Fixed-Elevation Uplink Link Budget",
             freq_entry=self.uplink_freq_entry,
+            freq_label="Uplink Frequency [GHz]",
             eirp_entry=self.eirp_gs_entry,
+            eirp_label="EIRP GS [dBW]",
             gt_entry=self.gt_sat_entry,
+            gt_label="G/T SAT [dB/K]",
             demod_loss_entry=self.demod_loss_ul_entry,
+            demod_loss_label="Sat Demod Loss [dB]",
             bitrate_entry=self.uplink_bitrate_entry,
+            bitrate_label="UL Bit Rate [Mbps]",
             overhead_entry=self.uplink_overhead_entry,
+            overhead_label="UL Overhead (Conv. + RS)",
             other_att_entry=self.other_att_ul_entry,
+            other_att_label="Uplink Other Attenuations [dB]",
         )
 
     def _open_fixed_link_budget_window(
         self,
         title: str,
         freq_entry: ttk.Entry,
+        freq_label: str,
         eirp_entry: ttk.Entry,
+        eirp_label: str,
         gt_entry: ttk.Entry,
+        gt_label: str,
         demod_loss_entry: ttk.Entry,
+        demod_loss_label: str,
         bitrate_entry: ttk.Entry,
+        bitrate_label: str,
         overhead_entry: ttk.Entry,
+        overhead_label: str,
         other_att_entry: ttk.Entry,
+        other_att_label: str,
     ):
         """Open a popup computing a TLE-independent, fixed-elevation link budget.
 
@@ -1082,7 +1103,7 @@ class LinkBudgetApp:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=PALETTE["bg"])
-        win.geometry("620x560")
+        win.geometry("640x700")
 
         form = ttk.Frame(win, padding=15)
         form.pack(fill=tk.X)
@@ -1094,30 +1115,76 @@ class LinkBudgetApp:
                 "Preliminary worst-case check, independent of any TLE: the slant range "
                 "below is derived purely from the elevation angle and satellite altitude. "
                 "EIRP, G/T, frequency, bit rate and other losses are reused from the "
-                "parameters panel and the selected Ground Station."
+                "parameters panel and the selected Ground Station, shown below."
             ),
             foreground=PALETTE["text_muted"],
             wraplength=580,
             justify="left",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
 
-        ttk.Label(form, text="Elevation Angle [deg]").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+        recap_frame = ttk.LabelFrame(form, text="Using From Parameters Panel", padding=8)
+        recap_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        recap_frame.grid_columnconfigure(1, weight=1)
+        recap_frame.grid_columnconfigure(3, weight=1)
+
+        recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+        # (label, getter, text shown when empty, whether empty should be flagged in red)
+        recap_specs = [
+            ("Ground Station", lambda: self.gs_var.get(), "not set", True),
+            (freq_label, lambda: freq_entry.get().strip(), "not set", True),
+            (eirp_label, lambda: eirp_entry.get().strip(), "not set", True),
+            (gt_label, lambda: gt_entry.get().strip(), "not set", True),
+            (demod_loss_label, lambda: demod_loss_entry.get().strip(), "not set", True),
+            (bitrate_label, lambda: bitrate_entry.get().strip(), "not set", True),
+            (overhead_label, lambda: overhead_entry.get().strip(), "not set", True),
+            (other_att_label, lambda: other_att_entry.get().strip(), "0 (default)", False),
+            ("Antenna Diameter GS [m]", lambda: self.d_gs_entry.get().strip(), "not set", True),
+            ("Link Availability [%]", lambda: self.LA_entry.get().strip(), "not set", True),
+            ("Scintillation", lambda: "Included" if self.scint_var.get() else "Excluded", "", False),
+        ]
+        recap_value_labels: list[ttk.Label] = []
+        for i, (label_text, _getter, _empty_text, _flag_empty) in enumerate(recap_specs):
+            r, c = divmod(i, 2)
+            ttk.Label(
+                recap_frame,
+                text=f"{label_text}:",
+                font=(recap_font_family, 9),
+                foreground=PALETTE["text_muted"],
+            ).grid(row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=1)
+            value_label = ttk.Label(recap_frame, font=(recap_font_family, 9, "bold"))
+            value_label.grid(row=r, column=c * 2 + 1, sticky="w", pady=1)
+            recap_value_labels.append(value_label)
+
+        def _refresh_recap():
+            for (_, getter, empty_text, flag_empty), value_label in zip(recap_specs, recap_value_labels):
+                value = getter()
+                if not value:
+                    value_label.configure(
+                        text=empty_text, foreground=PALETTE["danger"] if flag_empty else PALETTE["text_muted"]
+                    )
+                else:
+                    value_label.configure(text=value, foreground=PALETTE["text"])
+
+        _refresh_recap()
+        win.bind("<FocusIn>", lambda event: _refresh_recap())
+
+        ttk.Label(form, text="Elevation Angle [deg]").grid(row=2, column=0, sticky="w", padx=5, pady=3)
         elevation_entry = ttk.Entry(form, width=15)
         elevation_entry.insert(0, f"{MIN_ELEVATION_DEG:g}")
-        elevation_entry.grid(row=1, column=1, sticky="w", padx=5, pady=3)
+        elevation_entry.grid(row=2, column=1, sticky="w", padx=5, pady=3)
 
-        ttk.Label(form, text="Satellite Altitude [km]").grid(row=2, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Satellite Altitude [km]").grid(row=3, column=0, sticky="w", padx=5, pady=3)
         altitude_entry = ttk.Entry(form, width=15)
-        altitude_entry.grid(row=2, column=1, sticky="w", padx=5, pady=3)
+        altitude_entry.grid(row=3, column=1, sticky="w", padx=5, pady=3)
 
-        ttk.Label(form, text="Pointing / Mispoint Loss [dB]").grid(row=3, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Pointing / Mispoint Loss [dB]").grid(row=4, column=0, sticky="w", padx=5, pady=3)
         mispoint_entry = ttk.Entry(form, width=15)
         mispoint_entry.insert(0, "0")
-        mispoint_entry.grid(row=3, column=1, sticky="w", padx=5, pady=3)
+        mispoint_entry.grid(row=4, column=1, sticky="w", padx=5, pady=3)
 
-        ttk.Label(form, text="Required Eb/No [dB] (optional)").grid(row=4, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Required Eb/No [dB] (optional)").grid(row=5, column=0, sticky="w", padx=5, pady=3)
         required_ebno_entry = ttk.Entry(form, width=15)
-        required_ebno_entry.grid(row=4, column=1, sticky="w", padx=5, pady=3)
+        required_ebno_entry.grid(row=5, column=1, sticky="w", padx=5, pady=3)
         _add_tooltip(
             required_ebno_entry,
             "Modulation/FEC Eb/No threshold, if known. When set, a Link Margin row "
@@ -1127,26 +1194,49 @@ class LinkBudgetApp:
         results_frame = ttk.Frame(win, padding=(15, 0, 15, 15))
         results_frame.pack(fill=tk.BOTH, expand=True)
 
+        def _parse_required(entry: ttk.Entry, label: str) -> float:
+            text = entry.get().strip()
+            if not text:
+                raise ValueError(f"'{label}' is empty. Please enter a value.")
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' must be a number (got '{text}').")
+
+        def _parse_optional(entry: ttk.Entry, label: str, default: float = 0.0) -> float:
+            text = entry.get().strip()
+            if not text:
+                return default
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' must be a number (got '{text}').")
+
         def _calculate():
+            _refresh_recap()
             for widget in results_frame.winfo_children():
                 widget.destroy()
             try:
-                elevation_deg = float(elevation_entry.get())
-                sat_altitude_km = float(altitude_entry.get())
-                pointing_loss_db = float(mispoint_entry.get() or 0.0)
-                required_ebno_str = required_ebno_entry.get().strip()
-                required_ebno = float(required_ebno_str) if required_ebno_str else None
+                elevation_deg = _parse_required(elevation_entry, "Elevation Angle [deg]")
+                sat_altitude_km = _parse_required(altitude_entry, "Satellite Altitude [km]")
+                pointing_loss_db = _parse_optional(mispoint_entry, "Pointing / Mispoint Loss [dB]")
+                required_ebno = (
+                    _parse_required(required_ebno_entry, "Required Eb/No [dB]")
+                    if required_ebno_entry.get().strip()
+                    else None
+                )
 
-                freq = float(freq_entry.get()) * u.GHz
-                eirp = float(eirp_entry.get())
-                gt = float(gt_entry.get())
-                demod_loss = float(demod_loss_entry.get())
-                bitrate = float(bitrate_entry.get()) * 1e6
-                overhead = float(overhead_entry.get())
-                other_att = float(other_att_entry.get() or 0.0)
-                link_availability = float(self.LA_entry.get())
+                freq = _parse_required(freq_entry, freq_label) * u.GHz
+                eirp = _parse_required(eirp_entry, eirp_label)
+                gt = _parse_required(gt_entry, gt_label)
+                demod_loss = _parse_required(demod_loss_entry, demod_loss_label)
+                bitrate = _parse_required(bitrate_entry, bitrate_label) * 1e6
+                overhead = _parse_required(overhead_entry, overhead_label)
+                other_att = _parse_optional(other_att_entry, other_att_label)
+                link_availability = _parse_required(self.LA_entry, "Link Availability [%]")
+                d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
             except ValueError as exc:
-                messagebox.showerror("Input Error", f"Invalid numerical input: {exc}.", parent=win)
+                messagebox.showerror("Input Error", str(exc), parent=win)
                 return
 
             gs_name = self.gs_var.get()
@@ -1154,11 +1244,6 @@ class LinkBudgetApp:
                 messagebox.showerror("Error", "Please select a valid Ground Station first.", parent=win)
                 return
             lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
-            try:
-                d_gs = float(self.d_gs_entry.get())
-            except ValueError:
-                messagebox.showerror("Input Error", "Invalid Antenna Diameter GS value.", parent=win)
-                return
 
             budget = calculate_fixed_elevation_link_budget(
                 freq=freq,
@@ -1182,7 +1267,7 @@ class LinkBudgetApp:
             self._render_fixed_link_budget_results(results_frame, budget, link_availability)
 
         ttk.Button(form, text="Calculate", command=_calculate, style="Red.TButton").grid(
-            row=5, column=0, columnspan=2, sticky="w", padx=5, pady=(10, 0)
+            row=6, column=0, columnspan=2, sticky="w", padx=5, pady=(10, 0)
         )
 
     def _render_fixed_link_budget_results(self, parent, budget, link_availability_pct):
