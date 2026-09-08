@@ -2,45 +2,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
-from datetime import datetime, timedelta, timezone
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.dates import MinuteLocator
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import pandas as pd
-from skyfield.api import load, EarthSatellite, wgs84
-import astropy.units as u
-import os
-import sys
-import json
-
-import calculations
-
-# Add path of the current script (works also in PyInstaller .exe)
-if getattr(sys, 'frozen', False):
-    base_path = sys._MEIPASS  # PyInstaller temp path
-else:
-    base_path = os.path.dirname(os.path.abspath(__file__))
-
-sys.path.insert(0, base_path)
-if os.environ.get("GUI_DEBUG"):
-    print(f"Running from base_path: {base_path}")
-    print("Current directory content:", os.listdir(base_path))
-
-
-from calculations import (
-    calculate_link_budget_parameters,
-    atmospheric_attenuation,
-    prepare_topocentric_data,
-    load_antenna_pattern,
-    reload_ground_stations,
-    MIN_ELEVATION_DEG,
-)
-
 
 # ---------------------------------------------------------------------------
 # Visual theme
 # ---------------------------------------------------------------------------
+# Defined up here, before the slower imports below, because the startup
+# splash screen needs it immediately.
 PALETTE = {
     "bg": "#eef1f6",
     "surface": "#ffffff",
@@ -77,6 +44,133 @@ def _pick_font(preferred: list[str], fallback: str = "TkDefaultFont") -> str:
         if name in available:
             return name
     return fallback
+
+
+# ---------------------------------------------------------------------------
+# Startup splash screen
+# ---------------------------------------------------------------------------
+# ``matplotlib``/``pandas``/``skyfield``/``astropy``/``itur`` (imported right
+# below) can take several seconds to load -- especially the first time a
+# frozen PyInstaller build unpacks them -- during which the app would
+# otherwise show nothing at all and look hung. This splash uses only
+# ``tkinter`` (already imported above) so it can appear before any of those
+# heavier imports even start, then gets reused as the main window once the
+# real UI is ready (see ``LinkBudgetApp._build_ui``).
+
+
+def _show_startup_splash():
+    """Create and immediately display a "Loading..." popup."""
+
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.configure(bg=PALETTE["header_bg"])
+
+    font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+
+    width, height = 420, 170
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    root.geometry(f"{width}x{height}+{(screen_w - width) // 2}+{(screen_h - height) // 2}")
+
+    tk.Label(
+        root, text="LB", bg=PALETTE["accent"], fg="white", font=(font_family, 16, "bold"), width=3
+    ).pack(pady=(24, 10))
+    tk.Label(
+        root,
+        text="Satellite Link Budget Tool",
+        bg=PALETTE["header_bg"],
+        fg=PALETTE["header_fg"],
+        font=(font_family, 12, "bold"),
+    ).pack()
+    tk.Label(
+        root,
+        text="Loading, please wait...",
+        bg=PALETTE["header_bg"],
+        fg=PALETTE["header_fg_muted"],
+        font=(font_family, 9),
+    ).pack(pady=(4, 14))
+
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure(
+        "Splash.Horizontal.TProgressbar",
+        troughcolor=PALETTE["header_bg"],
+        background=PALETTE["accent"],
+        bordercolor=PALETTE["header_bg"],
+        lightcolor=PALETTE["accent"],
+        darkcolor=PALETTE["accent"],
+    )
+    progress = ttk.Progressbar(
+        root, mode="indeterminate", length=280, style="Splash.Horizontal.TProgressbar"
+    )
+    progress.pack()
+    progress.start(15)
+
+    root.update()
+    return root, progress
+
+
+def _splash_tick(root, progress):
+    """Pump the Tk event loop once so the splash stays responsive/animated.
+
+    Safe to call even after the splash has been torn down.
+    """
+
+    try:
+        progress.step(8)
+        root.update()
+    except tk.TclError:
+        pass
+
+
+_SPLASH_ROOT, _SPLASH_PROGRESS = _show_startup_splash()
+
+from datetime import datetime, timedelta, timezone
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.dates import MinuteLocator
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+import pandas as pd
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+from skyfield.api import load, EarthSatellite, wgs84
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+import astropy.units as u
+import os
+import sys
+import json
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+import calculations
+
+# Add path of the current script (works also in PyInstaller .exe)
+if getattr(sys, 'frozen', False):
+    base_path = sys._MEIPASS  # PyInstaller temp path
+else:
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, base_path)
+if os.environ.get("GUI_DEBUG"):
+    print(f"Running from base_path: {base_path}")
+    print("Current directory content:", os.listdir(base_path))
+
+
+from calculations import (
+    calculate_link_budget_parameters,
+    atmospheric_attenuation,
+    prepare_topocentric_data,
+    load_antenna_pattern,
+    reload_ground_stations,
+    MIN_ELEVATION_DEG,
+)
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 
 
 def _get_optional_float(entry: ttk.Entry) -> float | None:
@@ -1021,7 +1115,19 @@ class LinkBudgetApp:
 
     def _build_ui(self):
         """Initialise the Tkinter widget tree."""
-        self.root = tk.Tk()
+        global _SPLASH_ROOT, _SPLASH_PROGRESS
+        if _SPLASH_ROOT is not None:
+            # Reuse the splash's root window instead of opening a second one.
+            self.root = _SPLASH_ROOT
+            _SPLASH_PROGRESS.stop()
+            for widget in self.root.winfo_children():
+                widget.destroy()
+            self.root.overrideredirect(False)
+            self.root.attributes("-topmost", False)
+            _SPLASH_ROOT = None
+            _SPLASH_PROGRESS = None
+        else:
+            self.root = tk.Tk()
         self.root.title("Satellite Link Budget Tool")
         self.root.geometry("1200x950")
         self.root.minsize(1000, 700)
