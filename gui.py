@@ -204,6 +204,61 @@ def _classify_pass_direction(sat, ts, start_time: datetime, end_time: datetime) 
     return "A" if lat_end >= lat_start else "D"
 
 
+class _Tooltip:
+    """A small hover tooltip shown after a short delay over ``widget``."""
+
+    def __init__(self, widget, text: str, delay: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id: str | None = None
+        self._tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._schedule)
+        widget.bind("<Leave>", self._hide)
+        widget.bind("<ButtonPress>", self._hide)
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after_id is not None:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self):
+        if self._tip is not None or not self.widget.winfo_viewable():
+            return
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.wm_overrideredirect(True)
+        self._tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            self._tip,
+            text=self.text,
+            background=PALETTE["header_bg"],
+            foreground=PALETTE["header_fg"],
+            font=("TkDefaultFont", 9),
+            padx=8,
+            pady=5,
+            wraplength=320,
+            justify="left",
+        ).pack()
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+
+def _add_tooltip(widget, text: str) -> None:
+    """Attach a hover tooltip with ``text`` to ``widget``."""
+
+    _Tooltip(widget, text)
+
+
 class LinkBudgetApp:
     """Tkinter application for the satellite link budget tool.
 
@@ -495,6 +550,7 @@ class LinkBudgetApp:
             p,
             d_gs,
             alt_gs_km,
+            include_scintillation=self.scint_var.get(),
         )
         uplink_atm_att = None
         if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
@@ -505,6 +561,7 @@ class LinkBudgetApp:
                 p,
                 d_gs,
                 alt_gs_km,
+                include_scintillation=self.scint_var.get(),
             )
         self.atm_label_var.set(
             f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
@@ -666,6 +723,7 @@ class LinkBudgetApp:
             p,
             d_gs,
             alt_gs_km,
+            include_scintillation=self.scint_var.get(),
         )
         uplink_atm_att = None
         if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
@@ -676,6 +734,7 @@ class LinkBudgetApp:
                 p,
                 d_gs,
                 alt_gs_km,
+                include_scintillation=self.scint_var.get(),
             )
         self.atm_label_var.set(
             f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
@@ -1356,36 +1415,63 @@ class LinkBudgetApp:
         # --- Observation Settings Section ---
         obs_frame = ttk.LabelFrame(main_frame, text="Observation Settings", padding=10)
         obs_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(obs_frame, text="Date (YYYY-MM-DD)").grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        self.date_entry = ttk.Entry(obs_frame, width=15)
-        self.date_entry.grid(row=0, column=1, sticky="w", padx=5, pady=2)
+        obs_frame.grid_columnconfigure(0, weight=1)
+
+        # Row 1: what pass to analyse (date + ground station).
+        pass_row = ttk.Frame(obs_frame)
+        pass_row.grid(row=0, column=0, sticky="ew", padx=5)
+
+        ttk.Label(pass_row, text="Date (YYYY-MM-DD)").pack(side=tk.LEFT)
+        self.date_entry = ttk.Entry(pass_row, width=15)
+        self.date_entry.pack(side=tk.LEFT, padx=(6, 24))
         self.date_entry.insert(0, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         self.date_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
-        ttk.Label(obs_frame, text="Ground Station").grid(row=0, column=2, sticky="w", padx=5, pady=2)
+
+        ttk.Label(pass_row, text="Ground Station").pack(side=tk.LEFT)
         self.gs_var = tk.StringVar(value="")
-        self.gs_menu = ttk.Combobox(obs_frame, textvariable=self.gs_var, values=[], state="readonly", width=15)
-        self.gs_menu.grid(row=0, column=3, sticky="w", padx=5, pady=2)
+        self.gs_menu = ttk.Combobox(pass_row, textvariable=self.gs_var, values=[], state="readonly", width=15)
+        self.gs_menu.pack(side=tk.LEFT, padx=(6, 12))
         self.gs_menu.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
-        ttk.Button(
-            obs_frame,
-            text="Load Ground Stations",
-            command=self.load_ground_stations_from_file,
-        ).grid(row=0, column=4, sticky="w", padx=5, pady=2)
-        ttk.Button(obs_frame, text="Load Parameters", command=self.load_parameters_from_file).grid(
-            row=0, column=5, sticky="w", padx=5, pady=2
+
+        load_gs_btn = ttk.Button(
+            pass_row, text="Load Ground Stations...", command=self.load_ground_stations_from_file
         )
+        load_gs_btn.pack(side=tk.LEFT)
+        _add_tooltip(
+            load_gs_btn,
+            "Load a custom ground station catalogue (name, latitude, longitude, altitude) from a "
+            ".txt/.csv file. Replaces the choices in the Ground Station dropdown above.",
+        )
+
         self.gs_file_var = tk.StringVar(value="Ground stations: none loaded")
         ttk.Label(obs_frame, textvariable=self.gs_file_var, foreground=PALETTE["text_muted"]).grid(
-            row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(6, 0)
+            row=1, column=0, sticky="w", padx=5, pady=(4, 10)
         )
+
+        ttk.Separator(obs_frame, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(0, 10))
+
+        # Row 2: bulk-import link budget parameters from a JSON file.
+        params_row = ttk.Frame(obs_frame)
+        params_row.grid(row=3, column=0, sticky="ew", padx=5)
+        load_params_btn = ttk.Button(
+            params_row,
+            text="Import Link Budget Parameters (.json)...",
+            command=self.load_parameters_from_file,
+        )
+        load_params_btn.pack(side=tk.LEFT)
+        params_hint = (
+            "Fills EIRP, G/T, bit rate, roll-off and the other downlink/uplink fields below from a "
+            "saved JSON file, instead of typing them in one by one."
+        )
+        _add_tooltip(load_params_btn, f"{params_hint} See the README for the expected file format.")
+        ttk.Label(params_row, text=params_hint, foreground=PALETTE["text_muted"], wraplength=620).pack(
+            side=tk.LEFT, padx=(12, 0)
+        )
+
         self.param_file_var = tk.StringVar(value="Parameters: none loaded")
         ttk.Label(obs_frame, textvariable=self.param_file_var, foreground=PALETTE["text_muted"]).grid(
-            row=2, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 0)
+            row=4, column=0, sticky="w", padx=5, pady=(4, 0)
         )
-        obs_frame.grid_columnconfigure(1, weight=1)
-        obs_frame.grid_columnconfigure(3, weight=1)
-        obs_frame.grid_columnconfigure(4, weight=1)
-        obs_frame.grid_columnconfigure(5, weight=1)
 
         param_tabs = ttk.Notebook(main_frame)
         param_tabs.pack(fill=tk.BOTH, pady=5, expand=True)
@@ -1439,10 +1525,25 @@ class LinkBudgetApp:
         ttk.Label(atm_frame, text="Other Attenuations [dB]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.other_att_entry = ttk.Entry(atm_frame, width=15)
         self.other_att_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        self.scint_var = tk.BooleanVar(value=True)
+        scint_check = ttk.Checkbutton(
+            atm_frame,
+            text="Scintillation loss",
+            variable=self.scint_var,
+            command=self.set_analysis_stale,
+        )
+        scint_check.grid(row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(8, 0))
+        _add_tooltip(
+            scint_check,
+            "ITU-R P.618 tropospheric scintillation fading, applied to both downlink and uplink. "
+            "Matters mainly above ~4 GHz (more so in Ku/Ka-band); usually negligible below that. "
+            "This does NOT model ionospheric scintillation (relevant at L/S-band and below), "
+            "which this tool does not implement.",
+        )
         self.atm_label_var = tk.StringVar(
             value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"
         )
-        ttk.Label(atm_frame, textvariable=self.atm_label_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
+        ttk.Label(atm_frame, textvariable=self.atm_label_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
         atm_frame.grid_columnconfigure(1, weight=1)
 
         # Baseband Parameters frame
@@ -1486,6 +1587,11 @@ class LinkBudgetApp:
             style="Red.TButton",
         )
         self.start_refresh_button.pack(side=tk.LEFT, padx=5)
+        _add_tooltip(
+            self.start_refresh_button,
+            "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
+            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
+        )
         self.recalc_button = ttk.Button(
             downlink_btn_frame,
             text="Calculate DL Link Budget",
@@ -1493,8 +1599,19 @@ class LinkBudgetApp:
             state="disabled",
         )
         self.recalc_button.pack(side=tk.LEFT, padx=5)
-        ttk.Button(downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file).pack(
-            side=tk.LEFT, padx=5
+        _add_tooltip(
+            self.recalc_button,
+            "Re-computes only the downlink link budget (EIRP, G/T, attenuations, bit rate, ...) for "
+            "the contact windows already found above, without re-running the orbit propagation.",
+        )
+        load_antenna_btn = ttk.Button(
+            downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file
+        )
+        load_antenna_btn.pack(side=tk.LEFT, padx=5)
+        _add_tooltip(
+            load_antenna_btn,
+            "Load a custom ground station antenna gain-vs-angle pattern (angle, gain columns) from "
+            "a .csv/.txt file, used to compute pointing loss.",
         )
         ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(
             side=tk.LEFT, padx=5

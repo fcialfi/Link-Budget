@@ -228,11 +228,16 @@ def atmospheric_attenuation(
     p: float,
     d_gs: float,
     alt_gs: float,
+    include_scintillation: bool = True,
 ) -> float:
     """Return slant path atmospheric attenuation in dB.
 
     The ITU-R model internally estimates the point rainfall rate (R001) from
     Recommendation P.837 when it is not provided explicitly.
+
+    ``include_scintillation`` toggles the ITU-R P.618 *tropospheric*
+    scintillation term (relevant mainly above ~4 GHz). This is unrelated to
+    ionospheric scintillation, which ``itur`` does not model.
     """
     try:
         _, _, _, _, A_tot = itu.atmospheric_attenuation_slant_path(
@@ -247,7 +252,7 @@ def atmospheric_attenuation(
             include_gas=True,
             include_rain=True,
             include_clouds=True,
-            include_scintillation=True,
+            include_scintillation=include_scintillation,
         )
         return float(A_tot.value if hasattr(A_tot, "value") else A_tot)
     except Exception as e:
