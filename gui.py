@@ -1,18 +1,152 @@
 """Tkinter GUI for the satellite link budget tool."""
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import tkinter.font as tkfont
+
+# ---------------------------------------------------------------------------
+# Visual theme
+# ---------------------------------------------------------------------------
+# Defined up here, before the slower imports below, because the startup
+# splash screen needs it immediately.
+PALETTE = {
+    "bg": "#eef1f6",
+    "surface": "#ffffff",
+    "surface_alt": "#f7f9fc",
+    "border": "#d7dde6",
+    "header_bg": "#0f2440",
+    "header_fg": "#f5f8ff",
+    "header_fg_muted": "#a9b8d1",
+    "accent": "#2f6fed",
+    "accent_dark": "#2354bd",
+    "accent_light": "#e8f0fe",
+    "text": "#1f2733",
+    "text_muted": "#5b6472",
+    "danger": "#d64545",
+    "danger_dark": "#b23434",
+    "row_odd": "#ffffff",
+    "row_even": "#f3f6fb",
+    "selection": "#cfe0fd",
+}
+
+
+def _pick_font(preferred: list[str], fallback: str = "TkDefaultFont") -> str:
+    """Return the first available font family from ``preferred``.
+
+    Requires a Tk root to already exist; falls back silently otherwise so
+    the GUI still starts on platforms missing every preferred family.
+    """
+
+    try:
+        available = set(tkfont.families())
+    except tk.TclError:
+        return fallback
+    for name in preferred:
+        if name in available:
+            return name
+    return fallback
+
+
+# ---------------------------------------------------------------------------
+# Startup splash screen
+# ---------------------------------------------------------------------------
+# ``matplotlib``/``pandas``/``skyfield``/``astropy``/``itur`` (imported right
+# below) can take several seconds to load -- especially the first time a
+# frozen PyInstaller build unpacks them -- during which the app would
+# otherwise show nothing at all and look hung. This splash uses only
+# ``tkinter`` (already imported above) so it can appear before any of those
+# heavier imports even start, then gets reused as the main window once the
+# real UI is ready (see ``LinkBudgetApp._build_ui``).
+
+
+def _show_startup_splash():
+    """Create and immediately display a "Loading..." popup."""
+
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.configure(bg=PALETTE["header_bg"])
+
+    font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+
+    width, height = 420, 170
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    root.geometry(f"{width}x{height}+{(screen_w - width) // 2}+{(screen_h - height) // 2}")
+
+    tk.Label(
+        root, text="LB", bg=PALETTE["accent"], fg="white", font=(font_family, 16, "bold"), width=3
+    ).pack(pady=(24, 10))
+    tk.Label(
+        root,
+        text="Satellite Link Budget Tool",
+        bg=PALETTE["header_bg"],
+        fg=PALETTE["header_fg"],
+        font=(font_family, 12, "bold"),
+    ).pack()
+    tk.Label(
+        root,
+        text="Loading, please wait...",
+        bg=PALETTE["header_bg"],
+        fg=PALETTE["header_fg_muted"],
+        font=(font_family, 9),
+    ).pack(pady=(4, 14))
+
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure(
+        "Splash.Horizontal.TProgressbar",
+        troughcolor=PALETTE["header_bg"],
+        background=PALETTE["accent"],
+        bordercolor=PALETTE["header_bg"],
+        lightcolor=PALETTE["accent"],
+        darkcolor=PALETTE["accent"],
+    )
+    progress = ttk.Progressbar(
+        root, mode="indeterminate", length=280, style="Splash.Horizontal.TProgressbar"
+    )
+    progress.pack()
+    progress.start(15)
+
+    root.update()
+    return root, progress
+
+
+def _splash_tick(root, progress):
+    """Pump the Tk event loop once so the splash stays responsive/animated.
+
+    Safe to call even after the splash has been torn down.
+    """
+
+    try:
+        progress.step(8)
+        root.update()
+    except tk.TclError:
+        pass
+
+
+_SPLASH_ROOT, _SPLASH_PROGRESS = _show_startup_splash()
+
 from datetime import datetime, timedelta, timezone
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.dates import MinuteLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import pandas as pd
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 from skyfield.api import load, EarthSatellite, wgs84
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import astropy.units as u
 import os
 import sys
 import json
 
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import calculations
 
 # Add path of the current script (works also in PyInstaller .exe)
@@ -35,6 +169,8 @@ from calculations import (
     reload_ground_stations,
     MIN_ELEVATION_DEG,
 )
+
+_splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 
 
 def _get_optional_float(entry: ttk.Entry) -> float | None:
@@ -750,16 +886,18 @@ class LinkBudgetApp:
             "Doppler Shift (kHz)",
         ]
         table = ttk.Treeview(self.table_frame, columns=display_columns, show="headings")
+        table.tag_configure("evenrow", background=PALETTE["row_even"])
+        table.tag_configure("oddrow", background=PALETTE["row_odd"])
         for col in display_columns:
             table.heading(col, text=col)
             if col == "Time (UTC)":
                 table.column(col, anchor="center", width=120)
             else:
                 table.column(col, anchor="center", width=100)
-        for _, row in df_pass.iterrows():
+        for i, (_, row) in enumerate(df_pass.iterrows()):
             formatted_time = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M:%S")
             values = [formatted_time] + [row.get(col, "") for col in display_columns[1:]]
-            table.insert("", "end", values=values)
+            table.insert("", "end", values=values, tags=("evenrow" if i % 2 == 0 else "oddrow",))
         table_vscroll = ttk.Scrollbar(self.table_frame, orient=tk.VERTICAL, command=table.yview)
         table_hscroll = ttk.Scrollbar(self.table_frame, orient=tk.HORIZONTAL, command=table.xview)
         table.configure(yscrollcommand=table_vscroll.set, xscrollcommand=table_hscroll.set)
@@ -781,6 +919,7 @@ class LinkBudgetApp:
         popup = tk.Toplevel(self.root)
         popup.title("Antenna Pattern")
         popup.geometry("600x400")
+        popup.configure(bg=PALETTE["bg"])
 
         from calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
 
@@ -880,6 +1019,8 @@ class LinkBudgetApp:
             return "" if pd.isna(value) else value
 
         table = ttk.Treeview(self.uplink_table_frame, columns=display_columns, show="headings")
+        table.tag_configure("evenrow", background=PALETTE["row_even"])
+        table.tag_configure("oddrow", background=PALETTE["row_odd"])
         for col in display_columns:
             table.heading(col, text=col)
             if col == "Time (UTC)":
@@ -887,10 +1028,10 @@ class LinkBudgetApp:
             else:
                 table.column(col, anchor="center", width=130)
 
-        for _, row in self.current_table_df.iterrows():
+        for i, (_, row) in enumerate(self.current_table_df.iterrows()):
             formatted_time = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M:%S")
             values = [formatted_time] + [_format_cell(row.get(col, "")) for col in display_columns[1:]]
-            table.insert("", "end", values=values)
+            table.insert("", "end", values=values, tags=("evenrow" if i % 2 == 0 else "oddrow",))
 
         table_vscroll = ttk.Scrollbar(self.uplink_table_frame, orient=tk.VERTICAL, command=table.yview)
         table_hscroll = ttk.Scrollbar(self.uplink_table_frame, orient=tk.HORIZONTAL, command=table.xview)
@@ -974,42 +1115,188 @@ class LinkBudgetApp:
 
     def _build_ui(self):
         """Initialise the Tkinter widget tree."""
-        self.root = tk.Tk()
+        global _SPLASH_ROOT, _SPLASH_PROGRESS
+        if _SPLASH_ROOT is not None:
+            # Reuse the splash's root window instead of opening a second one.
+            self.root = _SPLASH_ROOT
+            _SPLASH_PROGRESS.stop()
+            for widget in self.root.winfo_children():
+                widget.destroy()
+            self.root.overrideredirect(False)
+            self.root.attributes("-topmost", False)
+            _SPLASH_ROOT = None
+            _SPLASH_PROGRESS = None
+        else:
+            self.root = tk.Tk()
         self.root.title("Satellite Link Budget Tool")
         self.root.geometry("1200x950")
+        self.root.minsize(1000, 700)
+        self.root.configure(bg=PALETTE["bg"])
+
+        base_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+        default_font = (base_font_family, 10)
+        bold_font = (base_font_family, 10, "bold")
+        header_font = (base_font_family, 15, "bold")
+        subheader_font = (base_font_family, 10)
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TButton", padding=(10, 6), relief="raised", borderwidth=2)
-        style.map(
-            "TButton",
-            relief=[("pressed", "sunken"), ("!pressed", "raised")],
+
+        style.configure(".", background=PALETTE["bg"], foreground=PALETTE["text"], font=default_font)
+        style.configure("TFrame", background=PALETTE["bg"])
+        style.configure("Header.TFrame", background=PALETTE["header_bg"])
+        style.configure("TLabel", background=PALETTE["bg"], foreground=PALETTE["text"])
+        style.configure(
+            "Header.TLabel", background=PALETTE["header_bg"], foreground=PALETTE["header_fg"], font=header_font
         )
         style.configure(
+            "HeaderSub.TLabel",
+            background=PALETTE["header_bg"],
+            foreground=PALETTE["header_fg_muted"],
+            font=subheader_font,
+        )
+
+        style.configure(
+            "TLabelframe",
+            background=PALETTE["surface"],
+            bordercolor=PALETTE["border"],
+            relief="solid",
+            borderwidth=1,
+        )
+        style.configure(
+            "TLabelframe.Label",
+            background=PALETTE["surface"],
+            foreground=PALETTE["accent_dark"],
+            font=bold_font,
+        )
+
+        style.configure(
+            "TButton",
+            background=PALETTE["surface_alt"],
+            foreground=PALETTE["text"],
+            padding=(12, 7),
+            relief="solid",
+            borderwidth=1,
+            bordercolor=PALETTE["border"],
+            font=default_font,
+        )
+        style.map(
+            "TButton",
+            background=[("active", PALETTE["accent_light"]), ("disabled", PALETTE["surface_alt"])],
+            foreground=[("disabled", PALETTE["text_muted"])],
+            bordercolor=[("active", PALETTE["accent"]), ("!active", PALETTE["border"])],
+        )
+
+        style.configure(
             "Red.TButton",
-            background="red",
+            background=PALETTE["danger"],
             foreground="white",
-            font=("TkDefaultFont", 10, "bold"),
-            padding=(10, 6),
-            relief="raised",
-            borderwidth=2,
+            font=bold_font,
+            padding=(12, 7),
+            relief="flat",
+            borderwidth=0,
         )
         style.map(
             "Red.TButton",
-            background=[("active", "darkred"), ("!active", "red")],
-            foreground=[("active", "white"), ("!active", "white")],
-            relief=[("pressed", "sunken"), ("!pressed", "raised")],
+            background=[("active", PALETTE["danger_dark"]), ("disabled", PALETTE["surface_alt"])],
+            foreground=[("disabled", PALETTE["text_muted"])],
         )
 
-        self.root.grid_rowconfigure(0, weight=1)
+        style.configure("TNotebook", background=PALETTE["bg"], borderwidth=0)
+        style.configure(
+            "TNotebook.Tab",
+            background=PALETTE["surface_alt"],
+            foreground=PALETTE["text_muted"],
+            padding=(18, 9),
+            font=bold_font,
+            borderwidth=0,
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", PALETTE["surface"])],
+            foreground=[("selected", PALETTE["accent_dark"])],
+        )
+
+        style.configure(
+            "TEntry", fieldbackground=PALETTE["surface"], bordercolor=PALETTE["border"], padding=4
+        )
+        style.map("TEntry", bordercolor=[("focus", PALETTE["accent"]), ("!focus", PALETTE["border"])])
+
+        style.configure(
+            "TCombobox", fieldbackground=PALETTE["surface"], bordercolor=PALETTE["border"], padding=4
+        )
+        style.map(
+            "TCombobox",
+            bordercolor=[("focus", PALETTE["accent"]), ("!focus", PALETTE["border"])],
+            fieldbackground=[("readonly", PALETTE["surface"])],
+        )
+
+        style.configure(
+            "Treeview",
+            background=PALETTE["surface"],
+            fieldbackground=PALETTE["surface"],
+            foreground=PALETTE["text"],
+            rowheight=24,
+            bordercolor=PALETTE["border"],
+            borderwidth=1,
+            font=default_font,
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=PALETTE["header_bg"],
+            foreground=PALETTE["header_fg"],
+            font=bold_font,
+            relief="flat",
+            padding=(6, 6),
+        )
+        style.map("Treeview.Heading", background=[("active", PALETTE["accent_dark"])])
+        style.map(
+            "Treeview",
+            background=[("selected", PALETTE["selection"])],
+            foreground=[("selected", PALETTE["text"])],
+        )
+
+        style.configure(
+            "TScrollbar",
+            background=PALETTE["surface_alt"],
+            troughcolor=PALETTE["bg"],
+            bordercolor=PALETTE["bg"],
+            arrowsize=12,
+        )
+
+        # --- Header bar ---
+        header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 14))
+        header.grid(row=0, column=0, sticky="ew")
+        badge = tk.Label(
+            header,
+            text="LB",
+            bg=PALETTE["accent"],
+            fg="white",
+            font=(base_font_family, 13, "bold"),
+            width=3,
+            padx=4,
+            pady=4,
+        )
+        badge.pack(side=tk.LEFT)
+        title_box = ttk.Frame(header, style="Header.TFrame")
+        title_box.pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(title_box, text="Satellite Link Budget Tool", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_box,
+            text="Orbit prediction & downlink/uplink budget analysis",
+            style="HeaderSub.TLabel",
+        ).pack(anchor="w")
+
+        self.root.grid_rowconfigure(0, weight=0)
+        self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
         canvas_frame = ttk.Frame(self.root)
-        canvas_frame.grid(row=0, column=0, sticky="nsew")
+        canvas_frame.grid(row=1, column=0, sticky="nsew")
         canvas_frame.grid_rowconfigure(0, weight=1)
         canvas_frame.grid_columnconfigure(0, weight=1)
 
-        canvas = tk.Canvas(canvas_frame)
+        canvas = tk.Canvas(canvas_frame, bg=PALETTE["bg"], highlightthickness=0)
         canvas.grid(row=0, column=0, sticky="nsew")
         scrollbar_y = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
         scrollbar_x = ttk.Scrollbar(canvas_frame, orient="horizontal", command=canvas.xview)
@@ -1088,11 +1375,11 @@ class LinkBudgetApp:
             row=0, column=5, sticky="w", padx=5, pady=2
         )
         self.gs_file_var = tk.StringVar(value="Ground stations: none loaded")
-        ttk.Label(obs_frame, textvariable=self.gs_file_var, foreground="gray25").grid(
+        ttk.Label(obs_frame, textvariable=self.gs_file_var, foreground=PALETTE["text_muted"]).grid(
             row=1, column=0, columnspan=6, sticky="w", padx=5, pady=(6, 0)
         )
         self.param_file_var = tk.StringVar(value="Parameters: none loaded")
-        ttk.Label(obs_frame, textvariable=self.param_file_var, foreground="gray25").grid(
+        ttk.Label(obs_frame, textvariable=self.param_file_var, foreground=PALETTE["text_muted"]).grid(
             row=2, column=0, columnspan=6, sticky="w", padx=5, pady=(2, 0)
         )
         obs_frame.grid_columnconfigure(1, weight=1)
@@ -1227,7 +1514,22 @@ class LinkBudgetApp:
             downlink_results_container, text="Contact Windows (UTC Time)", padding=10
         )
         contact_frame.pack(fill=tk.X, pady=(0, 5))
-        self.contact_listbox = tk.Listbox(contact_frame, height=6, exportselection=False)
+        self.contact_listbox = tk.Listbox(
+            contact_frame,
+            height=6,
+            exportselection=False,
+            bg=PALETTE["surface"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["accent"],
+            selectforeground="white",
+            activestyle="none",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["accent"],
+            font=default_font,
+        )
         self.contact_listbox.pack(fill=tk.X, expand=True)
         self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
 
