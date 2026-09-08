@@ -163,6 +163,7 @@ if os.environ.get("GUI_DEBUG"):
 
 from calculations import (
     calculate_link_budget_parameters,
+    calculate_fixed_elevation_link_budget,
     atmospheric_attenuation,
     prepare_topocentric_data,
     load_antenna_pattern,
@@ -1025,6 +1026,218 @@ class LinkBudgetApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export CSV: {e}")
 
+    # ------------------------------------------------------------------
+    # Fixed-elevation preliminary link budget (no TLE required)
+    # ------------------------------------------------------------------
+
+    def show_fixed_downlink_link_budget(self):
+        """Open the fixed-elevation preliminary downlink link budget popup."""
+
+        self._open_fixed_link_budget_window(
+            "Fixed-Elevation Downlink Link Budget",
+            freq_entry=self.freq_entry,
+            eirp_entry=self.eirp_sat_entry,
+            gt_entry=self.gt_gs_entry,
+            demod_loss_entry=self.demod_loss_entry,
+            bitrate_entry=self.bitrate_entry,
+            overhead_entry=self.overhead_entry,
+            other_att_entry=self.other_att_entry,
+        )
+
+    def show_fixed_uplink_link_budget(self):
+        """Open the fixed-elevation preliminary uplink link budget popup."""
+
+        self._open_fixed_link_budget_window(
+            "Fixed-Elevation Uplink Link Budget",
+            freq_entry=self.uplink_freq_entry,
+            eirp_entry=self.eirp_gs_entry,
+            gt_entry=self.gt_sat_entry,
+            demod_loss_entry=self.demod_loss_ul_entry,
+            bitrate_entry=self.uplink_bitrate_entry,
+            overhead_entry=self.uplink_overhead_entry,
+            other_att_entry=self.other_att_ul_entry,
+        )
+
+    def _open_fixed_link_budget_window(
+        self,
+        title: str,
+        freq_entry: ttk.Entry,
+        eirp_entry: ttk.Entry,
+        gt_entry: ttk.Entry,
+        demod_loss_entry: ttk.Entry,
+        bitrate_entry: ttk.Entry,
+        overhead_entry: ttk.Entry,
+        other_att_entry: ttk.Entry,
+    ):
+        """Open a popup computing a TLE-independent, fixed-elevation link budget.
+
+        This is the standard preliminary "worst case" check: pick a single
+        (typically minimum) elevation angle and satellite altitude, derive
+        the slant range purely from that geometry, and verify a link margin
+        exists before running the full TLE-based pass analysis. EIRP, G/T,
+        frequency and other losses are reused from the already-filled-in
+        parameters panel so they don't need to be retyped.
+        """
+
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.configure(bg=PALETTE["bg"])
+        win.geometry("620x560")
+
+        form = ttk.Frame(win, padding=15)
+        form.pack(fill=tk.X)
+        form.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(
+            form,
+            text=(
+                "Preliminary worst-case check, independent of any TLE: the slant range "
+                "below is derived purely from the elevation angle and satellite altitude. "
+                "EIRP, G/T, frequency, bit rate and other losses are reused from the "
+                "parameters panel and the selected Ground Station."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=580,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        ttk.Label(form, text="Elevation Angle [deg]").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+        elevation_entry = ttk.Entry(form, width=15)
+        elevation_entry.insert(0, f"{MIN_ELEVATION_DEG:g}")
+        elevation_entry.grid(row=1, column=1, sticky="w", padx=5, pady=3)
+
+        ttk.Label(form, text="Satellite Altitude [km]").grid(row=2, column=0, sticky="w", padx=5, pady=3)
+        altitude_entry = ttk.Entry(form, width=15)
+        altitude_entry.grid(row=2, column=1, sticky="w", padx=5, pady=3)
+
+        ttk.Label(form, text="Pointing / Mispoint Loss [dB]").grid(row=3, column=0, sticky="w", padx=5, pady=3)
+        mispoint_entry = ttk.Entry(form, width=15)
+        mispoint_entry.insert(0, "0")
+        mispoint_entry.grid(row=3, column=1, sticky="w", padx=5, pady=3)
+
+        ttk.Label(form, text="Required Eb/No [dB] (optional)").grid(row=4, column=0, sticky="w", padx=5, pady=3)
+        required_ebno_entry = ttk.Entry(form, width=15)
+        required_ebno_entry.grid(row=4, column=1, sticky="w", padx=5, pady=3)
+        _add_tooltip(
+            required_ebno_entry,
+            "Modulation/FEC Eb/No threshold, if known. When set, a Link Margin row "
+            "(computed Eb/No minus this value) is added to the results.",
+        )
+
+        results_frame = ttk.Frame(win, padding=(15, 0, 15, 15))
+        results_frame.pack(fill=tk.BOTH, expand=True)
+
+        def _calculate():
+            for widget in results_frame.winfo_children():
+                widget.destroy()
+            try:
+                elevation_deg = float(elevation_entry.get())
+                sat_altitude_km = float(altitude_entry.get())
+                pointing_loss_db = float(mispoint_entry.get() or 0.0)
+                required_ebno_str = required_ebno_entry.get().strip()
+                required_ebno = float(required_ebno_str) if required_ebno_str else None
+
+                freq = float(freq_entry.get()) * u.GHz
+                eirp = float(eirp_entry.get())
+                gt = float(gt_entry.get())
+                demod_loss = float(demod_loss_entry.get())
+                bitrate = float(bitrate_entry.get()) * 1e6
+                overhead = float(overhead_entry.get())
+                other_att = float(other_att_entry.get() or 0.0)
+                link_availability = float(self.LA_entry.get())
+            except ValueError as exc:
+                messagebox.showerror("Input Error", f"Invalid numerical input: {exc}.", parent=win)
+                return
+
+            gs_name = self.gs_var.get()
+            if not gs_name or gs_name not in calculations.GROUND_STATIONS:
+                messagebox.showerror("Error", "Please select a valid Ground Station first.", parent=win)
+                return
+            lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+            try:
+                d_gs = float(self.d_gs_entry.get())
+            except ValueError:
+                messagebox.showerror("Input Error", "Invalid Antenna Diameter GS value.", parent=win)
+                return
+
+            budget = calculate_fixed_elevation_link_budget(
+                freq=freq,
+                elevation_deg=elevation_deg,
+                sat_altitude_km=sat_altitude_km,
+                lat_gs=lat_gs,
+                lon_gs=lon_gs,
+                alt_gs_km=alt_gs_m / 1000.0,
+                d_gs=d_gs,
+                eirp=eirp,
+                gt=gt,
+                demod_loss=demod_loss,
+                bitrate=bitrate,
+                overhead=overhead,
+                other_att=other_att,
+                pointing_loss_db=pointing_loss_db,
+                link_availability_pct=link_availability,
+                include_scintillation=self.scint_var.get(),
+                required_ebno=required_ebno,
+            )
+            self._render_fixed_link_budget_results(results_frame, budget, link_availability)
+
+        ttk.Button(form, text="Calculate", command=_calculate, style="Red.TButton").grid(
+            row=5, column=0, columnspan=2, sticky="w", padx=5, pady=(10, 0)
+        )
+
+    def _render_fixed_link_budget_results(self, parent, budget, link_availability_pct):
+        """Render the two-condition (clear/rain) results table for a fixed budget."""
+
+        rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
+
+        header_font = (_pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"]), 10, "bold")
+        ttk.Label(
+            parent,
+            text=(
+                f"Slant Range: {budget['slant_range_km']:.1f} km    "
+                f"Free Space Loss: {budget['path_loss_db']:.2f} dB"
+            ),
+            font=header_font,
+        ).pack(anchor="w", pady=(0, 8))
+
+        table = ttk.Treeview(parent, columns=("param", "clear", "rain"), show="headings", height=12)
+        table.heading("param", text="Parameter")
+        table.heading("clear", text="Clear Sky")
+        table.heading("rain", text=f"Rain Faded (p={rain_p:g}%)")
+        table.column("param", anchor="w", width=230)
+        table.column("clear", anchor="center", width=130)
+        table.column("rain", anchor="center", width=170)
+        table.tag_configure("evenrow", background=PALETTE["row_even"])
+        table.tag_configure("oddrow", background=PALETTE["row_odd"])
+
+        clear = budget["clear"]
+        rain = budget["rain_faded"]
+        rows = [
+            ("Gas Attenuation [dB]", clear["gas_attenuation_db"], rain["gas_attenuation_db"]),
+            ("Cloud Attenuation [dB]", clear["cloud_attenuation_db"], rain["cloud_attenuation_db"]),
+            ("Rain Attenuation [dB]", clear["rain_attenuation_db"], rain["rain_attenuation_db"]),
+            ("Scintillation [dB]", clear["scintillation_db"], rain["scintillation_db"]),
+            (
+                "Total Atmospheric Attenuation [dB]",
+                clear["atmospheric_attenuation_db"],
+                rain["atmospheric_attenuation_db"],
+            ),
+            ("Rx Power [dBW]", clear["rx_power_dbw"], rain["rx_power_dbw"]),
+            ("C/No [dBHz]", clear["cno_dbhz"], rain["cno_dbhz"]),
+            ("Eb/No [dB]", clear["ebno_db"], rain["ebno_db"]),
+        ]
+        if "margin_db" in clear:
+            rows.append(("Link Margin [dB]", clear["margin_db"], rain["margin_db"]))
+
+        for i, (label, clear_val, rain_val) in enumerate(rows):
+            table.insert(
+                "",
+                "end",
+                values=(label, f"{clear_val:.2f}", f"{rain_val:.2f}"),
+                tags=("evenrow" if i % 2 == 0 else "oddrow",),
+            )
+        table.pack(fill=tk.BOTH, expand=True)
+
     def calculate_ul_link_budget(self):
         """Render an uplink-only link budget table for the selected contact window."""
 
@@ -1428,8 +1641,11 @@ class LinkBudgetApp:
         self.date_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
 
         ttk.Label(pass_row, text="Ground Station").pack(side=tk.LEFT)
-        self.gs_var = tk.StringVar(value="")
-        self.gs_menu = ttk.Combobox(pass_row, textvariable=self.gs_var, values=[], state="readonly", width=15)
+        initial_stations = list(calculations.GROUND_STATIONS.keys())
+        self.gs_var = tk.StringVar(value=initial_stations[0] if initial_stations else "")
+        self.gs_menu = ttk.Combobox(
+            pass_row, textvariable=self.gs_var, values=initial_stations, state="readonly", width=15
+        )
         self.gs_menu.pack(side=tk.LEFT, padx=(6, 12))
         self.gs_menu.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
 
@@ -1616,6 +1832,18 @@ class LinkBudgetApp:
         ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(
             side=tk.LEFT, padx=5
         )
+        fixed_dl_btn = ttk.Button(
+            downlink_btn_frame,
+            text="Fixed-Elevation Link Budget...",
+            command=self.show_fixed_downlink_link_budget,
+        )
+        fixed_dl_btn.pack(side=tk.LEFT, padx=5)
+        _add_tooltip(
+            fixed_dl_btn,
+            "Preliminary worst-case downlink budget at a single fixed elevation angle, with "
+            "slant range from geometry (elevation + satellite altitude) instead of a TLE. "
+            "Shows Clear Sky and Rain Faded conditions side by side.",
+        )
 
         downlink_results_container = ttk.Frame(downlink_tab)
         downlink_results_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
@@ -1759,6 +1987,18 @@ class LinkBudgetApp:
             command=self.calculate_ul_link_budget,
         )
         self.uplink_recalc_button.pack(side=tk.LEFT, padx=5)
+        fixed_ul_btn = ttk.Button(
+            uplink_actions_frame,
+            text="Fixed-Elevation Link Budget...",
+            command=self.show_fixed_uplink_link_budget,
+        )
+        fixed_ul_btn.pack(side=tk.LEFT, padx=5)
+        _add_tooltip(
+            fixed_ul_btn,
+            "Preliminary worst-case uplink budget at a single fixed elevation angle, with "
+            "slant range from geometry (elevation + satellite altitude) instead of a TLE. "
+            "Shows Clear Sky and Rain Faded conditions side by side.",
+        )
 
         uplink_results_frame = ttk.LabelFrame(uplink_tab, text="Uplink Results", padding=10)
         uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))

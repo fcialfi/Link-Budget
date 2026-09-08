@@ -15,6 +15,10 @@ from typing import Any, Dict, Optional
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
 
+# Mean equatorial Earth radius (km, WGS84), used for the TLE-independent
+# geometric slant range calculation.
+EARTH_RADIUS_KM = 6378.137
+
 # Define ground stations loaded from an external text file. The file is **not**
 # packaged into the PyInstaller bundle so it can be edited or replaced after
 # compilation. When running a frozen executable, the loader first looks for a
@@ -268,6 +272,174 @@ def atmospheric_attenuation(
             file=sys.stderr,
         )
         return 0.0
+
+
+def slant_range_from_elevation(
+    elevation_deg: float,
+    sat_altitude_km: float,
+    gs_altitude_km: float = 0.0,
+) -> float:
+    """Return the geometric slant range (km) for a fixed elevation angle.
+
+    Assumes a spherical Earth and a circular orbit at ``sat_altitude_km``;
+    does not require a TLE. Used by the fixed-elevation "preliminary" link
+    budget calculators, where the actual pass geometry is deliberately
+    abstracted away in favour of a single (typically worst-case, minimum)
+    elevation angle -- the standard approach for a first-pass link margin
+    check before running a full TLE-based analysis.
+    """
+
+    r_gs = EARTH_RADIUS_KM + gs_altitude_km
+    r_sat = EARTH_RADIUS_KM + sat_altitude_km
+    el_rad = np.radians(elevation_deg)
+    return float(np.sqrt(r_sat**2 - (r_gs * np.cos(el_rad)) ** 2) - r_gs * np.sin(el_rad))
+
+
+def atmospheric_attenuation_contributions(
+    lat: float,
+    lon: float,
+    freq_ghz: float,
+    elevation_deg: float,
+    p: float,
+    d_gs: float,
+    alt_gs: float,
+    include_rain: bool = True,
+    include_clouds: bool = True,
+    include_scintillation: bool = True,
+) -> Dict[str, float]:
+    """Return the individual ITU-R P.618 attenuation contributions, in dB.
+
+    Unlike :func:`atmospheric_attenuation` (which always evaluates the model
+    at ``MIN_ELEVATION_DEG`` as a single conservative margin applied across a
+    whole TLE-derived pass), this accepts an explicit ``elevation_deg`` and
+    breaks the total down into its gas/cloud/rain/scintillation components,
+    for the fixed-elevation calculators that are independent of any TLE.
+    """
+    try:
+        A_g, A_c, A_r, A_s, A_t = itu.atmospheric_attenuation_slant_path(
+            lat,
+            lon,
+            freq_ghz,
+            elevation_deg,
+            p,
+            d_gs,
+            hs=alt_gs,
+            return_contributions=True,
+            include_gas=True,
+            include_rain=include_rain,
+            include_clouds=include_clouds,
+            include_scintillation=include_scintillation,
+        )
+
+        def _val(x):
+            return float(x.value if hasattr(x, "value") else x)
+
+        return {
+            "gas": _val(A_g),
+            "cloud": _val(A_c),
+            "rain": _val(A_r),
+            "scintillation": _val(A_s),
+            "total": _val(A_t),
+        }
+    except Exception as e:
+        print(
+            f"Error calculating atmospheric attenuation contributions: {e}",
+            file=sys.stderr,
+        )
+        return {"gas": 0.0, "cloud": 0.0, "rain": 0.0, "scintillation": 0.0, "total": 0.0}
+
+
+def calculate_fixed_elevation_link_budget(
+    freq: u.Quantity,
+    elevation_deg: float,
+    sat_altitude_km: float,
+    lat_gs: float,
+    lon_gs: float,
+    alt_gs_km: float,
+    d_gs: float,
+    eirp: float,
+    gt: float,
+    demod_loss: float,
+    bitrate: float,
+    overhead: float,
+    other_att: float,
+    pointing_loss_db: float,
+    link_availability_pct: float,
+    include_scintillation: bool = True,
+    required_ebno: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Preliminary link budget at a single, user-chosen fixed elevation angle.
+
+    This does not require a TLE: the slant range is derived purely from
+    ``elevation_deg`` and ``sat_altitude_km`` via
+    :func:`slant_range_from_elevation`. This is the standard "worst case"
+    check used to verify a link margin exists before running a full
+    TLE-based pass analysis, typically at the minimum operational elevation.
+
+    The budget is computed twice: once for a clear-sky reference condition
+    (gas absorption only -- rain, clouds and scintillation set to zero, the
+    conventional "Clear" column in a preliminary link budget) and once for
+    the rain-faded condition at the configured link availability
+    (``p = 100 - link_availability_pct``, with rain/clouds/scintillation
+    included).
+
+    Returns
+    -------
+    dict
+        ``{"slant_range_km", "path_loss_db", "clear": {...}, "rain_faded": {...}}``
+        where each condition dict has ``gas_attenuation_db``,
+        ``cloud_attenuation_db``, ``rain_attenuation_db``,
+        ``scintillation_db``, ``atmospheric_attenuation_db``,
+        ``rx_power_dbw``, ``cno_dbhz``, ``ebno_db`` and, when
+        ``required_ebno`` is given, ``margin_db``.
+    """
+
+    slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
+    freq_ghz = freq.to(u.GHz).value
+    path_loss = 20 * np.log10(slant_range_km) + 20 * np.log10(freq_ghz) + 92.45
+
+    def _condition(p: float, include_rain: bool, include_clouds: bool, include_scint: bool) -> Dict[str, float]:
+        atm = atmospheric_attenuation_contributions(
+            lat_gs,
+            lon_gs,
+            freq_ghz,
+            elevation_deg,
+            p,
+            d_gs,
+            alt_gs_km,
+            include_rain=include_rain,
+            include_clouds=include_clouds,
+            include_scintillation=include_scint,
+        )
+        rx_power = eirp - path_loss - atm["total"] - other_att - pointing_loss_db
+        cno_db = rx_power + gt + 228.6 - demod_loss
+        if bitrate > 0 and overhead > 0:
+            ebno = cno_db - 10 * np.log10(bitrate / overhead)
+        else:
+            ebno = float("nan")
+        result: Dict[str, float] = {
+            "gas_attenuation_db": atm["gas"],
+            "cloud_attenuation_db": atm["cloud"],
+            "rain_attenuation_db": atm["rain"],
+            "scintillation_db": atm["scintillation"],
+            "atmospheric_attenuation_db": atm["total"],
+            "rx_power_dbw": rx_power,
+            "cno_dbhz": cno_db,
+            "ebno_db": ebno,
+        }
+        if required_ebno is not None:
+            result["margin_db"] = ebno - required_ebno
+        return result
+
+    rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
+    return {
+        "slant_range_km": slant_range_km,
+        "path_loss_db": path_loss,
+        "clear": _condition(rain_p, include_rain=False, include_clouds=False, include_scint=False),
+        "rain_faded": _condition(
+            rain_p, include_rain=True, include_clouds=True, include_scint=include_scintillation
+        ),
+    }
 
 
 def prepare_topocentric_data(
