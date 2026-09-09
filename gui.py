@@ -260,6 +260,38 @@ def _add_tooltip(widget, text: str) -> None:
     _Tooltip(widget, text)
 
 
+class _PlaceholderEntry(ttk.Entry):
+    """A ``ttk.Entry`` that shows a greyed-out example until the user types.
+
+    ``get()`` is overridden to return ``""`` while the placeholder is
+    showing, so callers can keep treating an untouched field exactly like
+    an empty one -- no other code needs to know the placeholder exists.
+    """
+
+    def __init__(self, master, placeholder: str, **kwargs):
+        super().__init__(master, **kwargs)
+        self._placeholder = placeholder
+        self._showing_placeholder = False
+        self.bind("<FocusIn>", self._clear_placeholder)
+        self.bind("<FocusOut>", self._show_placeholder)
+        self._show_placeholder()
+
+    def _show_placeholder(self, _event=None):
+        if not ttk.Entry.get(self):
+            self._showing_placeholder = True
+            self.insert(0, self._placeholder)
+            self.configure(foreground=PALETTE["text_muted"])
+
+    def _clear_placeholder(self, _event=None):
+        if self._showing_placeholder:
+            self._showing_placeholder = False
+            self.delete(0, tk.END)
+            self.configure(foreground=PALETTE["text"])
+
+    def get(self):
+        return "" if self._showing_placeholder else ttk.Entry.get(self)
+
+
 class LinkBudgetApp:
     """Tkinter application for the satellite link budget tool.
 
@@ -279,6 +311,7 @@ class LinkBudgetApp:
         self.current_gs_file = ""
         self.gs_menu: ttk.Combobox | None = None
         self.gs_file_var: tk.StringVar | None = None
+        self.tle_file_var: tk.StringVar | None = None
         self.param_file_var: tk.StringVar | None = None
         self.uplink_bitrate_entry: ttk.Entry | None = None
         self.uplink_rolloff_entry: ttk.Entry | None = None
@@ -288,6 +321,7 @@ class LinkBudgetApp:
         self.channel_bw_ul_var: tk.StringVar | None = None
         self.uplink_table_frame: ttk.Frame | None = None
         self.uplink_recalc_button: ttk.Button | None = None
+        self._mousewheel_stack: list = []
 
         self._build_ui()
 
@@ -299,8 +333,38 @@ class LinkBudgetApp:
     # File loading callbacks
     # ------------------------------------------------------------------
 
+    def _apply_tle_file(self, file_path: str) -> None:
+        """Parse ``file_path`` as a TLE and populate the TLE entries.
+
+        Raises on any parsing problem; the caller decides how to surface
+        that (a dialog for the manual "Load TLE from file" button, a
+        silent skip for the best-effort startup auto-load).
+        """
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if len(lines) < 2:
+            raise ValueError("TLE file must contain at least two non-empty lines.")
+
+        if lines[0].startswith("1 ") and lines[1].startswith("2 "):
+            tle1, tle2 = lines[0], lines[1]
+        elif len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
+            tle1, tle2 = lines[1], lines[2]
+        else:
+            tle1, tle2 = lines[0], lines[1]
+            if not (tle1.startswith("1 ") and tle2.startswith("2 ")):
+                raise ValueError("TLE lines must start with '1 ' and '2 '.")
+
+        self.tle1_entry.delete(0, tk.END)
+        self.tle1_entry.insert(0, tle1)
+        self.tle2_entry.delete(0, tk.END)
+        self.tle2_entry.insert(0, tle2)
+        if self.tle_file_var is not None:
+            self.tle_file_var.set(f"TLE: {os.path.abspath(file_path)}")
+        self.set_analysis_stale()
+
     def load_tle_from_file(self):
-        """Load TLE lines from a text file and populate the GUI fields."""
+        """Let the user pick a TLE file and populate the GUI fields."""
 
         file_path = filedialog.askopenfilename(
             title="Select TLE file",
@@ -310,51 +374,22 @@ class LinkBudgetApp:
             return
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f if line.strip()]
-            if len(lines) < 2:
-                raise ValueError("TLE file must contain at least two non-empty lines.")
-
-            if lines[0].startswith("1 ") and lines[1].startswith("2 "):
-                tle1, tle2 = lines[0], lines[1]
-            elif len(lines) >= 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
-                tle1, tle2 = lines[1], lines[2]
-            else:
-                tle1, tle2 = lines[0], lines[1]
-                if not (tle1.startswith("1 ") and tle2.startswith("2 ")):
-                    raise ValueError("TLE lines must start with '1 ' and '2 '.")
+            self._apply_tle_file(file_path)
         except Exception as exc:
             messagebox.showerror("TLE Error", f"Failed to load TLE: {exc}")
-            return
 
-        self.tle1_entry.delete(0, tk.END)
-        self.tle1_entry.insert(0, tle1)
-        self.tle2_entry.delete(0, tk.END)
-        self.tle2_entry.insert(0, tle2)
-        self.set_analysis_stale()
-
-    def load_parameters_from_file(self):
-        """Load all configurable parameters from a JSON file.
+    def _apply_parameters_file(self, file_path: str) -> None:
+        """Parse ``file_path`` as a parameters JSON and fill matching entries.
 
         The JSON structure should provide keys such as ``eirp_sat_dbw`` or
         ``frequency_ghz``. See the README for the full schema and example.
         Missing keys are ignored so the user can provide only the fields
-        they need.
+        they need. Raises on any parsing problem, mirroring
+        :meth:`_apply_tle_file`.
         """
 
-        file_path = filedialog.askopenfilename(
-            title="Select Parameters File",
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-        )
-        if not file_path:
-            return
-
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-        except Exception as exc:
-            messagebox.showerror("Parameters", f"Unable to load parameters: {exc}")
-            return
+        with open(file_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
 
         field_map = {
             "eirp_sat_dbw": self.eirp_sat_entry,
@@ -391,6 +426,21 @@ class LinkBudgetApp:
         self.update_link_budget_derived()
         self.set_analysis_stale()
 
+    def load_parameters_from_file(self):
+        """Let the user pick a parameters JSON file and load it."""
+
+        file_path = filedialog.askopenfilename(
+            title="Select Parameters File",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+        )
+        if not file_path:
+            return
+
+        try:
+            self._apply_parameters_file(file_path)
+        except Exception as exc:
+            messagebox.showerror("Parameters", f"Unable to load parameters: {exc}")
+
     def load_ground_stations_from_file(self):
         """Let the user pick a ground station catalogue and refresh the UI."""
 
@@ -417,6 +467,112 @@ class LinkBudgetApp:
             if selected not in stations:
                 self.gs_var.set(next(iter(stations)))
         self.set_analysis_stale()
+
+    def _load_startup_defaults(self):
+        """Auto-load a default TLE and parameters file at startup.
+
+        Mirrors how the ground station catalogue is already picked up
+        automatically from ``ground_stations.txt``: on launch, look for a
+        ``tle.txt`` and a ``parameters.json`` next to the executable / in
+        the working directory / next to the source, and pre-fill the TLE
+        and parameter fields if found. Either file is entirely optional --
+        a missing or invalid one is silently skipped so it never blocks
+        startup, and the user can still override everything from the
+        "Load TLE from file" / "Import Link Budget Parameters" buttons.
+        """
+
+        tle_path = calculations.resolve_optional_data_file("tle.txt", env_var="TLE_FILE")
+        if tle_path:
+            try:
+                self._apply_tle_file(tle_path)
+            except Exception as exc:
+                print(f"Warning: could not auto-load default TLE '{tle_path}': {exc}", file=sys.stderr)
+
+        params_path = calculations.resolve_optional_data_file(
+            "parameters.json", env_var="PARAMETERS_FILE"
+        )
+        if params_path:
+            try:
+                self._apply_parameters_file(params_path)
+            except Exception as exc:
+                print(
+                    f"Warning: could not auto-load default parameters '{params_path}': {exc}",
+                    file=sys.stderr,
+                )
+
+    def _bind_scroll_wheel(self, canvas: tk.Canvas, owner: tk.Widget | None = None) -> None:
+        """Route mouse-wheel scrolling to ``canvas``.
+
+        Mouse-wheel events are delivered to a single widget determined by
+        the platform (not simply "whatever the pointer is over"), so a
+        scrollable canvas has to grab them globally via ``bind_all``. That
+        would let a second scrollable area (e.g. a popup opened on top of
+        the main window) permanently steal wheel-scrolling from the first
+        one -- an ``<Enter>``/``<Leave>`` toggle doesn't fix this either,
+        since those fire on every child-widget boundary, not just the
+        canvas's own edge. Instead this keeps a small stack: binding pushes
+        this canvas on top, and if ``owner`` is given (a popup
+        ``Toplevel``), its ``<Destroy>`` pops this canvas back off so
+        wheel-scrolling reverts to whichever one -- the main window or an
+        outer popup -- was active underneath it.
+        """
+
+        wheel_event = "<Mousewheel>" if sys.platform == "darwin" else "<MouseWheel>"
+
+        def _scroll(event):
+            if sys.platform == "darwin":
+                canvas.yview_scroll(-1 * event.delta, "units")
+            else:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self._mousewheel_stack.append(_scroll)
+        canvas.bind_all(wheel_event, _scroll)
+
+        if owner is not None:
+            def _on_destroy(event):
+                if event.widget is not owner:
+                    return
+                if _scroll in self._mousewheel_stack:
+                    self._mousewheel_stack.remove(_scroll)
+                if self._mousewheel_stack:
+                    canvas.bind_all(wheel_event, self._mousewheel_stack[-1])
+                else:
+                    canvas.unbind_all(wheel_event)
+
+            owner.bind("<Destroy>", _on_destroy)
+
+    def _make_scrollable_window_body(self, win: tk.Toplevel) -> ttk.Frame:
+        """Wrap ``win``'s content area in a vertically scrollable canvas.
+
+        Returns the frame that should be used as the parent for the
+        window's widgets -- everything packed/gridded into it becomes
+        scrollable, with a vertical scrollbar plus mouse-wheel support
+        (see :meth:`_bind_scroll_wheel`).
+        """
+
+        canvas_frame = ttk.Frame(win)
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        canvas_frame.grid_rowconfigure(0, weight=1)
+        canvas_frame.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(canvas_frame, bg=PALETTE["bg"], highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        vscroll.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=vscroll.set)
+        self._bind_scroll_wheel(canvas, owner=win)
+
+        body = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(window_id, width=event.width)
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        return body
 
     # ------------------------------------------------------------------
     # Staleness tracking
@@ -1115,9 +1271,12 @@ class LinkBudgetApp:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=PALETTE["bg"])
-        win.geometry("760x900")
+        win.geometry("780x820")
+        win.minsize(560, 320)
 
-        form = ttk.Frame(win, padding=15)
+        scroll_body = self._make_scrollable_window_body(win)
+
+        form = ttk.Frame(scroll_body, padding=15)
         form.pack(fill=tk.X)
         form.grid_columnconfigure(1, weight=1)
 
@@ -1187,38 +1346,113 @@ class LinkBudgetApp:
         extra_frame.grid_columnconfigure(1, weight=1)
         extra_frame.grid_columnconfigure(3, weight=1)
 
-        # (key, label, default text). Numeric fields default to "0" when they
-        # feed directly into the Rx power calculation, and are left blank
-        # (parsed as None / not applied) when purely informational or when a
-        # zero default would misrepresent an unset value (e.g. VSWR).
+        # (key, label, default text, placeholder example, tooltip). Numeric
+        # fields that directly change the Rx Power/Eb-No results below
+        # default to "0" (no assumed loss) instead of a placeholder, since
+        # for those a real inserted value -- not just an example -- is what
+        # keeps the calculation correct. Fields that are purely informational
+        # (free text, or a number that is only echoed back / feeds an
+        # optional cross-check row) instead get a greyed-out example: it
+        # disappears as soon as you type and is never treated as real input
+        # (an untouched field still parses as empty/default), it's just
+        # there to show the expected format.
         extra_specs = [
-            ("tx_power_w", "Transmitter Power [W]", ""),
-            ("ant_circuit_loss_db", "Antenna Circuit Loss [dB]", "0"),
-            ("vswr", "VSWR (:1)", ""),
-            ("ant_gain_dbi", "Antenna Gain [dBi]", ""),
-            ("ant_axial_ratio_db", "Antenna Axial Ratio [dB]", ""),
-            ("coding_scheme", "Coding Scheme", ""),
-            ("data_format", "Data Format", ""),
-            ("modulation", "RF Modulation Scheme", ""),
-            ("required_fer", "Required FER", ""),
-            ("ionospheric_loss_db", "Ionospheric Loss [dB]", "0"),
-            ("polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "0"),
-            ("antenna_type", "E/S Antenna Type", ""),
-            ("rx_axial_ratio_db", "E/S Antenna Axial Ratio [dB]", ""),
-            ("multipath_loss_db", "Multipath Losses [dB]", "0"),
-            ("modulation_degradation_db", "Modulation Degradation [dB]", "0"),
-            ("pfd_limit", "PFD Limit [dBW/m²/4kHz]", ""),
+            (
+                "tx_power_w", "Transmitter Power [W]", "", "e.g. 5",
+                "Numeric [W]. Only feeds the optional 'EIRP from Tx Chain (cross-check)' info "
+                "row below -- it does NOT change the Rx Power / Eb-No results, which always use "
+                "the EIRP from the parameters panel.",
+            ),
+            (
+                "ant_circuit_loss_db", "Antenna Circuit Loss [dB]", "0", None,
+                "Numeric [dB], used in the calculation: only affects the optional EIRP "
+                "cross-check row (requires Transmitter Power to be set too).",
+            ),
+            (
+                "vswr", "VSWR (:1)", "", "e.g. 1.5",
+                "Numeric, e.g. 1.5 for a 1.5:1 ratio. Only feeds the optional EIRP cross-check "
+                "row (requires Transmitter Power to be set too) -- not used otherwise.",
+            ),
+            (
+                "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 30",
+                "Numeric [dBi]. Only feeds the optional EIRP cross-check row (requires "
+                "Transmitter Power to be set too) -- not used otherwise.",
+            ),
+            (
+                "ant_axial_ratio_db", "Antenna Axial Ratio [dB]", "", "e.g. 1.5",
+                "Numeric [dB], informational only: shown in the results but does not change "
+                "any calculated value.",
+            ),
+            (
+                "coding_scheme", "Coding Scheme", "", "e.g. Convolutional 1/2 + Reed-Solomon",
+                "Free text, informational only: printed as-is in the results, not used in any "
+                "calculation.",
+            ),
+            (
+                "data_format", "Data Format", "", "e.g. NRZ-L",
+                "Free text, informational only: printed as-is in the results, not used in any "
+                "calculation.",
+            ),
+            (
+                "modulation", "RF Modulation Scheme", "", "e.g. QPSK",
+                "Free text, informational only: printed as-is in the results, not used in any "
+                "calculation.",
+            ),
+            (
+                "required_fer", "Required FER", "", "e.g. 1e-5",
+                "Numeric (a probability, e.g. 1e-5), informational only: shown in the results "
+                "but not used in any calculation.",
+            ),
+            (
+                "ionospheric_loss_db", "Ionospheric Loss [dB]", "0", None,
+                "Numeric [dB], used in the calculation: subtracted from Rx Power, so it lowers "
+                "the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
+            ),
+            (
+                "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "0", None,
+                "Numeric [dB], used in the calculation: subtracted from Rx Power, so it lowers "
+                "the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
+            ),
+            (
+                "antenna_type", "E/S Antenna Type", "", "e.g. Parabolic reflector",
+                "Free text, informational only: printed as-is in the results, not used in any "
+                "calculation.",
+            ),
+            (
+                "rx_axial_ratio_db", "E/S Antenna Axial Ratio [dB]", "", "e.g. 1.0",
+                "Numeric [dB], informational only: shown in the results but does not change "
+                "any calculated value.",
+            ),
+            (
+                "multipath_loss_db", "Multipath Losses [dB]", "0", None,
+                "Numeric [dB], used in the calculation: subtracted from Rx Power, so it lowers "
+                "the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
+            ),
+            (
+                "modulation_degradation_db", "Modulation Degradation [dB]", "0", None,
+                "Numeric [dB], used in the calculation: added to the Demodulator Loss, so it "
+                "lowers the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
+            ),
+            (
+                "pfd_limit", "PFD Limit [dBW/m²/4kHz]", "", "e.g. -152",
+                "Numeric [dBW/m²/4kHz], used in the calculation: when set, a Power Flux Density "
+                "Margin row (regulatory limit minus computed PFD) is added to the results.",
+            ),
         ]
         extra_entries: dict[str, ttk.Entry] = {}
-        for i, (key, label_text, default) in enumerate(extra_specs):
+        for i, (key, label_text, default, placeholder, tooltip) in enumerate(extra_specs):
             r, c = divmod(i, 2)
             ttk.Label(extra_frame, text=f"{label_text}:").grid(
                 row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=2
             )
-            entry = ttk.Entry(extra_frame, width=15)
-            if default:
-                entry.insert(0, default)
+            if placeholder:
+                entry = _PlaceholderEntry(extra_frame, placeholder, width=15)
+            else:
+                entry = ttk.Entry(extra_frame, width=15)
+                if default:
+                    entry.insert(0, default)
             entry.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+            _add_tooltip(entry, tooltip)
             extra_entries[key] = entry
 
         ttk.Label(form, text="Elevation Angle [deg]").grid(row=3, column=0, sticky="w", padx=5, pady=3)
@@ -1244,7 +1478,7 @@ class LinkBudgetApp:
             "row (computed Eb/No minus this value) is added to the results.",
         )
 
-        results_frame = ttk.Frame(win, padding=(15, 0, 15, 15))
+        results_frame = ttk.Frame(scroll_body, padding=(15, 0, 15, 15))
         results_frame.pack(fill=tk.BOTH, expand=True)
 
         def _parse_required(entry: ttk.Entry, label: str) -> float:
@@ -1878,23 +2112,18 @@ class LinkBudgetApp:
         scrollbar_x.grid(row=1, column=0, sticky="ew")
         canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
 
-        def _on_mousewheel(event):
-            if sys.platform == "darwin":
-                canvas.yview_scroll(-1 * event.delta, "units")
-            else:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
         def _on_shift_mousewheel(event):
             if sys.platform == "darwin":
                 canvas.xview_scroll(-1 * event.delta, "units")
             else:
                 canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
+        # Base of the mouse-wheel stack: never popped, so any scrollable
+        # popup's wheel binding reverts to this one when the popup closes.
+        self._bind_scroll_wheel(canvas)
         if sys.platform == "darwin":
-            canvas.bind_all("<Mousewheel>", _on_mousewheel)
             canvas.bind_all("<Shift-Mousewheel>", _on_shift_mousewheel)
         else:
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
             canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
 
         scrollable_frame = ttk.Frame(canvas)
@@ -1924,6 +2153,10 @@ class LinkBudgetApp:
         self.tle2_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
         ttk.Button(tle_frame, text="Load TLE from file", command=self.load_tle_from_file).grid(
             row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+        )
+        self.tle_file_var = tk.StringVar(value="TLE: none loaded")
+        ttk.Label(tle_frame, textvariable=self.tle_file_var, foreground=PALETTE["text_muted"]).grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(4, 0)
         )
         tle_frame.grid_columnconfigure(1, weight=1)
 
@@ -2313,6 +2546,8 @@ class LinkBudgetApp:
                 self.root.iconbitmap(icon_path)
             except tk.TclError:
                 pass
+
+        self._load_startup_defaults()
 
 
 def setup_gui():

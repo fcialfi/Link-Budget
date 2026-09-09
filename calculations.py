@@ -56,6 +56,34 @@ def _resolve_ground_stations_file() -> str:
     return candidates[-1]
 
 
+def resolve_optional_data_file(filename: str, env_var: str | None = None) -> str | None:
+    """Find a companion data file, or return ``None`` if it isn't present.
+
+    Looks in the same locations as the ground-station catalogue (an
+    optional environment variable override, next to a frozen executable,
+    the current working directory, and finally next to this module when
+    running from source), but -- unlike the ground stations file -- there
+    is no bundled fallback, so a missing file is a normal, silent case.
+    """
+
+    candidates = []
+    if env_var:
+        env_path = os.environ.get(env_var)
+        if env_path:
+            candidates.append(env_path)
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, filename))
+    candidates.append(os.path.join(os.getcwd(), filename))
+    if not getattr(sys, "frozen", False):
+        candidates.append(os.path.join(os.path.dirname(__file__), filename))
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 # Define ground stations loaded from external file
 GROUND_STATIONS_FILE = _resolve_ground_stations_file()
 
