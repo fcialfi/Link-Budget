@@ -349,6 +349,43 @@ def atmospheric_attenuation_contributions(
         return {"gas": 0.0, "cloud": 0.0, "rain": 0.0, "scintillation": 0.0, "total": 0.0}
 
 
+def vswr_mismatch_loss_db(vswr: float) -> float:
+    """Return the transmitter/antenna mismatch (VSWR) loss in dB.
+
+    Standard reflection-coefficient formula: with reflection coefficient
+    ``gamma = (VSWR - 1) / (VSWR + 1)``, the mismatch loss is
+    ``-10*log10(1 - gamma**2)``.
+    """
+
+    reflection = (vswr - 1.0) / (vswr + 1.0)
+    return float(-10 * np.log10(1 - reflection**2))
+
+
+def power_flux_density(
+    eirp_dbw: float,
+    slant_range_km: float,
+    occupied_bandwidth_hz: Optional[float] = None,
+) -> Dict[str, float]:
+    """Power flux density (PFD) at the receiving site from EIRP and range alone.
+
+    This is the geometric PFD (no atmospheric loss credit taken), matching
+    the conservative convention used to check against regulatory PFD limits
+    such as the ones in ECSS-E-ST-50-05C.
+
+    Returns ``pfd_dbw_m2`` and, when ``occupied_bandwidth_hz`` is given,
+    ``pfd_dbw_m2_per_4khz`` -- the PFD re-normalised to a 4 kHz reference
+    bandwidth, assuming a uniform spectral density across the occupied
+    bandwidth.
+    """
+
+    slant_range_m = slant_range_km * 1000.0
+    pfd_dbw_m2 = eirp_dbw - 10 * np.log10(4 * np.pi) - 20 * np.log10(slant_range_m)
+    result = {"pfd_dbw_m2": float(pfd_dbw_m2)}
+    if occupied_bandwidth_hz:
+        result["pfd_dbw_m2_per_4khz"] = float(pfd_dbw_m2 - 10 * np.log10(occupied_bandwidth_hz / 4000.0))
+    return result
+
+
 def calculate_fixed_elevation_link_budget(
     freq: u.Quantity,
     elevation_deg: float,
@@ -367,6 +404,16 @@ def calculate_fixed_elevation_link_budget(
     link_availability_pct: float,
     include_scintillation: bool = True,
     required_ebno: Optional[float] = None,
+    tx_power_w: Optional[float] = None,
+    antenna_circuit_loss_db: float = 0.0,
+    vswr: Optional[float] = None,
+    antenna_gain_dbi: Optional[float] = None,
+    ionospheric_loss_db: float = 0.0,
+    polarisation_loss_db: float = 0.0,
+    multipath_loss_db: float = 0.0,
+    modulation_degradation_db: float = 0.0,
+    occupied_bandwidth_hz: Optional[float] = None,
+    pfd_limit_dbw_m2_4khz: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Preliminary link budget at a single, user-chosen fixed elevation angle.
 
@@ -381,22 +428,42 @@ def calculate_fixed_elevation_link_budget(
     conventional "Clear" column in a preliminary link budget) and once for
     the rain-faded condition at the configured link availability
     (``p = 100 - link_availability_pct``, with rain/clouds/scintillation
-    included).
+    included). ``ionospheric_loss_db``, ``polarisation_loss_db`` and
+    ``multipath_loss_db`` are static extra losses (independent of the
+    clear/rain condition) subtracted from the received power in both
+    columns, and ``modulation_degradation_db`` is added to the implementation
+    loss alongside ``demod_loss``.
+
+    When ``tx_power_w`` is given, an EIRP cross-check
+    (``tx_power_dbw - antenna_circuit_loss_db - vswr_loss_db + antenna_gain_dbi``)
+    is returned as ``eirp_breakdown_dbw`` -- this does **not** replace
+    ``eirp``, which is still what is actually used for the Rx power/Eb-No
+    calculation above. When ``occupied_bandwidth_hz`` is given, the power
+    flux density at the receiving site is also returned (see
+    :func:`power_flux_density`), together with a margin against
+    ``pfd_limit_dbw_m2_4khz`` when that is provided too.
 
     Returns
     -------
     dict
-        ``{"slant_range_km", "path_loss_db", "clear": {...}, "rain_faded": {...}}``
+        ``{"slant_range_km", "path_loss_db", "clear": {...}, "rain_faded": {...}, ...}``
         where each condition dict has ``gas_attenuation_db``,
         ``cloud_attenuation_db``, ``rain_attenuation_db``,
         ``scintillation_db``, ``atmospheric_attenuation_db``,
-        ``rx_power_dbw``, ``cno_dbhz``, ``ebno_db`` and, when
-        ``required_ebno`` is given, ``margin_db``.
+        ``total_propagation_loss_db``, ``rx_power_dbw``, ``cno_dbhz``,
+        ``ebno_db`` and, when ``required_ebno`` is given, ``margin_db``. The
+        top-level dict always carries ``ionospheric_loss_db``,
+        ``polarisation_loss_db``, ``multipath_loss_db`` and
+        ``modulation_degradation_db``, and conditionally
+        ``tx_power_dbw``, ``vswr_loss_db``, ``eirp_breakdown_dbw``,
+        ``pfd_dbw_m2``, ``pfd_dbw_m2_per_4khz`` and ``pfd_margin_db``.
     """
 
     slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
     freq_ghz = freq.to(u.GHz).value
     path_loss = 20 * np.log10(slant_range_km) + 20 * np.log10(freq_ghz) + 92.45
+    extra_static_loss_db = ionospheric_loss_db + polarisation_loss_db + multipath_loss_db
+    demod_loss_total = demod_loss + modulation_degradation_db
 
     def _condition(p: float, include_rain: bool, include_clouds: bool, include_scint: bool) -> Dict[str, float]:
         atm = atmospheric_attenuation_contributions(
@@ -411,8 +478,8 @@ def calculate_fixed_elevation_link_budget(
             include_clouds=include_clouds,
             include_scintillation=include_scint,
         )
-        rx_power = eirp - path_loss - atm["total"] - other_att - pointing_loss_db
-        cno_db = rx_power + gt + 228.6 - demod_loss
+        rx_power = eirp - path_loss - atm["total"] - other_att - pointing_loss_db - extra_static_loss_db
+        cno_db = rx_power + gt + 228.6 - demod_loss_total
         if bitrate > 0 and overhead > 0:
             ebno = cno_db - 10 * np.log10(bitrate / overhead)
         else:
@@ -423,6 +490,7 @@ def calculate_fixed_elevation_link_budget(
             "rain_attenuation_db": atm["rain"],
             "scintillation_db": atm["scintillation"],
             "atmospheric_attenuation_db": atm["total"],
+            "total_propagation_loss_db": path_loss + atm["total"] + ionospheric_loss_db + polarisation_loss_db,
             "rx_power_dbw": rx_power,
             "cno_dbhz": cno_db,
             "ebno_db": ebno,
@@ -432,14 +500,38 @@ def calculate_fixed_elevation_link_budget(
         return result
 
     rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
-    return {
+    out: Dict[str, Any] = {
         "slant_range_km": slant_range_km,
         "path_loss_db": path_loss,
         "clear": _condition(rain_p, include_rain=False, include_clouds=False, include_scint=False),
         "rain_faded": _condition(
             rain_p, include_rain=True, include_clouds=True, include_scint=include_scintillation
         ),
+        "ionospheric_loss_db": ionospheric_loss_db,
+        "polarisation_loss_db": polarisation_loss_db,
+        "multipath_loss_db": multipath_loss_db,
+        "modulation_degradation_db": modulation_degradation_db,
     }
+
+    vswr_loss = vswr_mismatch_loss_db(vswr) if vswr else None
+    if vswr_loss is not None:
+        out["vswr_loss_db"] = vswr_loss
+    if tx_power_w is not None and tx_power_w > 0:
+        tx_power_dbw = 10 * np.log10(tx_power_w)
+        out["tx_power_dbw"] = float(tx_power_dbw)
+        gain = antenna_gain_dbi if antenna_gain_dbi is not None else 0.0
+        out["eirp_breakdown_dbw"] = float(
+            tx_power_dbw - antenna_circuit_loss_db - (vswr_loss or 0.0) + gain
+        )
+
+    pfd = power_flux_density(eirp, slant_range_km, occupied_bandwidth_hz)
+    out["pfd_dbw_m2"] = pfd["pfd_dbw_m2"]
+    if "pfd_dbw_m2_per_4khz" in pfd:
+        out["pfd_dbw_m2_per_4khz"] = pfd["pfd_dbw_m2_per_4khz"]
+        if pfd_limit_dbw_m2_4khz is not None:
+            out["pfd_margin_db"] = float(pfd_limit_dbw_m2_4khz - pfd["pfd_dbw_m2_per_4khz"])
+
+    return out
 
 
 def prepare_topocentric_data(

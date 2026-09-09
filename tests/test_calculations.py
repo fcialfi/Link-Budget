@@ -393,3 +393,179 @@ def test_link_budget_matches_prepare_topocentric_data(iss_context):
     assert params["Slant Range (km)"] == pytest.approx(slant_ranges[0])
     assert params["Doppler Shift (kHz)"] == pytest.approx(dopplers[0])
     assert params["Off Boresight Angle (°)"] == pytest.approx(off_boresight[0], abs=1e-6)
+
+
+# --------------------------------------------------------------------------
+# Fixed-elevation "static" link budget helpers
+# --------------------------------------------------------------------------
+
+
+def test_vswr_mismatch_loss_db_matches_reference_value():
+    # EPS-STERNA-DDB-USERS reference sheet: VSWR 1.50:1 -> 0.18 dB.
+    assert calculations.vswr_mismatch_loss_db(1.50) == pytest.approx(0.18, abs=1e-2)
+
+
+def test_vswr_mismatch_loss_db_zero_for_perfect_match():
+    assert calculations.vswr_mismatch_loss_db(1.0) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_power_flux_density_matches_reference_values():
+    # EPS-STERNA-DDB-USERS reference sheet DESIGN column.
+    result = calculations.power_flux_density(
+        eirp_dbw=4.51, slant_range_km=2396.10, occupied_bandwidth_hz=5176.5e3
+    )
+    assert result["pfd_dbw_m2"] == pytest.approx(-134.07, abs=1e-2)
+    assert result["pfd_dbw_m2_per_4khz"] == pytest.approx(-165.19, abs=1e-2)
+
+
+def test_power_flux_density_omits_4khz_key_without_bandwidth():
+    result = calculations.power_flux_density(eirp_dbw=4.51, slant_range_km=2396.10)
+    assert "pfd_dbw_m2_per_4khz" not in result
+
+
+@pytest.fixture
+def _stub_atmospheric_contributions(monkeypatch):
+    """Deterministic gas/cloud/rain/scintillation contributions for the fixed-budget tests."""
+
+    def _fake(lat, lon, freq_ghz, elevation_deg, p, d_gs, hs, **kwargs):
+        return (0.5, 0.0, 0.0, 0.0, 0.5)
+
+    monkeypatch.setattr(calculations.itu, "atmospheric_attenuation_slant_path", _fake)
+
+
+def test_fixed_elevation_link_budget_basic(_stub_atmospheric_contributions):
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.01,
+        link_availability_pct=99.99,
+        required_ebno=2.60,
+    )
+
+    assert budget["ionospheric_loss_db"] == 0.0
+    assert budget["polarisation_loss_db"] == 0.0
+    assert budget["multipath_loss_db"] == 0.0
+    assert budget["modulation_degradation_db"] == 0.0
+    assert "tx_power_dbw" not in budget
+    assert "pfd_dbw_m2_per_4khz" not in budget
+    assert budget["pfd_dbw_m2"] == pytest.approx(
+        4.51 - 10 * np.log10(4 * np.pi) - 20 * np.log10(budget["slant_range_km"] * 1000.0)
+    )
+    clear = budget["clear"]
+    assert clear["total_propagation_loss_db"] == pytest.approx(budget["path_loss_db"] + 0.5)
+    assert clear["margin_db"] == pytest.approx(clear["ebno_db"] - 2.60)
+
+
+def test_fixed_elevation_link_budget_extra_losses_reduce_rx_power(_stub_atmospheric_contributions):
+    base = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+    )
+    with_losses = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        ionospheric_loss_db=0.01,
+        polarisation_loss_db=0.04,
+        multipath_loss_db=0.20,
+        modulation_degradation_db=0.50,
+    )
+
+    total_extra_loss = 0.01 + 0.04 + 0.20 + 0.50
+    assert with_losses["clear"]["rx_power_dbw"] == pytest.approx(
+        base["clear"]["rx_power_dbw"] - 0.01 - 0.04 - 0.20
+    )
+    assert with_losses["clear"]["cno_dbhz"] == pytest.approx(
+        base["clear"]["cno_dbhz"] - total_extra_loss
+    )
+
+
+def test_fixed_elevation_link_budget_tx_chain_breakdown(_stub_atmospheric_contributions):
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        tx_power_w=3.30,
+        antenna_circuit_loss_db=0.50,
+        vswr=1.50,
+        antenna_gain_dbi=0.0,
+        occupied_bandwidth_hz=5176.5e3,
+        pfd_limit_dbw_m2_4khz=-154.0,
+    )
+
+    assert budget["tx_power_dbw"] == pytest.approx(10 * np.log10(3.30))
+    assert budget["vswr_loss_db"] == pytest.approx(0.18, abs=1e-2)
+    assert budget["eirp_breakdown_dbw"] == pytest.approx(
+        budget["tx_power_dbw"] - 0.50 - budget["vswr_loss_db"]
+    )
+    assert budget["pfd_dbw_m2_per_4khz"] == pytest.approx(-165.19, abs=1e-2)
+    assert budget["pfd_margin_db"] == pytest.approx(-154.0 - budget["pfd_dbw_m2_per_4khz"])
+
+
+def test_fixed_elevation_link_budget_ebno_nan_without_bitrate(_stub_atmospheric_contributions):
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=0.0,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+    )
+    assert np.isnan(budget["clear"]["ebno_db"])
