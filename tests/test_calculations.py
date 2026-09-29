@@ -569,3 +569,186 @@ def test_fixed_elevation_link_budget_ebno_nan_without_bitrate(_stub_atmospheric_
         link_availability_pct=99.99,
     )
     assert np.isnan(budget["clear"]["ebno_db"])
+
+
+def test_antenna_pointing_loss_db_matches_reference_value():
+    # Reference sheet: 3 m dish, theta_3dB 3.97 deg, depointing 0.1 deg -> 0.01 dB.
+    assert calculations.antenna_pointing_loss_db(0.1, 3.97) == pytest.approx(0.0076, abs=1e-4)
+    assert calculations.antenna_pointing_loss_db(0.0, 3.97) == 0.0
+
+
+def test_antenna_beamwidth_3db_deg_for_3m_dish_at_l_band():
+    assert calculations.antenna_beamwidth_3db_deg(1.707, 3.0) == pytest.approx(4.10, abs=1e-2)
+
+
+def test_polarisation_mismatch_loss_zero_for_perfect_circular_antennas():
+    result = calculations.polarisation_mismatch_loss_db(0.0, 0.0)
+    assert result["best"] == pytest.approx(0.0, abs=1e-12)
+    assert result["worst"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_polarisation_mismatch_loss_worst_exceeds_best():
+    result = calculations.polarisation_mismatch_loss_db(3.0, 1.0)
+    assert 0.0 < result["best"] < result["worst"]
+
+
+@pytest.mark.parametrize(
+    "dist, mean, variance",
+    [
+        # Reference sheet: antenna gain 0 dBi +/-1.5 dB TRI -> variance 0.38.
+        ("TRI", 0.0, 0.375),
+        # Reference sheet: effective gain range 3 dB UNI -> variance 0.75.
+        ("UNI", 0.0, 0.75),
+        ("GAU", 0.0, 0.25),
+    ],
+)
+def test_tolerance_statistics_symmetric(dist, mean, variance):
+    stats = calculations.tolerance_statistics(1.5, 1.5, dist)
+    assert stats["mean_db"] == pytest.approx(mean)
+    assert stats["variance_db2"] == pytest.approx(variance)
+
+
+def test_tolerance_statistics_asymmetric_triangular_mean_shift():
+    stats = calculations.tolerance_statistics(0.0, 1.5, "TRI")
+    assert stats["mean_db"] == pytest.approx(-0.5)
+    assert stats["variance_db2"] == pytest.approx(1.5**2 / 18)
+
+
+def test_tolerance_statistics_rejects_unknown_distribution():
+    with pytest.raises(ValueError):
+        calculations.tolerance_statistics(1.0, 1.0, "FOO")
+
+
+def test_margin_statistics_combines_contributions():
+    stats = calculations.margin_statistics(
+        5.0,
+        [
+            {"name": "gain", "favourable_db": 1.5, "adverse_db": 1.5, "distribution": "TRI"},
+            {"name": "atm", "favourable_db": 0.0, "adverse_db": 2.0, "distribution": "UNI"},
+        ],
+    )
+    assert stats["favourable_db"] == pytest.approx(6.5)
+    assert stats["adverse_db"] == pytest.approx(1.5)
+    assert stats["mean_db"] == pytest.approx(5.0 - 1.0)
+    assert stats["variance_db2"] == pytest.approx(0.375 + 4.0 / 12)
+    assert stats["mean_minus_3sigma_db"] == pytest.approx(4.0 - 3 * np.sqrt(0.375 + 4.0 / 12))
+    assert stats["worst_case_rss_db"] == pytest.approx(5.0 - np.sqrt(1.5**2 + 2.0**2))
+    assert [c["name"] for c in stats["contributions"]] == ["gain", "atm"]
+
+
+def test_fixed_elevation_link_budget_reproduces_reference_sheet(monkeypatch):
+    """Nominal column of the reference S/C -> E/S static link budget sheet."""
+
+    monkeypatch.setattr(
+        calculations.itu,
+        "atmospheric_attenuation_slant_path",
+        lambda *args, **kwargs: (3.0, 0.0, 0.0, 0.0, 3.0),
+    )
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=3.0,
+        sat_altitude_km=627.99,
+        lat_gs=78.2,
+        lon_gs=15.4,
+        alt_gs_km=0.0,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=7.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=3570 / 1559,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        required_ebno=2.60,
+        tx_power_w=3.30,
+        antenna_circuit_loss_db=0.50,
+        vswr=1.50,
+        antenna_gain_dbi=0.0,
+        ionospheric_loss_db=0.05,
+        polarisation_loss_db=0.09,
+        modulation_degradation_db=0.50,
+        occupied_bandwidth_hz=5176.5e3,
+        pfd_limit_dbw_m2_4khz=-154.0,
+        formatting_overhead=1590.13 / 1559,
+        tolerances=[{"name": "gain", "favourable_db": 1.5, "adverse_db": 1.5, "distribution": "TRI"}],
+    )
+
+    assert budget["slant_range_km"] == pytest.approx(2584.52, abs=0.1)
+    assert budget["path_loss_db"] == pytest.approx(165.34, abs=1e-2)
+    assert budget["effective_gain_dbi"] == pytest.approx(-0.68, abs=1e-2)
+    assert budget["pfd_dbm_m2"] == pytest.approx(-104.73, abs=1e-2)
+    assert budget["pfd_dbw_m2_per_4khz"] == pytest.approx(-165.85, abs=1e-2)
+    assert budget["pfd_margin_db"] == pytest.approx(11.85, abs=1e-2)
+    assert budget["bitrate_dbhz"] == pytest.approx(62.01, abs=1e-2)
+    clear = budget["clear"]
+    assert clear["total_propagation_loss_db"] == pytest.approx(168.48, abs=1e-2)
+    assert clear["received_cno_dbhz"] == pytest.approx(71.63, abs=2e-2)
+    assert clear["ebno_db"] == pytest.approx(8.12, abs=2e-2)
+    assert clear["margin_db"] == pytest.approx(5.52, abs=2e-2)
+    stats = clear["margin_statistics"]
+    assert stats["favourable_db"] == pytest.approx(7.01, abs=2e-2)
+    assert stats["adverse_db"] == pytest.approx(4.01, abs=2e-2)
+
+
+def test_fixed_elevation_link_budget_polarisation_and_rx_pointing(_stub_atmospheric_contributions):
+    common = dict(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+    )
+    base = calculations.calculate_fixed_elevation_link_budget(**common)
+    derived = calculations.calculate_fixed_elevation_link_budget(
+        **common,
+        polarisation_loss_db=None,
+        tx_axial_ratio_db=3.0,
+        rx_axial_ratio_db=1.0,
+        rx_depointing_deg=0.5,
+    )
+
+    worst = calculations.polarisation_mismatch_loss_db(3.0, 1.0)["worst"]
+    assert derived["polarisation_loss_db"] == pytest.approx(worst)
+    assert derived["rx_beamwidth_3db_deg"] == pytest.approx(
+        calculations.antenna_beamwidth_3db_deg(1.707, 3.0)
+    )
+    pointing = calculations.antenna_pointing_loss_db(0.5, derived["rx_beamwidth_3db_deg"])
+    assert derived["rx_pointing_loss_db"] == pytest.approx(pointing)
+    assert derived["clear"]["rx_power_dbw"] == pytest.approx(
+        base["clear"]["rx_power_dbw"] - worst - pointing
+    )
+
+
+def test_fixed_elevation_link_budget_formatting_overhead_lowers_ebno(_stub_atmospheric_contributions):
+    common = dict(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+    )
+    base = calculations.calculate_fixed_elevation_link_budget(**common)
+    formatted = calculations.calculate_fixed_elevation_link_budget(**common, formatting_overhead=1.02)
+    assert formatted["clear"]["ebno_db"] == pytest.approx(base["clear"]["ebno_db"] - 10 * np.log10(1.02))
+    assert "margin_statistics" not in formatted["clear"]
