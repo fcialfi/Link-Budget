@@ -1207,6 +1207,7 @@ class LinkBudgetApp:
             other_att_label="Other Attenuations [dB]",
             rolloff_entry=self.rolloff_entry,
             spectral_eff_entry=self.spectral_eff_entry,
+            rx_is_ground_station=True,
         )
 
     def show_fixed_uplink_link_budget(self):
@@ -1230,6 +1231,7 @@ class LinkBudgetApp:
             other_att_label="Uplink Other Attenuations [dB]",
             rolloff_entry=self.uplink_rolloff_entry,
             spectral_eff_entry=self.uplink_spectral_eff_entry,
+            rx_is_ground_station=False,
         )
 
     def _open_fixed_link_budget_window(
@@ -1251,6 +1253,7 @@ class LinkBudgetApp:
         other_att_label: str,
         rolloff_entry: ttk.Entry,
         spectral_eff_entry: ttk.Entry,
+        rx_is_ground_station: bool = True,
     ):
         """Open a popup computing a TLE-independent, fixed-elevation link budget.
 
@@ -1265,7 +1268,10 @@ class LinkBudgetApp:
         the rest of a formal static link budget sheet (Tx chain breakdown,
         ionospheric/polarisation/multipath losses, modulation degradation,
         PFD limit, and informational text fields) -- everything is optional
-        and defaults to not affecting the core Rx power/Eb-No numbers.
+        and defaults to not affecting the core Rx power/Eb-No numbers. A
+        "Tolerances" section takes favourable/adverse deviations and their
+        probability distribution for the main contributors, from which the
+        statistical margins (Mean - 3 sigma, worst case RSS) are derived.
         """
 
         win = tk.Toplevel(self.root)
@@ -1409,9 +1415,11 @@ class LinkBudgetApp:
                 "the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
             ),
             (
-                "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "0", None,
+                "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "", "auto from axial ratios",
                 "Numeric [dB], used in the calculation: subtracted from Rx Power, so it lowers "
-                "the resulting Eb/No in both the Clear Sky and Rain Faded columns.",
+                "the resulting Eb/No in both the Clear Sky and Rain Faded columns. Leave empty to "
+                "compute it from the Tx and Rx antenna axial ratios (worst-case orientation of "
+                "the polarisation ellipses), or 0 when those are not both set.",
             ),
             (
                 "antenna_type", "E/S Antenna Type", "", "e.g. Parabolic reflector",
@@ -1438,6 +1446,32 @@ class LinkBudgetApp:
                 "Numeric [dBW/m²/4kHz], used in the calculation: when set, a Power Flux Density "
                 "Margin row (regulatory limit minus computed PFD) is added to the results.",
             ),
+            (
+                "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
+                "Numeric ratio (bit rate incl. formatting / information bit rate), used in the "
+                "calculation: Eb/No is referred to the information bit rate times this factor "
+                "(i.e. the bit rate including formatting, excluding coding). Empty = 1.",
+            ),
+            (
+                "atm_model_uncertainty_pct", "Atmospheric Model Uncertainty [%]", "", "e.g. 0",
+                "Numeric [%], informational only: shown in the results but does not change any "
+                "calculated value.",
+            ),
+            (
+                "rx_depointing_deg", "Rx Antenna Depointing Angle [deg]", "", "e.g. 0.1",
+                "Numeric [deg], used in the calculation: adds a receive antenna pointing loss "
+                "12*(angle/beamwidth)^2, subtracted from Rx Power.",
+            ),
+            (
+                "rx_beamwidth_deg", "Rx Antenna 3dB Beamwidth [deg]", "",
+                "auto from GS diameter" if rx_is_ground_station else "e.g. 10",
+                "Numeric [deg], used together with the depointing angle. "
+                + (
+                    "Leave empty to use 70*lambda/D from the GS antenna diameter."
+                    if rx_is_ground_station
+                    else "Required when the depointing angle is set."
+                ),
+            ),
         ]
         extra_entries: dict[str, ttk.Entry] = {}
         for i, (key, label_text, default, placeholder, tooltip) in enumerate(extra_specs):
@@ -1455,23 +1489,75 @@ class LinkBudgetApp:
             _add_tooltip(entry, tooltip)
             extra_entries[key] = entry
 
-        ttk.Label(form, text="Elevation Angle [deg]").grid(row=3, column=0, sticky="w", padx=5, pady=3)
+        tol_frame = ttk.LabelFrame(
+            form, text="Tolerances (optional, dB of effect on the margin)", padding=8
+        )
+        tol_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ttk.Label(
+            tol_frame,
+            text=(
+                "Favourable / adverse deviations from nominal, as positive dB values. "
+                "Used for the Mean - 3σ and Worst Case RSS margins (requires Required Eb/No)."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=560,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+        for col, heading in enumerate(("Parameter", "Favourable [dB]", "Adverse [dB]", "PDF")):
+            ttk.Label(tol_frame, text=heading, font=(recap_font_family, 9, "bold")).grid(
+                row=1, column=col, sticky="w", padx=(0, 10), pady=1
+            )
+        # (key, label, default distribution) -- defaults follow the reference
+        # static link budget sheet (TRI for hardware, GAU for propagation).
+        tolerance_specs = [
+            ("tx_power", "Transmitter Power", "TRI"),
+            ("tx_gain", "Tx Antenna Gain", "TRI"),
+            ("propagation", "Atmospheric / Propagation Loss", "GAU"),
+            ("rx_gt", "Rx G/T", "TRI"),
+            ("rx_degradation", "Receiver Degradation", "TRI"),
+        ]
+        tolerance_widgets: dict[str, tuple[ttk.Entry, ttk.Entry, ttk.Combobox, str]] = {}
+        for i, (key, label_text, default_pdf) in enumerate(tolerance_specs, start=2):
+            ttk.Label(tol_frame, text=f"{label_text}:").grid(row=i, column=0, sticky="w", padx=(0, 10), pady=1)
+            fav_entry = ttk.Entry(tol_frame, width=10)
+            fav_entry.grid(row=i, column=1, sticky="w", padx=(0, 10), pady=1)
+            adv_entry = ttk.Entry(tol_frame, width=10)
+            adv_entry.grid(row=i, column=2, sticky="w", padx=(0, 10), pady=1)
+            pdf_box = ttk.Combobox(
+                tol_frame, values=list(calculations.TOLERANCE_DISTRIBUTIONS), width=6, state="readonly"
+            )
+            pdf_box.set(default_pdf)
+            pdf_box.grid(row=i, column=3, sticky="w", pady=1)
+            _add_tooltip(
+                pdf_box,
+                "TRI = triangular peaked at nominal, UNI = uniform between the limits, "
+                "GAU = Gaussian with the limits taken as ±3σ.",
+            )
+            tolerance_widgets[key] = (fav_entry, adv_entry, pdf_box, label_text)
+
+        ttk.Label(form, text="Elevation Angle [deg]").grid(row=4, column=0, sticky="w", padx=5, pady=3)
         elevation_entry = ttk.Entry(form, width=15)
         elevation_entry.insert(0, f"{MIN_ELEVATION_DEG:g}")
-        elevation_entry.grid(row=3, column=1, sticky="w", padx=5, pady=3)
+        elevation_entry.grid(row=4, column=1, sticky="w", padx=5, pady=3)
 
-        ttk.Label(form, text="Satellite Altitude [km]").grid(row=4, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Satellite Altitude [km]").grid(row=5, column=0, sticky="w", padx=5, pady=3)
         altitude_entry = ttk.Entry(form, width=15)
-        altitude_entry.grid(row=4, column=1, sticky="w", padx=5, pady=3)
+        altitude_entry.grid(row=5, column=1, sticky="w", padx=5, pady=3)
 
-        ttk.Label(form, text="Pointing / Mispoint Loss [dB]").grid(row=5, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Tx Antenna Pointing Loss [dB]").grid(row=6, column=0, sticky="w", padx=5, pady=3)
         mispoint_entry = ttk.Entry(form, width=15)
         mispoint_entry.insert(0, "0")
-        mispoint_entry.grid(row=5, column=1, sticky="w", padx=5, pady=3)
+        mispoint_entry.grid(row=6, column=1, sticky="w", padx=5, pady=3)
+        _add_tooltip(
+            mispoint_entry,
+            "Transmit antenna pointing / mispointing loss [dB], subtracted from Rx Power. "
+            "The receive antenna pointing loss is derived from the depointing angle in the "
+            "Additional Parameters section.",
+        )
 
-        ttk.Label(form, text="Required Eb/No [dB] (optional)").grid(row=6, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(form, text="Required Eb/No [dB] (optional)").grid(row=7, column=0, sticky="w", padx=5, pady=3)
         required_ebno_entry = ttk.Entry(form, width=15)
-        required_ebno_entry.grid(row=6, column=1, sticky="w", padx=5, pady=3)
+        required_ebno_entry.grid(row=7, column=1, sticky="w", padx=5, pady=3)
         _add_tooltip(
             required_ebno_entry,
             "Modulation/FEC Eb/No threshold, if known. When set, a Data Recovery Margin "
@@ -1515,7 +1601,7 @@ class LinkBudgetApp:
             try:
                 elevation_deg = _parse_required(elevation_entry, "Elevation Angle [deg]")
                 sat_altitude_km = _parse_required(altitude_entry, "Satellite Altitude [km]")
-                pointing_loss_db = _parse_optional(mispoint_entry, "Pointing / Mispoint Loss [dB]")
+                pointing_loss_db = _parse_optional(mispoint_entry, "Tx Antenna Pointing Loss [dB]")
                 required_ebno = (
                     _parse_required(required_ebno_entry, "Required Eb/No [dB]")
                     if required_ebno_entry.get().strip()
@@ -1545,7 +1631,7 @@ class LinkBudgetApp:
                 ionospheric_loss_db = _parse_optional(
                     extra_entries["ionospheric_loss_db"], "Ionospheric Loss [dB]"
                 )
-                polarisation_loss_db = _parse_optional(
+                polarisation_loss_db = _parse_optional_or_none(
                     extra_entries["polarisation_loss_db"], "Polarisation Mismatch Loss [dB]"
                 )
                 rx_axial_ratio_db = _parse_optional_or_none(
@@ -1561,6 +1647,46 @@ class LinkBudgetApp:
                     extra_entries["pfd_limit"], "PFD Limit [dBW/m²/4kHz]"
                 )
                 required_fer = _parse_optional_or_none(extra_entries["required_fer"], "Required FER")
+                formatting_overhead = _parse_optional(
+                    extra_entries["formatting_overhead"], "Formatting Overhead (factor)", default=1.0
+                )
+                if formatting_overhead <= 0:
+                    raise ValueError("'Formatting Overhead (factor)' must be greater than 0.")
+                atm_model_uncertainty_pct = _parse_optional_or_none(
+                    extra_entries["atm_model_uncertainty_pct"], "Atmospheric Model Uncertainty [%]"
+                )
+                rx_depointing_deg = _parse_optional_or_none(
+                    extra_entries["rx_depointing_deg"], "Rx Antenna Depointing Angle [deg]"
+                )
+                rx_beamwidth_deg = _parse_optional_or_none(
+                    extra_entries["rx_beamwidth_deg"], "Rx Antenna 3dB Beamwidth [deg]"
+                )
+                if rx_beamwidth_deg is not None and rx_beamwidth_deg <= 0:
+                    raise ValueError("'Rx Antenna 3dB Beamwidth [deg]' must be greater than 0.")
+                if rx_depointing_deg is not None and rx_beamwidth_deg is None and not rx_is_ground_station:
+                    raise ValueError(
+                        "'Rx Antenna 3dB Beamwidth [deg]' is required when the Rx Antenna "
+                        "Depointing Angle is set (it can only be derived from the GS antenna "
+                        "diameter for the downlink)."
+                    )
+
+                tolerances = []
+                for fav_entry, adv_entry, pdf_box, tol_label in tolerance_widgets.values():
+                    fav = _parse_optional(fav_entry, f"{tol_label} favourable tolerance")
+                    adv = _parse_optional(adv_entry, f"{tol_label} adverse tolerance")
+                    if fav < 0 or adv < 0:
+                        raise ValueError(
+                            f"'{tol_label}' tolerances must be entered as positive dB values."
+                        )
+                    if fav or adv:
+                        tolerances.append(
+                            {
+                                "name": tol_label,
+                                "favourable_db": fav,
+                                "adverse_db": adv,
+                                "distribution": pdf_box.get(),
+                            }
+                        )
                 coding_scheme = extra_entries["coding_scheme"].get().strip()
                 data_format = extra_entries["data_format"].get().strip()
                 modulation = extra_entries["modulation"].get().strip()
@@ -1612,8 +1738,18 @@ class LinkBudgetApp:
                 modulation_degradation_db=modulation_degradation_db,
                 occupied_bandwidth_hz=occupied_bandwidth_hz,
                 pfd_limit_dbw_m2_4khz=pfd_limit,
+                tx_axial_ratio_db=ant_axial_ratio_db,
+                rx_axial_ratio_db=rx_axial_ratio_db,
+                rx_depointing_deg=rx_depointing_deg,
+                rx_beamwidth_3db_deg=rx_beamwidth_deg,
+                formatting_overhead=formatting_overhead,
+                tolerances=tolerances or None,
             )
             extra_info = {
+                "station": f"{gs_name} ({lat_gs:.4f}°, {lon_gs:.4f}°, {alt_gs_m:g} m)",
+                "link_availability_pct": link_availability,
+                "atm_model_uncertainty_pct": atm_model_uncertainty_pct,
+                "formatting_overhead": formatting_overhead,
                 "info_bitrate_kbps": info_bitrate_kbps,
                 "bitrate_kbps": bitrate_mbps * 1000.0,
                 "code_rate": (1.0 / overhead) if overhead else None,
@@ -1631,7 +1767,7 @@ class LinkBudgetApp:
             self._render_fixed_link_budget_results(results_frame, budget, link_availability, extra_info)
 
         ttk.Button(form, text="Calculate", command=_calculate, style="Red.TButton").grid(
-            row=7, column=0, columnspan=2, sticky="w", padx=5, pady=(10, 0)
+            row=8, column=0, columnspan=2, sticky="w", padx=5, pady=(10, 0)
         )
 
     def _render_fixed_link_budget_results(self, parent, budget, link_availability_pct, extra_info=None):
@@ -1655,6 +1791,13 @@ class LinkBudgetApp:
         info_rows: list[tuple[str, str]] = []
         if extra_info.get("info_bitrate_kbps") is not None:
             info_rows.append(("Information Bit Rate (excl. coding) [kbit/s]", f"{extra_info['info_bitrate_kbps']:.2f}"))
+        if budget.get("bitrate_formatted_bps"):
+            info_rows.append(
+                (
+                    "Bit Rate incl. Formatting (excl. coding) [kbit/s]",
+                    f"{budget['bitrate_formatted_bps'] / 1000.0:.2f}",
+                )
+            )
         if extra_info.get("bitrate_kbps") is not None:
             info_rows.append(("Bit Rate incl. Coding [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
         if extra_info.get("code_rate") is not None:
@@ -1669,22 +1812,47 @@ class LinkBudgetApp:
             info_rows.append(("RF Carrier Modulation Scheme", extra_info["modulation"]))
         if extra_info.get("occupied_bandwidth_khz") is not None:
             info_rows.append(("Occupied Bandwidth [kHz]", f"{extra_info['occupied_bandwidth_khz']:.1f}"))
+        if "required_ebno_db" in budget:
+            info_rows.append(("Required Eb/No [dB]", f"{budget['required_ebno_db']:.2f}"))
         if "tx_power_dbw" in budget:
             info_rows.append(("Transmitter Power [dBW]", f"{budget['tx_power_dbw']:.2f}"))
+        if "frequency_mhz" in budget:
+            info_rows.append(("Transmitter Frequency [MHz]", f"{budget['frequency_mhz']:.3f}"))
         if "vswr_loss_db" in budget:
             info_rows.append(("VSWR Losses [dB]", f"{budget['vswr_loss_db']:.2f}"))
         if extra_info.get("ant_axial_ratio_db") is not None:
             info_rows.append(("Antenna Axial Ratio [dB]", f"{extra_info['ant_axial_ratio_db']:.2f}"))
+        if "effective_gain_dbi" in budget:
+            info_rows.append(("Effective Gain [dBi]", f"{budget['effective_gain_dbi']:.2f}"))
         if "eirp_breakdown_dbw" in budget:
             info_rows.append(("EIRP from Tx Chain (cross-check) [dBW]", f"{budget['eirp_breakdown_dbw']:.2f}"))
         if extra_info.get("eirp_used_dbw") is not None:
             info_rows.append(("EIRP Used for Rx/Eb-No [dBW]", f"{extra_info['eirp_used_dbw']:.2f}"))
         if extra_info.get("pointing_loss_db") is not None:
-            info_rows.append(("Antenna Pointing Loss [dB]", f"{extra_info['pointing_loss_db']:.2f}"))
+            info_rows.append(("Tx Antenna Pointing Loss [dB]", f"{extra_info['pointing_loss_db']:.2f}"))
+        if extra_info.get("station"):
+            info_rows.append(("Station Location", extra_info["station"]))
+        if extra_info.get("link_availability_pct") is not None:
+            info_rows.append(("Weather Availability [%]", f"{extra_info['link_availability_pct']:g}"))
+        if extra_info.get("atm_model_uncertainty_pct") is not None:
+            info_rows.append(
+                ("Atmospheric Model Uncertainty [%]", f"{extra_info['atm_model_uncertainty_pct']:.2f}")
+            )
+        if "polarisation_loss_range_db" in budget:
+            pol_range = budget["polarisation_loss_range_db"]
+            info_rows.append(
+                (
+                    "Polarisation Loss from Axial Ratios (best/worst) [dB]",
+                    f"{pol_range['best']:.2f} / {pol_range['worst']:.2f}",
+                )
+            )
         if extra_info.get("antenna_type"):
             info_rows.append(("E/S Antenna Type", extra_info["antenna_type"]))
         if extra_info.get("rx_axial_ratio_db") is not None:
             info_rows.append(("E/S Antenna Axial Ratio [dB]", f"{extra_info['rx_axial_ratio_db']:.2f}"))
+        if "rx_depointing_deg" in budget:
+            info_rows.append(("Rx Antenna Depointing Angle [deg]", f"{budget['rx_depointing_deg']:.2f}"))
+            info_rows.append(("Rx Antenna 3dB Beamwidth [deg]", f"{budget['rx_beamwidth_3db_deg']:.2f}"))
 
         if info_rows:
             info_frame = ttk.LabelFrame(parent, text="Static Link Budget Info", padding=8)
@@ -1707,7 +1875,7 @@ class LinkBudgetApp:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill=tk.BOTH, expand=True)
 
-        table = ttk.Treeview(table_frame, columns=("param", "clear", "rain"), show="headings", height=16)
+        table = ttk.Treeview(table_frame, columns=("param", "clear", "rain"), show="headings", height=24)
         table.heading("param", text="Parameter")
         table.heading("clear", text="Clear Sky")
         table.heading("rain", text=f"Rain Faded (p={rain_p:g}%)")
@@ -1719,7 +1887,14 @@ class LinkBudgetApp:
 
         clear = budget["clear"]
         rain = budget["rain_faded"]
-        rows = [
+        def _both(value):
+            return value, value
+
+        rows = []
+        if "eirp_dbw" in budget:
+            rows.append(("EIRP [dBW]", *_both(budget["eirp_dbw"])))
+        rows += [
+            ("Free Space Loss [dB]", *_both(budget["path_loss_db"])),
             ("Gas Attenuation [dB]", clear["gas_attenuation_db"], rain["gas_attenuation_db"]),
             ("Cloud Attenuation [dB]", clear["cloud_attenuation_db"], rain["cloud_attenuation_db"]),
             ("Rain Attenuation [dB]", clear["rain_attenuation_db"], rain["rain_attenuation_db"]),
@@ -1746,20 +1921,50 @@ class LinkBudgetApp:
                 rain["total_propagation_loss_db"],
             )
         )
+        if "pfd_dbm_m2" in budget:
+            rows.append(("Power Flux Density [dBm/m²]", *_both(budget["pfd_dbm_m2"])))
         if "pfd_dbw_m2" in budget:
             pfd = budget["pfd_dbw_m2"]
             rows.append(("Power Flux Density [dBW/m²]", pfd, pfd))
         if "pfd_dbw_m2_per_4khz" in budget:
             pfd4 = budget["pfd_dbw_m2_per_4khz"]
             rows.append(("Power Flux Density [dBW/m²/4kHz]", pfd4, pfd4))
+        if "pfd_limit_dbw_m2_4khz" in budget:
+            rows.append(("Power Flux Density Limit [dBW/m²/4kHz]", *_both(budget["pfd_limit_dbw_m2_4khz"])))
         if "pfd_margin_db" in budget:
             pfd_margin = budget["pfd_margin_db"]
             rows.append(("Power Flux Density Margin [dB]", pfd_margin, pfd_margin))
+        if "gt_dbk" in budget:
+            rows.append(("Rx G/T [dB/K]", *_both(budget["gt_dbk"])))
+        if "rx_depointing_deg" in budget:
+            rows.append(("Rx Antenna Pointing Loss [dB]", *_both(budget["rx_pointing_loss_db"])))
         rows.append(("Rx Power [dBW]", clear["rx_power_dbw"], rain["rx_power_dbw"]))
-        rows.append(("C/No [dBHz]", clear["cno_dbhz"], rain["cno_dbhz"]))
-        rows.append(("Eb/No [dB]", clear["ebno_db"], rain["ebno_db"]))
+        if "received_cno_dbhz" in clear:
+            rows.append(("Received S/No [dBHz]", clear["received_cno_dbhz"], rain["received_cno_dbhz"]))
+        if budget.get("modulation_degradation_db"):
+            rows.append(("Modulation Degradation [dB]", *_both(budget["modulation_degradation_db"])))
+        if "receiver_degradation_db" in budget:
+            rows.append(("Receiver Degradation [dB]", *_both(budget["receiver_degradation_db"])))
+        rows.append(("C/No after Degradations [dBHz]", clear["cno_dbhz"], rain["cno_dbhz"]))
+        if "bitrate_dbhz" in budget:
+            rows.append(("Bit Rate incl. Formatting [dBHz]", *_both(budget["bitrate_dbhz"])))
+        rows.append(("Received Eb/No [dB]", clear["ebno_db"], rain["ebno_db"]))
+        if "required_ebno_db" in budget:
+            rows.append(("Required Eb/No [dB]", *_both(budget["required_ebno_db"])))
         if "margin_db" in clear:
             rows.append(("Data Recovery Margin [dB]", clear["margin_db"], rain["margin_db"]))
+        clear_stats = clear.get("margin_statistics")
+        rain_stats = rain.get("margin_statistics")
+        if clear_stats and rain_stats:
+            for key, label in (
+                ("favourable_db", "Margin – All Favourable [dB]"),
+                ("adverse_db", "Margin – All Adverse [dB]"),
+                ("mean_db", "Margin Mean [dB]"),
+                ("sigma_db", "Margin σ [dB]"),
+                ("mean_minus_3sigma_db", "MEAN – 3σ [dB] (req. ≥ 0)"),
+                ("worst_case_rss_db", "MARGIN – Worst Case RSS [dB] (req. ≥ 0)"),
+            ):
+                rows.append((label, clear_stats[key], rain_stats[key]))
 
         for i, (label, clear_val, rain_val) in enumerate(rows):
             table.insert(
@@ -1773,6 +1978,56 @@ class LinkBudgetApp:
         table.configure(yscrollcommand=table_vscroll.set)
         table_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
         table.pack(fill=tk.BOTH, expand=True)
+
+        # Tolerance contributions are the same for both conditions.
+        if clear_stats and clear_stats["contributions"]:
+            tol_frame = ttk.LabelFrame(parent, text="Tolerance Contributions", padding=8)
+            tol_frame.pack(fill=tk.X, pady=(10, 0))
+            columns = ("param", "fav", "adv", "pdf", "mean", "var")
+            tol_table = ttk.Treeview(
+                tol_frame, columns=columns, show="headings", height=len(clear_stats["contributions"]) + 1
+            )
+            for col, heading, width, anchor in (
+                ("param", "Parameter", 220, "w"),
+                ("fav", "Favourable [dB]", 100, "center"),
+                ("adv", "Adverse [dB]", 100, "center"),
+                ("pdf", "PDF", 60, "center"),
+                ("mean", "Mean [dB]", 90, "center"),
+                ("var", "Variance [dB²]", 100, "center"),
+            ):
+                tol_table.heading(col, text=heading)
+                tol_table.column(col, anchor=anchor, width=width)
+            tol_table.tag_configure("evenrow", background=PALETTE["row_even"])
+            tol_table.tag_configure("oddrow", background=PALETTE["row_odd"])
+            contributions = clear_stats["contributions"]
+            for i, contrib in enumerate(contributions):
+                tol_table.insert(
+                    "",
+                    "end",
+                    values=(
+                        contrib["name"],
+                        f"+{contrib['favourable_db']:.2f}",
+                        f"-{contrib['adverse_db']:.2f}",
+                        contrib["distribution"],
+                        f"{contrib['mean_db']:.2f}",
+                        f"{contrib['variance_db2']:.3f}",
+                    ),
+                    tags=("evenrow" if i % 2 == 0 else "oddrow",),
+                )
+            tol_table.insert(
+                "",
+                "end",
+                values=(
+                    "Total",
+                    f"+{sum(c['favourable_db'] for c in contributions):.2f}",
+                    f"-{sum(c['adverse_db'] for c in contributions):.2f}",
+                    "",
+                    f"{sum(c['mean_db'] for c in contributions):.2f}",
+                    f"{clear_stats['variance_db2']:.3f}",
+                ),
+                tags=("evenrow" if len(contributions) % 2 == 0 else "oddrow",),
+            )
+            tol_table.pack(fill=tk.X)
 
     def calculate_ul_link_budget(self):
         """Render an uplink-only link budget table for the selected contact window."""

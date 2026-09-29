@@ -389,6 +389,136 @@ def vswr_mismatch_loss_db(vswr: float) -> float:
     return float(-10 * np.log10(1 - reflection**2))
 
 
+def antenna_pointing_loss_db(depointing_deg: float, beamwidth_3db_deg: float) -> float:
+    """Return the antenna pointing (depointing) loss in dB.
+
+    Standard parabolic main-lobe approximation ``12 * (theta / theta_3dB)**2``,
+    valid for depointing angles well inside the main lobe.
+    """
+
+    if beamwidth_3db_deg <= 0:
+        raise ValueError("The 3 dB beamwidth must be positive.")
+    return float(12.0 * (depointing_deg / beamwidth_3db_deg) ** 2)
+
+
+def antenna_beamwidth_3db_deg(freq_ghz: float, diameter_m: float) -> float:
+    """Approximate 3 dB beamwidth (deg) of a parabolic dish: ``70 * lambda / D``."""
+
+    wavelength_m = 0.299792458 / freq_ghz
+    return float(70.0 * wavelength_m / diameter_m)
+
+
+def polarisation_mismatch_loss_db(tx_axial_ratio_db: float, rx_axial_ratio_db: float) -> Dict[str, float]:
+    """Polarisation mismatch loss between two co-rotating elliptical antennas.
+
+    Uses the classic polarisation-efficiency formula for two elliptically
+    polarised antennas of the same sense, with the voltage axial ratios
+    ``r = 10**(AR_dB / 20)``. The loss depends on the (unknown) relative
+    orientation of the polarisation ellipses, so both the ``best`` (aligned
+    major axes) and ``worst`` (orthogonal major axes) cases are returned.
+    """
+
+    r1 = 10 ** (tx_axial_ratio_db / 20.0)
+    r2 = 10 ** (rx_axial_ratio_db / 20.0)
+    denom = 2 * (1 + r1**2) * (1 + r2**2)
+    cross = (r1**2 - 1) * (r2**2 - 1)
+    best = 0.5 + (4 * r1 * r2 + cross) / denom
+    worst = 0.5 + (4 * r1 * r2 - cross) / denom
+    return {"best": float(-10 * np.log10(best)), "worst": float(-10 * np.log10(worst))}
+
+
+TOLERANCE_DISTRIBUTIONS = ("TRI", "UNI", "GAU")
+
+
+def tolerance_statistics(favourable_db: float, adverse_db: float, distribution: str) -> Dict[str, float]:
+    """Mean offset and variance of a toleranced link budget contribution.
+
+    ``favourable_db`` and ``adverse_db`` are the (non-negative) deviations of
+    the parameter, expressed as their effect on the link margin, from its
+    nominal value: the margin ranges over ``[-adverse_db, +favourable_db]``
+    around nominal. ``distribution`` follows the usual ECSS/CCSDS link budget
+    conventions:
+
+    * ``TRI`` -- triangular, peaking at the nominal value;
+    * ``UNI`` -- uniform between the adverse and favourable limits;
+    * ``GAU`` -- Gaussian, with the adverse/favourable limits taken as
+      +/-3 sigma.
+
+    Returns ``mean_db`` (the offset of the mean from nominal) and
+    ``variance_db2``.
+    """
+
+    a = -abs(adverse_db)
+    b = abs(favourable_db)
+    dist = distribution.upper()
+    if dist == "TRI":
+        mean = (a + b) / 3.0
+        variance = (a**2 + b**2 - a * b) / 18.0
+    elif dist == "UNI":
+        mean = (a + b) / 2.0
+        variance = (b - a) ** 2 / 12.0
+    elif dist == "GAU":
+        mean = (a + b) / 2.0
+        variance = ((b - a) / 6.0) ** 2
+    else:
+        raise ValueError(f"Unknown tolerance distribution '{distribution}' (use TRI, UNI or GAU).")
+    return {"mean_db": float(mean), "variance_db2": float(variance)}
+
+
+def margin_statistics(nominal_margin_db: float, tolerances: list) -> Dict[str, Any]:
+    """Statistical margin figures from a list of toleranced contributions.
+
+    Each item of ``tolerances`` is a dict with ``name``, ``favourable_db``,
+    ``adverse_db`` and ``distribution`` (see :func:`tolerance_statistics`).
+    The contributions are assumed independent, so means add and variances
+    add. Returns the favourable/adverse (all tolerances at their limits)
+    margins, the mean and variance of the margin, ``mean_minus_3sigma_db``
+    and ``worst_case_rss_db`` (nominal margin minus the root-sum-square of
+    the adverse tolerances), plus the per-contribution breakdown under
+    ``contributions``.
+    """
+
+    contributions = []
+    mean_offset = 0.0
+    variance = 0.0
+    adverse_sq = 0.0
+    fav_sum = 0.0
+    adv_sum = 0.0
+    for tol in tolerances:
+        fav = abs(tol.get("favourable_db", 0.0))
+        adv = abs(tol.get("adverse_db", 0.0))
+        dist = tol.get("distribution", "TRI")
+        stats = tolerance_statistics(fav, adv, dist)
+        contributions.append(
+            {
+                "name": tol.get("name", ""),
+                "favourable_db": fav,
+                "adverse_db": adv,
+                "distribution": dist.upper(),
+                **stats,
+            }
+        )
+        mean_offset += stats["mean_db"]
+        variance += stats["variance_db2"]
+        adverse_sq += adv**2
+        fav_sum += fav
+        adv_sum += adv
+
+    mean = nominal_margin_db + mean_offset
+    sigma = float(np.sqrt(variance))
+    return {
+        "nominal_db": float(nominal_margin_db),
+        "favourable_db": float(nominal_margin_db + fav_sum),
+        "adverse_db": float(nominal_margin_db - adv_sum),
+        "mean_db": float(mean),
+        "variance_db2": float(variance),
+        "sigma_db": sigma,
+        "mean_minus_3sigma_db": float(mean - 3 * sigma),
+        "worst_case_rss_db": float(nominal_margin_db - np.sqrt(adverse_sq)),
+        "contributions": contributions,
+    }
+
+
 def power_flux_density(
     eirp_dbw: float,
     slant_range_km: float,
@@ -437,11 +567,17 @@ def calculate_fixed_elevation_link_budget(
     vswr: Optional[float] = None,
     antenna_gain_dbi: Optional[float] = None,
     ionospheric_loss_db: float = 0.0,
-    polarisation_loss_db: float = 0.0,
+    polarisation_loss_db: Optional[float] = 0.0,
     multipath_loss_db: float = 0.0,
     modulation_degradation_db: float = 0.0,
     occupied_bandwidth_hz: Optional[float] = None,
     pfd_limit_dbw_m2_4khz: Optional[float] = None,
+    tx_axial_ratio_db: Optional[float] = None,
+    rx_axial_ratio_db: Optional[float] = None,
+    rx_depointing_deg: Optional[float] = None,
+    rx_beamwidth_3db_deg: Optional[float] = None,
+    formatting_overhead: float = 1.0,
+    tolerances: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Preliminary link budget at a single, user-chosen fixed elevation angle.
 
@@ -471,6 +607,19 @@ def calculate_fixed_elevation_link_budget(
     :func:`power_flux_density`), together with a margin against
     ``pfd_limit_dbw_m2_4khz`` when that is provided too.
 
+    ``polarisation_loss_db=None`` derives the polarisation mismatch loss from
+    ``tx_axial_ratio_db`` and ``rx_axial_ratio_db`` (worst-case orientation,
+    see :func:`polarisation_mismatch_loss_db`) when both are given, and 0
+    otherwise. ``rx_depointing_deg`` adds a receive antenna pointing loss
+    (:func:`antenna_pointing_loss_db`), using ``rx_beamwidth_3db_deg`` or, if
+    that is omitted, the beamwidth of a ``d_gs`` dish at ``freq``. Eb/No is
+    referred to the bit rate including formatting but excluding coding,
+    ``bitrate / overhead * formatting_overhead`` (``overhead`` being the
+    total coded-over-information rate ratio). When ``tolerances`` (see
+    :func:`margin_statistics`) and ``required_ebno`` are given, each
+    condition also carries the statistical margin figures under
+    ``margin_statistics``.
+
     Returns
     -------
     dict
@@ -490,8 +639,28 @@ def calculate_fixed_elevation_link_budget(
     slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
     freq_ghz = freq.to(u.GHz).value
     path_loss = 20 * np.log10(slant_range_km) + 20 * np.log10(freq_ghz) + 92.45
-    extra_static_loss_db = ionospheric_loss_db + polarisation_loss_db + multipath_loss_db
+    polarisation_range = None
+    if tx_axial_ratio_db is not None and rx_axial_ratio_db is not None:
+        polarisation_range = polarisation_mismatch_loss_db(tx_axial_ratio_db, rx_axial_ratio_db)
+    if polarisation_loss_db is None:
+        polarisation_loss_db = polarisation_range["worst"] if polarisation_range else 0.0
+
+    rx_pointing_loss_db = 0.0
+    if rx_depointing_deg is not None:
+        if rx_beamwidth_3db_deg is None:
+            rx_beamwidth_3db_deg = antenna_beamwidth_3db_deg(freq_ghz, d_gs)
+        rx_pointing_loss_db = antenna_pointing_loss_db(rx_depointing_deg, rx_beamwidth_3db_deg)
+
+    extra_static_loss_db = (
+        ionospheric_loss_db + polarisation_loss_db + multipath_loss_db + rx_pointing_loss_db
+    )
     demod_loss_total = demod_loss + modulation_degradation_db
+    if bitrate > 0 and overhead > 0:
+        ebno_bitrate = bitrate / overhead * (formatting_overhead or 1.0)
+        bitrate_dbhz = float(10 * np.log10(ebno_bitrate))
+    else:
+        ebno_bitrate = 0.0
+        bitrate_dbhz = float("nan")
 
     def _condition(p: float, include_rain: bool, include_clouds: bool, include_scint: bool) -> Dict[str, float]:
         atm = atmospheric_attenuation_contributions(
@@ -507,11 +676,9 @@ def calculate_fixed_elevation_link_budget(
             include_scintillation=include_scint,
         )
         rx_power = eirp - path_loss - atm["total"] - other_att - pointing_loss_db - extra_static_loss_db
-        cno_db = rx_power + gt + 228.6 - demod_loss_total
-        if bitrate > 0 and overhead > 0:
-            ebno = cno_db - 10 * np.log10(bitrate / overhead)
-        else:
-            ebno = float("nan")
+        received_cno_db = rx_power + gt + 228.6
+        cno_db = received_cno_db - demod_loss_total
+        ebno = cno_db - bitrate_dbhz
         result: Dict[str, float] = {
             "gas_attenuation_db": atm["gas"],
             "cloud_attenuation_db": atm["cloud"],
@@ -520,11 +687,14 @@ def calculate_fixed_elevation_link_budget(
             "atmospheric_attenuation_db": atm["total"],
             "total_propagation_loss_db": path_loss + atm["total"] + ionospheric_loss_db + polarisation_loss_db,
             "rx_power_dbw": rx_power,
+            "received_cno_dbhz": received_cno_db,
             "cno_dbhz": cno_db,
             "ebno_db": ebno,
         }
         if required_ebno is not None:
             result["margin_db"] = ebno - required_ebno
+            if tolerances:
+                result["margin_statistics"] = margin_statistics(result["margin_db"], tolerances)
         return result
 
     rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
@@ -539,11 +709,27 @@ def calculate_fixed_elevation_link_budget(
         "polarisation_loss_db": polarisation_loss_db,
         "multipath_loss_db": multipath_loss_db,
         "modulation_degradation_db": modulation_degradation_db,
+        "receiver_degradation_db": demod_loss,
+        "rx_pointing_loss_db": rx_pointing_loss_db,
+        "eirp_dbw": eirp,
+        "gt_dbk": gt,
+        "frequency_mhz": freq_ghz * 1000.0,
+        "bitrate_formatted_bps": ebno_bitrate,
+        "bitrate_dbhz": bitrate_dbhz,
     }
+    if polarisation_range is not None:
+        out["polarisation_loss_range_db"] = polarisation_range
+    if rx_depointing_deg is not None:
+        out["rx_depointing_deg"] = rx_depointing_deg
+        out["rx_beamwidth_3db_deg"] = rx_beamwidth_3db_deg
+    if required_ebno is not None:
+        out["required_ebno_db"] = required_ebno
 
     vswr_loss = vswr_mismatch_loss_db(vswr) if vswr else None
     if vswr_loss is not None:
         out["vswr_loss_db"] = vswr_loss
+    if antenna_gain_dbi is not None:
+        out["effective_gain_dbi"] = float(antenna_gain_dbi - antenna_circuit_loss_db - (vswr_loss or 0.0))
     if tx_power_w is not None and tx_power_w > 0:
         tx_power_dbw = 10 * np.log10(tx_power_w)
         out["tx_power_dbw"] = float(tx_power_dbw)
@@ -554,6 +740,9 @@ def calculate_fixed_elevation_link_budget(
 
     pfd = power_flux_density(eirp, slant_range_km, occupied_bandwidth_hz)
     out["pfd_dbw_m2"] = pfd["pfd_dbw_m2"]
+    out["pfd_dbm_m2"] = pfd["pfd_dbw_m2"] + 30.0
+    if pfd_limit_dbw_m2_4khz is not None:
+        out["pfd_limit_dbw_m2_4khz"] = pfd_limit_dbw_m2_4khz
     if "pfd_dbw_m2_per_4khz" in pfd:
         out["pfd_dbw_m2_per_4khz"] = pfd["pfd_dbw_m2_per_4khz"]
         if pfd_limit_dbw_m2_4khz is not None:

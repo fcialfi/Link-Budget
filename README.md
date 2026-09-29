@@ -8,6 +8,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Valutazione parallela di downlink e uplink con grafici dedicati per Eb/No e C/No.
 - Visualizzazione grafica dell'elevazione e della qualità del link per ogni contatto.
 - Funzione di ricalcolo rapido del link budget senza dover ripetere l'analisi delle orbite.
+- Link budget preliminare a elevazione fissa (pulsante **Fixed-Elevation Link Budget...**), indipendente dal TLE, nel formato delle tabelle statiche ECSS: catena Tx (potenza, perdite di circuito e VSWR, guadagno effettivo, EIRP), perdite di propagazione (spazio libero, ITU-R, ionosfera, polarizzazione calcolabile dagli axial ratio), PFD con limite e margine, perdita di puntamento dell'antenna ricevente, S/No, degradazioni, Eb/N0 riferito al bit rate con formattazione e margini statistici (MEAN − 3σ e Worst Case RSS) da tolleranze favorevoli/avverse con distribuzione TRI/UNI/GAU.
 
 ## Requisiti
 - Python 3.8 o superiore.
