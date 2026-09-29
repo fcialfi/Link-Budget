@@ -543,7 +543,8 @@ def test_fixed_elevation_link_budget_tx_chain_breakdown(_stub_atmospheric_contri
 
     assert budget["tx_power_dbw"] == pytest.approx(10 * np.log10(3.30))
     assert budget["vswr_loss_db"] == pytest.approx(0.18, abs=1e-2)
-    assert budget["eirp_breakdown_dbw"] == pytest.approx(
+    assert budget["eirp_source"] == "tx_chain"
+    assert budget["eirp_dbw"] == pytest.approx(
         budget["tx_power_dbw"] - 0.50 - budget["vswr_loss_db"]
     )
     assert budget["pfd_dbw_m2_per_4khz"] == pytest.approx(-165.19, abs=1e-2)
@@ -752,3 +753,35 @@ def test_fixed_elevation_link_budget_formatting_overhead_lowers_ebno(_stub_atmos
     formatted = calculations.calculate_fixed_elevation_link_budget(**common, formatting_overhead=1.02)
     assert formatted["clear"]["ebno_db"] == pytest.approx(base["clear"]["ebno_db"] - 10 * np.log10(1.02))
     assert "margin_statistics" not in formatted["clear"]
+
+
+def test_fixed_elevation_link_budget_tx_chain_eirp_drives_rx_power(_stub_atmospheric_contributions):
+    common = dict(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+    )
+    from_input = calculations.calculate_fixed_elevation_link_budget(eirp=4.51, **common)
+    from_chain = calculations.calculate_fixed_elevation_link_budget(
+        eirp=None, tx_power_w=3.30, antenna_circuit_loss_db=0.50, vswr=1.50, antenna_gain_dbi=0.0, **common
+    )
+    assert from_input["eirp_source"] == "input"
+    assert from_chain["eirp_source"] == "tx_chain"
+    assert from_chain["clear"]["rx_power_dbw"] == pytest.approx(
+        from_input["clear"]["rx_power_dbw"] + from_chain["eirp_dbw"] - 4.51
+    )
+    with pytest.raises(ValueError):
+        calculations.calculate_fixed_elevation_link_budget(eirp=None, **common)
+    with pytest.raises(ValueError):
+        calculations.calculate_fixed_elevation_link_budget(eirp=None, tx_power_w=3.3, **common)

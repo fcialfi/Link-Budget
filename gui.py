@@ -1265,10 +1265,11 @@ class LinkBudgetApp:
         parameters panel so they don't need to be retyped.
 
         An "Additional Parameters" section lets the user optionally fill in
-        the rest of a formal static link budget sheet (Tx chain breakdown,
-        ionospheric/polarisation/multipath losses, modulation degradation,
-        PFD limit, and informational text fields) -- everything is optional
-        and defaults to not affecting the core Rx power/Eb-No numbers. A
+        the rest of a formal static link budget sheet (Tx chain, which
+        replaces the panel EIRP when the transmitter power is set,
+        ionospheric/polarisation/multipath losses, Rx antenna depointing,
+        modulation degradation, PFD limit). Every field there feeds the
+        calculation; left empty (or 0) it has no effect. A
         "Tolerances" section takes favourable/adverse deviations and their
         probability distribution for the main contributors, from which the
         statistical margins (Mean - 3 sigma, worst case RSS) are derived.
@@ -1292,7 +1293,8 @@ class LinkBudgetApp:
                 "Preliminary worst-case check, independent of any TLE: the slant range "
                 "below is derived purely from the elevation angle and satellite altitude. "
                 "EIRP, G/T, frequency, bit rate and other losses are reused from the "
-                "parameters panel and the selected Ground Station, shown below."
+                "parameters panel and the selected Ground Station, shown below. If you "
+                "set the Transmitter Power, the EIRP is computed from the Tx chain instead."
             ),
             foreground=PALETTE["text_muted"],
             wraplength=580,
@@ -1309,7 +1311,7 @@ class LinkBudgetApp:
         recap_specs = [
             ("Ground Station", lambda: self.gs_var.get(), "not set", True),
             (freq_label, lambda: freq_entry.get().strip(), "not set", True),
-            (eirp_label, lambda: eirp_entry.get().strip(), "not set", True),
+            (eirp_label, lambda: eirp_entry.get().strip(), "not set (needs Tx chain)", False),
             (gt_label, lambda: gt_entry.get().strip(), "not set", True),
             (demod_loss_label, lambda: demod_loss_entry.get().strip(), "not set", True),
             (bitrate_label, lambda: bitrate_entry.get().strip(), "not set", True),
@@ -1356,58 +1358,35 @@ class LinkBudgetApp:
         # fields that directly change the Rx Power/Eb-No results below
         # default to "0" (no assumed loss) instead of a placeholder, since
         # for those a real inserted value -- not just an example -- is what
-        # keeps the calculation correct. Fields that are purely informational
-        # (free text, or a number that is only echoed back / feeds an
-        # optional cross-check row) instead get a greyed-out example: it
-        # disappears as soon as you type and is never treated as real input
-        # (an untouched field still parses as empty/default), it's just
+        # keeps the calculation correct. Fields whose empty value means "not
+        # used" (or "derive it automatically") instead get a greyed-out
+        # example: it disappears as soon as you type and is never treated as
+        # real input (an untouched field still parses as empty), it's just
         # there to show the expected format.
         extra_specs = [
             (
                 "tx_power_w", "Transmitter Power [W]", "", "e.g. 5",
-                "Numeric [W]. Only feeds the optional 'EIRP from Tx Chain (cross-check)' info "
-                "row below -- it does NOT change the Rx Power / Eb-No results, which always use "
-                "the EIRP from the parameters panel.",
+                "Numeric [W], used in the calculation: when set, the EIRP is computed from the "
+                "Tx chain (power - circuit loss - VSWR loss + antenna gain) and replaces the EIRP "
+                "of the parameters panel. Leave empty to use the panel EIRP.",
             ),
             (
                 "ant_circuit_loss_db", "Antenna Circuit Loss [dB]", "0", None,
-                "Numeric [dB], used in the calculation: only affects the optional EIRP "
-                "cross-check row (requires Transmitter Power to be set too).",
+                "Numeric [dB], part of the Tx chain: used only when Transmitter Power is set.",
             ),
             (
                 "vswr", "VSWR (:1)", "", "e.g. 1.5",
-                "Numeric, e.g. 1.5 for a 1.5:1 ratio. Only feeds the optional EIRP cross-check "
-                "row (requires Transmitter Power to be set too) -- not used otherwise.",
+                "Numeric, e.g. 1.5 for a 1.5:1 ratio, part of the Tx chain: its mismatch loss is "
+                "used only when Transmitter Power is set.",
             ),
             (
                 "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 30",
-                "Numeric [dBi]. Only feeds the optional EIRP cross-check row (requires "
-                "Transmitter Power to be set too) -- not used otherwise.",
+                "Numeric [dBi], part of the Tx chain: required when Transmitter Power is set.",
             ),
             (
-                "ant_axial_ratio_db", "Antenna Axial Ratio [dB]", "", "e.g. 1.5",
-                "Numeric [dB], informational only: shown in the results but does not change "
-                "any calculated value.",
-            ),
-            (
-                "coding_scheme", "Coding Scheme", "", "e.g. Convolutional 1/2 + Reed-Solomon",
-                "Free text, informational only: printed as-is in the results, not used in any "
-                "calculation.",
-            ),
-            (
-                "data_format", "Data Format", "", "e.g. NRZ-L",
-                "Free text, informational only: printed as-is in the results, not used in any "
-                "calculation.",
-            ),
-            (
-                "modulation", "RF Modulation Scheme", "", "e.g. QPSK",
-                "Free text, informational only: printed as-is in the results, not used in any "
-                "calculation.",
-            ),
-            (
-                "required_fer", "Required FER", "", "e.g. 1e-5",
-                "Numeric (a probability, e.g. 1e-5), informational only: shown in the results "
-                "but not used in any calculation.",
+                "ant_axial_ratio_db", "Tx Antenna Axial Ratio [dB]", "", "e.g. 3",
+                "Numeric [dB]: together with the Rx axial ratio, gives the polarisation mismatch "
+                "loss when that field is left empty.",
             ),
             (
                 "ionospheric_loss_db", "Ionospheric Loss [dB]", "0", None,
@@ -1422,14 +1401,9 @@ class LinkBudgetApp:
                 "the polarisation ellipses), or 0 when those are not both set.",
             ),
             (
-                "antenna_type", "E/S Antenna Type", "", "e.g. Parabolic reflector",
-                "Free text, informational only: printed as-is in the results, not used in any "
-                "calculation.",
-            ),
-            (
-                "rx_axial_ratio_db", "E/S Antenna Axial Ratio [dB]", "", "e.g. 1.0",
-                "Numeric [dB], informational only: shown in the results but does not change "
-                "any calculated value.",
+                "rx_axial_ratio_db", "Rx Antenna Axial Ratio [dB]", "", "e.g. 1.0",
+                "Numeric [dB]: together with the Tx axial ratio, gives the polarisation mismatch "
+                "loss when that field is left empty.",
             ),
             (
                 "multipath_loss_db", "Multipath Losses [dB]", "0", None,
@@ -1451,11 +1425,6 @@ class LinkBudgetApp:
                 "Numeric ratio (bit rate incl. formatting / information bit rate), used in the "
                 "calculation: Eb/No is referred to the information bit rate times this factor "
                 "(i.e. the bit rate including formatting, excluding coding). Empty = 1.",
-            ),
-            (
-                "atm_model_uncertainty_pct", "Atmospheric Model Uncertainty [%]", "", "e.g. 0",
-                "Numeric [%], informational only: shown in the results but does not change any "
-                "calculated value.",
             ),
             (
                 "rx_depointing_deg", "Rx Antenna Depointing Angle [deg]", "", "e.g. 0.1",
@@ -1609,7 +1578,7 @@ class LinkBudgetApp:
                 )
 
                 freq = _parse_required(freq_entry, freq_label) * u.GHz
-                eirp = _parse_required(eirp_entry, eirp_label)
+                eirp = _parse_optional_or_none(eirp_entry, eirp_label)
                 gt = _parse_required(gt_entry, gt_label)
                 demod_loss = _parse_required(demod_loss_entry, demod_loss_label)
                 bitrate_mbps = _parse_required(bitrate_entry, bitrate_label)
@@ -1625,8 +1594,21 @@ class LinkBudgetApp:
                 )
                 vswr = _parse_optional_or_none(extra_entries["vswr"], "VSWR (:1)")
                 ant_gain_dbi = _parse_optional_or_none(extra_entries["ant_gain_dbi"], "Antenna Gain [dBi]")
+                if tx_power_w is not None:
+                    if tx_power_w <= 0:
+                        raise ValueError("'Transmitter Power [W]' must be greater than 0.")
+                    if ant_gain_dbi is None:
+                        raise ValueError(
+                            "'Antenna Gain [dBi]' is required to compute the EIRP from the "
+                            "Transmitter Power."
+                        )
+                elif eirp is None:
+                    raise ValueError(
+                        f"'{eirp_label}' is empty. Enter it in the parameters panel, or set "
+                        "Transmitter Power and Antenna Gain to compute the EIRP from the Tx chain."
+                    )
                 ant_axial_ratio_db = _parse_optional_or_none(
-                    extra_entries["ant_axial_ratio_db"], "Antenna Axial Ratio [dB]"
+                    extra_entries["ant_axial_ratio_db"], "Tx Antenna Axial Ratio [dB]"
                 )
                 ionospheric_loss_db = _parse_optional(
                     extra_entries["ionospheric_loss_db"], "Ionospheric Loss [dB]"
@@ -1635,7 +1617,7 @@ class LinkBudgetApp:
                     extra_entries["polarisation_loss_db"], "Polarisation Mismatch Loss [dB]"
                 )
                 rx_axial_ratio_db = _parse_optional_or_none(
-                    extra_entries["rx_axial_ratio_db"], "E/S Antenna Axial Ratio [dB]"
+                    extra_entries["rx_axial_ratio_db"], "Rx Antenna Axial Ratio [dB]"
                 )
                 multipath_loss_db = _parse_optional(
                     extra_entries["multipath_loss_db"], "Multipath Losses [dB]"
@@ -1646,15 +1628,11 @@ class LinkBudgetApp:
                 pfd_limit = _parse_optional_or_none(
                     extra_entries["pfd_limit"], "PFD Limit [dBW/m²/4kHz]"
                 )
-                required_fer = _parse_optional_or_none(extra_entries["required_fer"], "Required FER")
                 formatting_overhead = _parse_optional(
                     extra_entries["formatting_overhead"], "Formatting Overhead (factor)", default=1.0
                 )
                 if formatting_overhead <= 0:
                     raise ValueError("'Formatting Overhead (factor)' must be greater than 0.")
-                atm_model_uncertainty_pct = _parse_optional_or_none(
-                    extra_entries["atm_model_uncertainty_pct"], "Atmospheric Model Uncertainty [%]"
-                )
                 rx_depointing_deg = _parse_optional_or_none(
                     extra_entries["rx_depointing_deg"], "Rx Antenna Depointing Angle [deg]"
                 )
@@ -1687,10 +1665,6 @@ class LinkBudgetApp:
                                 "distribution": pdf_box.get(),
                             }
                         )
-                coding_scheme = extra_entries["coding_scheme"].get().strip()
-                data_format = extra_entries["data_format"].get().strip()
-                modulation = extra_entries["modulation"].get().strip()
-                antenna_type = extra_entries["antenna_type"].get().strip()
 
                 rolloff = _parse_optional_or_none(rolloff_entry, "Roll-off Factor")
                 spectral_eff = _parse_optional_or_none(spectral_eff_entry, "Spectral Efficiency [bps/Hz]")
@@ -1748,21 +1722,14 @@ class LinkBudgetApp:
             extra_info = {
                 "station": f"{gs_name} ({lat_gs:.4f}°, {lon_gs:.4f}°, {alt_gs_m:g} m)",
                 "link_availability_pct": link_availability,
-                "atm_model_uncertainty_pct": atm_model_uncertainty_pct,
                 "formatting_overhead": formatting_overhead,
                 "info_bitrate_kbps": info_bitrate_kbps,
                 "bitrate_kbps": bitrate_mbps * 1000.0,
                 "code_rate": (1.0 / overhead) if overhead else None,
                 "occupied_bandwidth_khz": occupied_bandwidth_hz / 1000.0 if occupied_bandwidth_hz else None,
-                "coding_scheme": coding_scheme,
-                "data_format": data_format,
-                "modulation": modulation,
-                "required_fer": required_fer,
-                "antenna_type": antenna_type,
                 "ant_axial_ratio_db": ant_axial_ratio_db,
                 "rx_axial_ratio_db": rx_axial_ratio_db,
                 "pointing_loss_db": pointing_loss_db,
-                "eirp_used_dbw": eirp,
             }
             self._render_fixed_link_budget_results(results_frame, budget, link_availability, extra_info)
 
@@ -1802,14 +1769,6 @@ class LinkBudgetApp:
             info_rows.append(("Bit Rate incl. Coding [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
         if extra_info.get("code_rate") is not None:
             info_rows.append(("Code Rate", f"{extra_info['code_rate']:.3f}"))
-        if extra_info.get("coding_scheme"):
-            info_rows.append(("Coding Scheme", extra_info["coding_scheme"]))
-        if extra_info.get("required_fer") is not None:
-            info_rows.append(("Required FER", f"{extra_info['required_fer']:.2e}"))
-        if extra_info.get("data_format"):
-            info_rows.append(("Data Format", extra_info["data_format"]))
-        if extra_info.get("modulation"):
-            info_rows.append(("RF Carrier Modulation Scheme", extra_info["modulation"]))
         if extra_info.get("occupied_bandwidth_khz") is not None:
             info_rows.append(("Occupied Bandwidth [kHz]", f"{extra_info['occupied_bandwidth_khz']:.1f}"))
         if "required_ebno_db" in budget:
@@ -1821,23 +1780,24 @@ class LinkBudgetApp:
         if "vswr_loss_db" in budget:
             info_rows.append(("VSWR Losses [dB]", f"{budget['vswr_loss_db']:.2f}"))
         if extra_info.get("ant_axial_ratio_db") is not None:
-            info_rows.append(("Antenna Axial Ratio [dB]", f"{extra_info['ant_axial_ratio_db']:.2f}"))
+            info_rows.append(("Tx Antenna Axial Ratio [dB]", f"{extra_info['ant_axial_ratio_db']:.2f}"))
         if "effective_gain_dbi" in budget:
             info_rows.append(("Effective Gain [dBi]", f"{budget['effective_gain_dbi']:.2f}"))
-        if "eirp_breakdown_dbw" in budget:
-            info_rows.append(("EIRP from Tx Chain (cross-check) [dBW]", f"{budget['eirp_breakdown_dbw']:.2f}"))
-        if extra_info.get("eirp_used_dbw") is not None:
-            info_rows.append(("EIRP Used for Rx/Eb-No [dBW]", f"{extra_info['eirp_used_dbw']:.2f}"))
+        if "eirp_source" in budget:
+            info_rows.append(
+                (
+                    "EIRP Source",
+                    "Tx chain (power + effective gain)"
+                    if budget["eirp_source"] == "tx_chain"
+                    else "Parameters panel",
+                )
+            )
         if extra_info.get("pointing_loss_db") is not None:
             info_rows.append(("Tx Antenna Pointing Loss [dB]", f"{extra_info['pointing_loss_db']:.2f}"))
         if extra_info.get("station"):
             info_rows.append(("Station Location", extra_info["station"]))
         if extra_info.get("link_availability_pct") is not None:
             info_rows.append(("Weather Availability [%]", f"{extra_info['link_availability_pct']:g}"))
-        if extra_info.get("atm_model_uncertainty_pct") is not None:
-            info_rows.append(
-                ("Atmospheric Model Uncertainty [%]", f"{extra_info['atm_model_uncertainty_pct']:.2f}")
-            )
         if "polarisation_loss_range_db" in budget:
             pol_range = budget["polarisation_loss_range_db"]
             info_rows.append(
@@ -1846,10 +1806,8 @@ class LinkBudgetApp:
                     f"{pol_range['best']:.2f} / {pol_range['worst']:.2f}",
                 )
             )
-        if extra_info.get("antenna_type"):
-            info_rows.append(("E/S Antenna Type", extra_info["antenna_type"]))
         if extra_info.get("rx_axial_ratio_db") is not None:
-            info_rows.append(("E/S Antenna Axial Ratio [dB]", f"{extra_info['rx_axial_ratio_db']:.2f}"))
+            info_rows.append(("Rx Antenna Axial Ratio [dB]", f"{extra_info['rx_axial_ratio_db']:.2f}"))
         if "rx_depointing_deg" in budget:
             info_rows.append(("Rx Antenna Depointing Angle [deg]", f"{budget['rx_depointing_deg']:.2f}"))
             info_rows.append(("Rx Antenna 3dB Beamwidth [deg]", f"{budget['rx_beamwidth_3db_deg']:.2f}"))
