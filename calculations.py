@@ -552,7 +552,7 @@ def calculate_fixed_elevation_link_budget(
     lon_gs: float,
     alt_gs_km: float,
     d_gs: float,
-    eirp: float,
+    eirp: Optional[float],
     gt: float,
     demod_loss: float,
     bitrate: float,
@@ -598,11 +598,11 @@ def calculate_fixed_elevation_link_budget(
     columns, and ``modulation_degradation_db`` is added to the implementation
     loss alongside ``demod_loss``.
 
-    When ``tx_power_w`` is given, an EIRP cross-check
+    When ``tx_power_w`` is given, the EIRP is computed from the transmit chain
     (``tx_power_dbw - antenna_circuit_loss_db - vswr_loss_db + antenna_gain_dbi``)
-    is returned as ``eirp_breakdown_dbw`` -- this does **not** replace
-    ``eirp``, which is still what is actually used for the Rx power/Eb-No
-    calculation above. When ``occupied_bandwidth_hz`` is given, the power
+    and used in place of ``eirp`` for the whole budget (``eirp_source`` is
+    then ``"tx_chain"``, otherwise ``"input"``); ``eirp`` may be ``None`` in
+    that case. The EIRP actually used is returned as ``eirp_dbw``. When ``occupied_bandwidth_hz`` is given, the power
     flux density at the receiving site is also returned (see
     :func:`power_flux_density`), together with a margin against
     ``pfd_limit_dbw_m2_4khz`` when that is provided too.
@@ -632,9 +632,27 @@ def calculate_fixed_elevation_link_budget(
         top-level dict always carries ``ionospheric_loss_db``,
         ``polarisation_loss_db``, ``multipath_loss_db`` and
         ``modulation_degradation_db``, and conditionally
-        ``tx_power_dbw``, ``vswr_loss_db``, ``eirp_breakdown_dbw``,
+        ``tx_power_dbw``, ``vswr_loss_db``, ``effective_gain_dbi``,
         ``pfd_dbw_m2``, ``pfd_dbw_m2_per_4khz`` and ``pfd_margin_db``.
     """
+
+    vswr_loss = vswr_mismatch_loss_db(vswr) if vswr else None
+    effective_gain = None
+    if antenna_gain_dbi is not None:
+        effective_gain = float(antenna_gain_dbi - antenna_circuit_loss_db - (vswr_loss or 0.0))
+    tx_power_dbw = None
+    if tx_power_w is not None:
+        if tx_power_w <= 0:
+            raise ValueError("The transmitter power must be greater than 0 W.")
+        if antenna_gain_dbi is None:
+            raise ValueError("The antenna gain is required to compute the EIRP from the transmitter power.")
+        tx_power_dbw = float(10 * np.log10(tx_power_w))
+        eirp = tx_power_dbw + effective_gain
+        eirp_source = "tx_chain"
+    elif eirp is None:
+        raise ValueError("Either the EIRP or the transmitter power (with antenna gain) is required.")
+    else:
+        eirp_source = "input"
 
     slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
     freq_ghz = freq.to(u.GHz).value
@@ -711,7 +729,8 @@ def calculate_fixed_elevation_link_budget(
         "modulation_degradation_db": modulation_degradation_db,
         "receiver_degradation_db": demod_loss,
         "rx_pointing_loss_db": rx_pointing_loss_db,
-        "eirp_dbw": eirp,
+        "eirp_dbw": float(eirp),
+        "eirp_source": eirp_source,
         "gt_dbk": gt,
         "frequency_mhz": freq_ghz * 1000.0,
         "bitrate_formatted_bps": ebno_bitrate,
@@ -725,18 +744,12 @@ def calculate_fixed_elevation_link_budget(
     if required_ebno is not None:
         out["required_ebno_db"] = required_ebno
 
-    vswr_loss = vswr_mismatch_loss_db(vswr) if vswr else None
     if vswr_loss is not None:
         out["vswr_loss_db"] = vswr_loss
-    if antenna_gain_dbi is not None:
-        out["effective_gain_dbi"] = float(antenna_gain_dbi - antenna_circuit_loss_db - (vswr_loss or 0.0))
-    if tx_power_w is not None and tx_power_w > 0:
-        tx_power_dbw = 10 * np.log10(tx_power_w)
-        out["tx_power_dbw"] = float(tx_power_dbw)
-        gain = antenna_gain_dbi if antenna_gain_dbi is not None else 0.0
-        out["eirp_breakdown_dbw"] = float(
-            tx_power_dbw - antenna_circuit_loss_db - (vswr_loss or 0.0) + gain
-        )
+    if effective_gain is not None:
+        out["effective_gain_dbi"] = effective_gain
+    if tx_power_dbw is not None:
+        out["tx_power_dbw"] = tx_power_dbw
 
     pfd = power_flux_density(eirp, slant_range_km, occupied_bandwidth_hz)
     out["pfd_dbw_m2"] = pfd["pfd_dbw_m2"]
