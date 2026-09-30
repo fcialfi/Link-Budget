@@ -47,5 +47,11 @@
         "distribution": "TRI"
       }
     }
+  },
+  "fixed_elevation_uplink": {
+    "elevation_deg": 3.0,
+    "sat_altitude_km": 628.0,
+    "required_ebno_db": 9.6,
+    "required_margin_db": 3.0
   }
 }
