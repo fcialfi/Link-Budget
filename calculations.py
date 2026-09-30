@@ -8,6 +8,7 @@ import numpy as np
 import itur as itu
 import sys
 import astropy.units as u
+import json
 import os
 from scipy.interpolate import interp1d
 from typing import Any, Dict, Optional
@@ -300,6 +301,54 @@ def atmospheric_attenuation(
             file=sys.stderr,
         )
         return 0.0
+
+
+# Sections of ``parameters.json`` holding the inputs of the fixed-elevation
+# (static) link budget popups, so they don't have to be retyped every time.
+FIXED_LINK_BUDGET_SECTIONS = {
+    "downlink": "fixed_elevation_downlink",
+    "uplink": "fixed_elevation_uplink",
+}
+
+
+def extract_json_section(payload: Any, section: str) -> Dict[str, Any]:
+    """Return ``payload[section]`` from a parameters JSON payload.
+
+    Raises ``ValueError`` when the payload is not a JSON object or has no
+    such section (or the section is not an object).
+    """
+
+    if not isinstance(payload, dict):
+        raise ValueError("The file must contain a JSON object.")
+    if section not in payload:
+        raise ValueError(f"The file has no '{section}' section.")
+    values = payload[section]
+    if not isinstance(values, dict):
+        raise ValueError(f"The '{section}' section must be a JSON object.")
+    return values
+
+
+def save_json_section(file_path: str, section: str, values: Dict[str, Any]) -> None:
+    """Write ``values`` as ``section`` of the JSON file at ``file_path``.
+
+    Every other key already in the file is kept, so the static link budget
+    inputs can be saved straight into ``parameters.json`` alongside the main
+    parameters (and are then auto-loaded at startup with it). A missing or
+    empty file is created from scratch; an existing file that is not a JSON
+    object raises ``ValueError`` instead of being overwritten.
+    """
+
+    payload: Dict[str, Any] = {}
+    if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+        with open(file_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        if not isinstance(existing, dict):
+            raise ValueError(f"'{file_path}' does not contain a JSON object; not overwriting it.")
+        payload = existing
+    payload[section] = values
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
 
 
 def slant_range_from_elevation(

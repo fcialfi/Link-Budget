@@ -6,6 +6,7 @@ Doppler shift, atmospheric attenuation error handling, and the link budget
 formulas themselves.
 """
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -785,3 +786,48 @@ def test_fixed_elevation_link_budget_tx_chain_eirp_drives_rx_power(_stub_atmosph
         calculations.calculate_fixed_elevation_link_budget(eirp=None, **common)
     with pytest.raises(ValueError):
         calculations.calculate_fixed_elevation_link_budget(eirp=None, tx_power_w=3.3, **common)
+
+
+def test_save_json_section_keeps_other_keys(tmp_path):
+    path = tmp_path / "parameters.json"
+    path.write_text('{"frequency_ghz": 1.707, "fixed_elevation_downlink": {"elevation_deg": 5}}')
+    calculations.save_json_section(str(path), "fixed_elevation_downlink", {"elevation_deg": 3.0})
+    calculations.save_json_section(str(path), "fixed_elevation_uplink", {"tx_power_w": 10.0})
+    payload = json.loads(path.read_text())
+    assert payload == {
+        "frequency_ghz": 1.707,
+        "fixed_elevation_downlink": {"elevation_deg": 3.0},
+        "fixed_elevation_uplink": {"tx_power_w": 10.0},
+    }
+
+
+def test_save_json_section_creates_missing_file(tmp_path):
+    path = tmp_path / "new.json"
+    calculations.save_json_section(str(path), "fixed_elevation_downlink", {"vswr": 1.5})
+    assert json.loads(path.read_text()) == {"fixed_elevation_downlink": {"vswr": 1.5}}
+
+
+def test_save_json_section_refuses_non_object_file(tmp_path):
+    path = tmp_path / "list.json"
+    path.write_text("[1, 2]")
+    with pytest.raises(ValueError):
+        calculations.save_json_section(str(path), "fixed_elevation_downlink", {})
+    assert path.read_text() == "[1, 2]"
+
+
+def test_extract_json_section():
+    payload = {"fixed_elevation_downlink": {"elevation_deg": 3.0}, "bad": 1}
+    assert calculations.extract_json_section(payload, "fixed_elevation_downlink") == {"elevation_deg": 3.0}
+    with pytest.raises(ValueError):
+        calculations.extract_json_section(payload, "fixed_elevation_uplink")
+    with pytest.raises(ValueError):
+        calculations.extract_json_section(payload, "bad")
+    with pytest.raises(ValueError):
+        calculations.extract_json_section([1], "fixed_elevation_downlink")
+
+
+def test_repository_parameters_file_has_valid_fixed_elevation_section():
+    path = os.path.join(os.path.dirname(calculations.__file__), "parameters.json")
+    with open(path, encoding="utf-8") as f:
+        section = calculations.extract_json_section(json.load(f), "fixed_elevation_downlink")
+    assert section["elevation_deg"] == 3.0

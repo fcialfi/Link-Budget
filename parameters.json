@@ -4,20 +4,48 @@
   "frequency_ghz": 1.707,
   "uplink_frequency_ghz": 7.2,
   "c_io_dbhz": 50.0,
-  "gt_gs_dbk": 8.5,
+  "gt_gs_dbk": 7.0,
   "gt_sat_dbk": 0.5,
-  "antenna_diameter_m": 3.7,
+  "antenna_diameter_m": 3.0,
   "link_availability_pct": 99.0,
   "other_attenuations_db": 0.0,
   "uplink_other_attenuations_db": 0.5,
   "bitrate_mbps": 3.57,
   "rolloff": 0.45,
-  "demod_loss_db": 1.5,
+  "demod_loss_db": 1.0,
   "demod_loss_sat_db": 1.0,
   "overhead": 2.29,
-  "spectral_efficiency_bpshz": 2.0,
+  "spectral_efficiency_bpshz": 1.0,
   "uplink_bitrate_mbps": 1.0,
   "uplink_rolloff": 0.35,
   "uplink_overhead": 1.1,
-  "uplink_spectral_efficiency_bpshz": 1.5
+  "uplink_spectral_efficiency_bpshz": 1.5,
+  "fixed_elevation_downlink": {
+    "elevation_deg": 3.0,
+    "sat_altitude_km": 628.0,
+    "required_ebno_db": 2.6,
+    "required_margin_db": 3.0,
+    "tx_power_w": 3.3,
+    "ant_circuit_loss_db": 0.5,
+    "vswr": 1.5,
+    "ant_gain_dbi": 0.0,
+    "ant_axial_ratio_db": 3.0,
+    "tx_pointing_loss_db": 0.0,
+    "ionospheric_loss_db": 0.05,
+    "polarisation_loss_db": 0.09,
+    "multipath_loss_db": 0.0,
+    "rx_axial_ratio_db": 1.0,
+    "rx_depointing_deg": 0.1,
+    "rx_beamwidth_deg": 3.97,
+    "modulation_degradation_db": 0.5,
+    "formatting_overhead": 1.02,
+    "pfd_limit": -154.0,
+    "tolerances": {
+      "tx_gain": {
+        "favourable_db": 1.5,
+        "adverse_db": 1.5,
+        "distribution": "TRI"
+      }
+    }
+  }
 }
