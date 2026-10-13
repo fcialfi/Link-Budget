@@ -1635,6 +1635,9 @@ class LinkBudgetApp:
                         "transfer frame bit rate = information bit rate × this factor. Empty = 1. "
                         "Computed in CCSDS mode.",
                     ),
+                    ("computed", "coding_factor", "Coding Factor (coded / frame)"),
+                    ("computed", "frame_rate", "Transfer Frame Bit Rate [kbit/s]"),
+                    ("computed", "info_rate", "Information Bit Rate [kbit/s]"),
                 ]
                 # Roll-off and spectral efficiency only set the occupied bandwidth
                 # for the PFD check, which applies to the downlink only.
@@ -1821,6 +1824,8 @@ class LinkBudgetApp:
         # key -> (info icon, its default text), for fields whose icon can show
         # a live breakdown of the computed value.
         info_icons: dict[str, tuple[ttk.Label, str]] = {}
+        # Read-only boxes with values derived from the bit rate and overheads.
+        computed_boxes: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
         # The station of this window is its own (saved with its inputs), so
         # changing it here never touches the main window's pass analysis.
@@ -2051,6 +2056,20 @@ class LinkBudgetApp:
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
+                if kind == "computed":
+                    _kind, box_key, label_text = item
+                    ttk.Label(group_frame, text=f"{label_text}:").grid(
+                        row=r, column=c * 2, sticky="w", padx=padx, pady=2
+                    )
+                    cell = ttk.Frame(group_frame)
+                    cell.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    box_var = tk.StringVar(value="")
+                    ttk.Entry(cell, textvariable=box_var, width=15, state="readonly").pack(side=tk.LEFT)
+                    box_icon = _info_icon(cell, "Computed from the coded bit rate and the overheads.")
+                    box_icon.pack(side=tk.LEFT, padx=(4, 0))
+                    computed_boxes[box_key] = (box_var, box_icon)
+                    r, c = (r, 1) if c == 0 else (r + 1, 0)
+                    continue
                 if kind == "panel":
                     _kind, label_text, panel_entry, tooltip = item
                     label_widget = ttk.Label(group_frame, text=f"{label_text}:", foreground=PALETTE["accent"])
@@ -2273,16 +2292,59 @@ class LinkBudgetApp:
                 f"Frame {framing['frame_bytes']} B (data field {framing['data_field_bytes']} B, user data "
                 f"{framing['user_data_bytes']:.1f} B): "
                 f"coding {framing['coding']:.5f} (ASM + RS(255,223) I={framing['interleaving_depth']} "
-                f"+ conv 1/2), formatting {framing['formatting']:.5f}, total {framing['total']:.5f}\n"
-                f"Coded {coded_kbps:.1f} kbit/s → transfer frames {coded_kbps / framing['coding']:.1f} kbit/s "
-                f"(Eb/No reference) → user data {coded_kbps / framing['total']:.1f} kbit/s"
+                f"+ conv 1/2), formatting {framing['formatting']:.5f}, total {framing['total']:.5f}"
             )
+
+        def _refresh_rates() -> None:
+            """Fill the computed rate boxes from the coded bit rate and overheads."""
+
+            if not computed_boxes:
+                return
+            try:
+                coded_kbps = float(_field_text(f"panel:{bitrate_label}")) * 1000.0
+                overhead = float(_field_text(f"panel:{overhead_label}"))
+                formatting = float(_field_text("formatting_overhead") or 1.0)
+                if coded_kbps <= 0 or overhead <= 0 or formatting <= 0:
+                    raise ValueError
+            except ValueError:
+                for box_var, box_icon in computed_boxes.values():
+                    box_var.set("")
+                    box_icon.tooltip.text = "Enter the coded bit rate, the overhead and the formatting factor."
+                return
+            coding = overhead / formatting
+            frame_kbps = coded_kbps / coding
+            info_kbps = coded_kbps / overhead
+            values = {
+                "coding_factor": (
+                    f"{coding:.5f}",
+                    f"Coding factor = overhead / formatting factor = {overhead:g} / {formatting:g} = "
+                    f"{coding:.5f}: channel bits per transfer frame bit"
+                    + (" (ASM + RS check symbols + convolutional 1/2)." if framing_mode_var.get() == "ccsds" else "."),
+                ),
+                "frame_rate": (
+                    f"{frame_kbps:.1f}",
+                    f"Transfer frame bit rate = coded / coding factor = {coded_kbps:.1f} / {coding:.5f} = "
+                    f"{frame_kbps:.1f} kbit/s.\nThis is the bit rate Eb/No is referred to: the coded bit "
+                    "rate with the channel coding (ASM, RS check symbols, convolutional code) removed.",
+                ),
+                "info_rate": (
+                    f"{info_kbps:.1f}",
+                    f"Information (user data) bit rate = coded / overhead = {coded_kbps:.1f} / {overhead:g} = "
+                    f"{info_kbps:.1f} kbit/s\n= transfer frame bit rate / formatting factor: frame header and "
+                    "trailer and packet overheads removed. It does not affect the margin.",
+                ),
+            }
+            for key, (text, explanation) in values.items():
+                box_var, box_icon = computed_boxes[key]
+                box_var.set(text)
+                box_icon.tooltip.text = explanation
 
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
 
             _refresh_ionosphere()
             _refresh_framing()
+            _refresh_rates()
 
             chain = eirp_mode_var.get() == "tx_chain"
             _set_field_enabled(f"panel:{eirp_label}", not chain)
@@ -2330,8 +2392,11 @@ class LinkBudgetApp:
             "iono_s4_ref",
             "iono_s4_ref_freq_mhz",
             f"panel:{freq_label}",
+            f"panel:{bitrate_label}",
+            f"panel:{overhead_label}",
+            "formatting_overhead",
         ) + (
-            ("ccsds_interleaving", "ccsds_packet_length", "ccsds_packet_sec_header", f"panel:{bitrate_label}")
+            ("ccsds_interleaving", "ccsds_packet_length", "ccsds_packet_sec_header")
             if rx_is_ground_station
             else ()
         ):
@@ -2794,7 +2859,7 @@ class LinkBudgetApp:
                                     f"{'yes' if ccsds_pec_var.get() else 'no'}",
                                 )
                             )
-                    elif item[0] in ("iono_used", "eirp_used", "framing_used"):
+                    elif item[0] in ("iono_used", "eirp_used", "framing_used", "computed"):
                         continue
                     elif item[0] == "eirp_mode":
                         group_items.append(
