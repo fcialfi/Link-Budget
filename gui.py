@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
 import csv
+import math
 
 # ---------------------------------------------------------------------------
 # Visual theme
@@ -261,6 +262,14 @@ def _add_tooltip(widget, text: str) -> None:
     """Attach a hover tooltip with ``text`` to ``widget``."""
 
     _Tooltip(widget, text)
+
+
+def _info_icon(parent, text: str) -> ttk.Label:
+    """A small "ⓘ" label showing ``text`` when the pointer rests on it."""
+
+    icon = ttk.Label(parent, text="ⓘ", foreground=PALETTE["accent"], cursor="question_arrow")
+    _Tooltip(icon, text, delay=150)
+    return icon
 
 
 class _TreeviewRowTooltip:
@@ -1488,7 +1497,7 @@ class LinkBudgetApp:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=PALETTE["bg"])
-        win.geometry("820x880")
+        win.geometry("900x880")
         win.minsize(560, 320)
 
         scroll_body = self._make_scrollable_window_body(win)
@@ -1583,12 +1592,26 @@ class LinkBudgetApp:
                         "information bit rate. Eb/No is referred to the information bit rate "
                         "times this factor (the bit rate excluding coding). Empty = 1.",
                     ),
-                    L(
-                        "Roll-off Factor", rolloff_entry,
-                        "With the spectral efficiency, gives the occupied bandwidth"
-                        + (" used for the PFD in 4 kHz." if rx_is_ground_station else "."),
-                    ),
-                    L("Spectral Efficiency [bps/Hz]", spectral_eff_entry),
+                ]
+                # Roll-off and spectral efficiency only set the occupied bandwidth
+                # for the PFD check, which applies to the downlink only.
+                + (
+                    [
+                        L(
+                            "Roll-off Factor", rolloff_entry,
+                            "With the spectral efficiency, gives the occupied bandwidth used "
+                            "for the PFD in 4 kHz.",
+                        ),
+                        L(
+                            "Spectral Efficiency [bps/Hz]", spectral_eff_entry,
+                            "Coded bits per second per Hz of the modulation and filtering; with the "
+                            "roll-off gives the occupied bandwidth used for the PFD in 4 kHz.",
+                        ),
+                    ]
+                    if rx_is_ground_station
+                    else []
+                )
+                + [
                     F(
                         "required_ebno_db", "Required Eb/No [dB]", "", "e.g. 2.6",
                         "Eb/No threshold of the modulation/coding for the required error rate. "
@@ -1606,34 +1629,36 @@ class LinkBudgetApp:
             (
                 f"Transmitter ({tx_side})",
                 [
-                    L(freq_label, freq_entry),
+                    ("eirp_mode",),
+                    L(
+                        freq_label, freq_entry,
+                        "Carrier frequency: sets the free space loss and the atmospheric attenuation.",
+                    ),
                     L(
                         eirp_label, eirp_entry,
-                        "Used when Transmitter Power is empty; otherwise the EIRP comes from the "
-                        "Tx chain below.",
+                        "Used when the EIRP source is 'EIRP value'.",
                     ),
                     F(
                         "tx_power_w", "Transmitter Power [W]", "", "e.g. 3.3",
-                        "When set, the EIRP is computed from the Tx chain (power − circuit loss − "
-                        "VSWR loss + antenna gain) and replaces the EIRP above. Leave empty to "
-                        "use that EIRP.",
+                        "Tx chain (EIRP source 'Tx chain'): EIRP = power − circuit loss − VSWR "
+                        "loss + antenna gain.",
                     ),
                     F(
                         "ant_circuit_loss_db", "Antenna Circuit Loss [dB]", "0", None,
                         "Losses between transmitter and antenna (cables, filters, couplers). "
-                        "Part of the Tx chain: used only when Transmitter Power is set.",
+                        "Part of the Tx chain.",
                     ),
                     F(
                         "vswr", "VSWR (:1)", "", "e.g. 1.5",
                         "Overall VSWR, e.g. 1.5 for 1.5:1; gives the mismatch loss "
-                        "−10·log10(1 − Γ²). Part of the Tx chain: used only when Transmitter "
-                        "Power is set.",
+                        "−10·log10(1 − Γ²). Part of the Tx chain.",
                     ),
                     F(
                         "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 0",
-                        "Tx antenna gain towards the receiver. Required when Transmitter Power is "
-                        "set.",
+                        "Tx antenna gain towards the receiver. Part of the Tx chain (required "
+                        "there).",
                     ),
+                    ("eirp_used",),
                     F(
                         "ant_axial_ratio_db", "Tx Antenna Axial Ratio [dB]", "", "e.g. 3",
                         "With the Rx axial ratio, gives the polarisation mismatch loss when that "
@@ -1726,30 +1751,83 @@ class LinkBudgetApp:
         entry_labels: dict[str, str] = {}
         entry_defaults: dict[str, str] = {}
         panel_specs: list[tuple[str, ttk.Entry]] = []
+        # key -> (label widget, entry widget, label colour), to grey out the
+        # fields the calculation currently ignores. Panel fields use the key
+        # "panel:<label>".
+        field_widgets: dict[str, tuple[ttk.Label, ttk.Entry, str]] = {}
+        eirp_mode_var = tk.StringVar(value="eirp")
+        eirp_used_var = tk.StringVar(value="")
         shared_note = "Shared with the main window."
         for group_index, (group_title, items) in enumerate(field_groups, start=2):
             group_frame = ttk.LabelFrame(form, text=group_title, padding=8)
             group_frame.grid(row=group_index, column=0, sticky="ew", pady=(0, 10))
             group_frame.grid_columnconfigure(1, weight=1)
             group_frame.grid_columnconfigure(3, weight=1)
-            for i, item in enumerate(items):
-                r, c = divmod(i, 2)
-                padx = (0 if c == 0 else 18, 4)
+            r, c = 0, 0
+            for item in items:
                 kind = item[0]
+                if kind in ("eirp_mode", "eirp_used"):
+                    # Full-width rows.
+                    if c:
+                        r, c = r + 1, 0
+                    if kind == "eirp_mode":
+                        mode_row = ttk.Frame(group_frame)
+                        mode_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
+                        ttk.Label(mode_row, text="EIRP source:", font=(recap_font_family, 9, "bold")).pack(
+                            side=tk.LEFT, padx=(0, 8)
+                        )
+                        for value, text in (
+                            ("eirp", f"EIRP value ({eirp_label.split(' [')[0]})"),
+                            ("tx_chain", "Tx chain (power − losses + antenna gain)"),
+                        ):
+                            ttk.Radiobutton(
+                                mode_row,
+                                text=text,
+                                value=value,
+                                variable=eirp_mode_var,
+                                command=lambda: _refresh_states(),
+                            ).pack(side=tk.LEFT, padx=(0, 12))
+                        _info_icon(
+                            mode_row,
+                            "Choose where the EIRP comes from: the EIRP value (shared with the main "
+                            "window), or the Tx chain below (transmitter power − circuit loss − VSWR "
+                            "loss + antenna gain). The fields of the other option are greyed out "
+                            "and ignored; the EIRP actually used is shown under the Tx chain.",
+                        ).pack(side=tk.LEFT)
+                    else:
+                        ttk.Label(
+                            group_frame,
+                            textvariable=eirp_used_var,
+                            font=(recap_font_family, 9, "bold"),
+                            foreground=PALETTE["accent_dark"],
+                        ).grid(row=r, column=0, columnspan=4, sticky="w", pady=(4, 4))
+                    r, c = r + 1, 0
+                    continue
+                padx = (0 if c == 0 else 18, 4)
                 if kind == "scintillation":
+                    scint_cell = ttk.Frame(group_frame)
+                    scint_cell.grid(row=r, column=c * 2, columnspan=2, sticky="w", padx=padx, pady=2)
                     ttk.Checkbutton(
-                        group_frame,
+                        scint_cell,
                         text="Scintillation loss",
                         variable=self.scint_var,
                         command=self.set_analysis_stale,
-                    ).grid(row=r, column=c * 2, columnspan=2, sticky="w", padx=padx, pady=2)
+                    ).pack(side=tk.LEFT)
+                    _info_icon(
+                        scint_cell,
+                        f"{shared_note} Tropospheric scintillation fade (ITU-R P.618), added to the "
+                        "Rain Faded column. Matters mainly above ~4 GHz.",
+                    ).pack(side=tk.LEFT, padx=(4, 0))
+                    r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
                 if kind == "station":
                     ttk.Label(group_frame, text="Ground Station:", foreground=PALETTE["accent"]).grid(
                         row=r, column=c * 2, sticky="w", padx=padx, pady=2
                     )
+                    gs_cell = ttk.Frame(group_frame)
+                    gs_cell.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
                     gs_box = ttk.Combobox(
-                        group_frame,
+                        gs_cell,
                         textvariable=self.gs_var,
                         values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
                         state="readonly",
@@ -1760,36 +1838,101 @@ class LinkBudgetApp:
                             values=list(self.gs_menu["values"]) if self.gs_menu is not None else []
                         )
                     )
-                    gs_box.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    gs_box.pack(side=tk.LEFT)
                     gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
-                    _add_tooltip(gs_box, f"{shared_note} Its location sets the ITU-R atmospheric attenuation.")
+                    _info_icon(
+                        gs_cell,
+                        f"{shared_note} Its location (latitude, longitude, altitude) sets the ITU-R "
+                        "atmospheric attenuation; the geometry only uses elevation and altitude.",
+                    ).pack(side=tk.LEFT, padx=(4, 0))
+                    r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
                 if kind == "panel":
                     _kind, label_text, panel_entry, tooltip = item
-                    ttk.Label(group_frame, text=f"{label_text}:", foreground=PALETTE["accent"]).grid(
-                        row=r, column=c * 2, sticky="w", padx=padx, pady=2
-                    )
-                    linked = ttk.Entry(group_frame, textvariable=self._linked_var(panel_entry), width=15)
-                    linked.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    label_widget = ttk.Label(group_frame, text=f"{label_text}:", foreground=PALETTE["accent"])
+                    label_widget.grid(row=r, column=c * 2, sticky="w", padx=padx, pady=2)
+                    cell = ttk.Frame(group_frame)
+                    cell.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    linked = ttk.Entry(cell, textvariable=self._linked_var(panel_entry), width=15)
+                    linked.pack(side=tk.LEFT)
                     linked.bind(
                         "<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited)
                     )
-                    _add_tooltip(linked, f"{shared_note} {tooltip}".strip())
+                    _info_icon(cell, f"{tooltip} {shared_note}".strip()).pack(side=tk.LEFT, padx=(4, 0))
                     panel_specs.append((label_text, panel_entry))
+                    field_widgets[f"panel:{label_text}"] = (label_widget, linked, PALETTE["accent"])
+                    r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
                 _kind, key, label_text, default, placeholder, tooltip = item
-                ttk.Label(group_frame, text=f"{label_text}:").grid(
-                    row=r, column=c * 2, sticky="w", padx=padx, pady=2
-                )
+                label_widget = ttk.Label(group_frame, text=f"{label_text}:")
+                label_widget.grid(row=r, column=c * 2, sticky="w", padx=padx, pady=2)
+                cell = ttk.Frame(group_frame)
+                cell.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
                 if placeholder:
-                    entry = _PlaceholderEntry(group_frame, placeholder, width=15)
+                    entry = _PlaceholderEntry(cell, placeholder, width=15)
                 else:
-                    entry = ttk.Entry(group_frame, width=15)
-                entry.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
-                _add_tooltip(entry, tooltip)
+                    entry = ttk.Entry(cell, width=15)
+                entry.pack(side=tk.LEFT)
+                _info_icon(cell, tooltip).pack(side=tk.LEFT, padx=(4, 0))
                 entries[key] = entry
                 entry_labels[key] = label_text
                 entry_defaults[key] = default
+                field_widgets[key] = (label_widget, entry, PALETTE["text"])
+                r, c = (r, 1) if c == 0 else (r + 1, 0)
+
+        tx_chain_keys = ("tx_power_w", "ant_circuit_loss_db", "vswr", "ant_gain_dbi")
+
+        def _set_field_enabled(key: str, enabled: bool) -> None:
+            label_widget, entry_widget, colour = field_widgets[key]
+            entry_widget.state(["!disabled"] if enabled else ["disabled"])
+            label_widget.configure(foreground=colour if enabled else PALETTE["text_muted"])
+
+        def _field_text(key: str) -> str:
+            return field_widgets[key][1].get().strip()
+
+        def _refresh_states(_event=None) -> None:
+            """Grey out the fields the calculation currently ignores."""
+
+            chain = eirp_mode_var.get() == "tx_chain"
+            _set_field_enabled(f"panel:{eirp_label}", not chain)
+            for key in tx_chain_keys:
+                _set_field_enabled(key, chain)
+            # Axial ratios only matter when the polarisation loss is derived from them.
+            derive_polarisation = not _field_text("polarisation_loss_db")
+            _set_field_enabled("ant_axial_ratio_db", derive_polarisation)
+            _set_field_enabled("rx_axial_ratio_db", derive_polarisation)
+            _set_field_enabled("rx_beamwidth_deg", bool(_field_text("rx_depointing_deg")))
+
+            if not chain:
+                text = _field_text(f"panel:{eirp_label}")
+                eirp_used_var.set(
+                    f"EIRP used in the calculation: {text} dBW (EIRP value)"
+                    if text
+                    else f"EIRP used in the calculation: enter the {eirp_label.split(' [')[0]} value"
+                )
+                return
+            try:
+                power_w = float(_field_text("tx_power_w"))
+                gain = float(_field_text("ant_gain_dbi"))
+                circuit = float(_field_text("ant_circuit_loss_db") or 0.0)
+                vswr_text = _field_text("vswr")
+                vswr_loss = calculations.vswr_mismatch_loss_db(float(vswr_text)) if vswr_text else 0.0
+                if power_w <= 0:
+                    raise ValueError
+            except ValueError:
+                eirp_used_var.set(
+                    "EIRP used in the calculation: enter Transmitter Power and Antenna Gain (Tx chain)"
+                )
+                return
+            power_dbw = 10 * math.log10(power_w)
+            eirp_used_var.set(
+                f"EIRP used in the calculation: {power_dbw - circuit - vswr_loss + gain:.2f} dBW "
+                f"(Tx chain: {power_dbw:.2f} dBW − {circuit:g} dB − {vswr_loss:.2f} dB VSWR "
+                f"+ {gain:g} dBi)"
+            )
+
+        for key in tx_chain_keys + ("polarisation_loss_db", "rx_depointing_deg", f"panel:{eirp_label}"):
+            field_widgets[key][1].bind("<KeyRelease>", _refresh_states, add="+")
 
         parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
         panel_keys = [
@@ -1813,10 +1956,30 @@ class LinkBudgetApp:
             wraplength=600,
             justify="left",
         ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+        tolerance_help = {
+            "Favourable [dB]": (
+                "How much the margin can improve over nominal because of this contributor, as a "
+                "positive dB value (e.g. +1.5 for an antenna gain of 0 ± 1.5 dBi)."
+            ),
+            "Adverse [dB]": (
+                "How much the margin can get worse than nominal because of this contributor, as a "
+                "positive dB value (e.g. 1.5 for an antenna gain of 0 ± 1.5 dBi)."
+            ),
+            "PDF": (
+                "Probability distribution of the contributor between its adverse and favourable "
+                "limits. UNI: any value equally likely (only the limits are known; most "
+                "conservative). TRI: nominal most likely, limits rare (hardware with a measured "
+                "nominal and specified limits). GAU: Gaussian with the limits at ±3σ (many small "
+                "independent effects, e.g. propagation). It sets the mean and variance used for "
+                "MEAN − 3σ; it does not affect Worst Case RSS."
+            ),
+        }
         for col, heading in enumerate(("Parameter", "Favourable [dB]", "Adverse [dB]", "PDF")):
-            ttk.Label(tol_frame, text=heading, font=(recap_font_family, 9, "bold")).grid(
-                row=1, column=col, sticky="w", padx=(0, 10), pady=1
-            )
+            heading_cell = ttk.Frame(tol_frame)
+            heading_cell.grid(row=1, column=col, sticky="w", padx=(0, 10), pady=1)
+            ttk.Label(heading_cell, text=heading, font=(recap_font_family, 9, "bold")).pack(side=tk.LEFT)
+            if heading in tolerance_help:
+                _info_icon(heading_cell, tolerance_help[heading]).pack(side=tk.LEFT, padx=(4, 0))
         # (key, label, default distribution) -- defaults follow the reference
         # static link budget sheet (TRI for hardware, GAU for propagation).
         tolerance_specs = [
@@ -1878,14 +2041,24 @@ class LinkBudgetApp:
                     tolerances_out[key] = item
             if tolerances_out:
                 values["tolerances"] = tolerances_out
+            values["eirp_mode"] = eirp_mode_var.get()
             return values
 
         def _apply_values(values: dict) -> None:
             """Fill the popup from ``values``; anything missing goes back to its default."""
 
+            for key in field_widgets:
+                _set_field_enabled(key, True)  # disabled entries ignore edits
             for key, entry in entries.items():
                 text = _format_value(values[key]) if key in values else entry_defaults[key]
                 _set_entry_text(entry, text)
+            mode = values.get("eirp_mode")
+            if mode not in ("eirp", "tx_chain"):
+                # Files saved before the explicit choice: the Tx chain was used
+                # whenever a transmitter power was given.
+                mode = "tx_chain" if _format_value(values.get("tx_power_w")) else "eirp"
+            eirp_mode_var.set(mode)
+            _refresh_states()
             saved_tolerances = values.get("tolerances")
             if not isinstance(saved_tolerances, dict):
                 saved_tolerances = {}
@@ -1974,23 +2147,26 @@ class LinkBudgetApp:
                 link_availability = _parse_required(self.LA_entry, "Link Availability [%]")
                 d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
 
-                tx_power_w = _field("tx_power_w", _parse_optional_or_none)
-                ant_circuit_loss_db = _field("ant_circuit_loss_db", _parse_optional)
-                vswr = _field("vswr", _parse_optional_or_none)
-                ant_gain_dbi = _field("ant_gain_dbi", _parse_optional_or_none)
-                if tx_power_w is not None:
+                if eirp_mode_var.get() == "tx_chain":
+                    tx_power_w = _field("tx_power_w", _parse_optional_or_none)
+                    ant_circuit_loss_db = _field("ant_circuit_loss_db", _parse_optional)
+                    vswr = _field("vswr", _parse_optional_or_none)
+                    ant_gain_dbi = _field("ant_gain_dbi", _parse_optional_or_none)
+                    if tx_power_w is None or ant_gain_dbi is None:
+                        raise ValueError(
+                            "The EIRP source is 'Tx chain': enter Transmitter Power [W] and "
+                            "Antenna Gain [dBi], or choose 'EIRP value'."
+                        )
                     if tx_power_w <= 0:
                         raise ValueError("'Transmitter Power [W]' must be greater than 0.")
-                    if ant_gain_dbi is None:
+                else:
+                    # EIRP value: the Tx chain fields are ignored.
+                    tx_power_w, ant_circuit_loss_db, vswr, ant_gain_dbi = None, 0.0, None, None
+                    if eirp is None:
                         raise ValueError(
-                            "'Antenna Gain [dBi]' is required to compute the EIRP from the "
-                            "Transmitter Power."
+                            f"The EIRP source is 'EIRP value' but '{eirp_label}' is empty: enter it, "
+                            "or choose 'Tx chain'."
                         )
-                elif eirp is None:
-                    raise ValueError(
-                        f"'{eirp_label}' is empty. Enter it in the parameters panel, or set "
-                        "Transmitter Power and Antenna Gain to compute the EIRP from the Tx chain."
-                    )
                 ant_axial_ratio_db = _field("ant_axial_ratio_db", _parse_optional_or_none)
                 ionospheric_loss_db = _field("ionospheric_loss_db", _parse_optional)
                 polarisation_loss_db = _field("polarisation_loss_db", _parse_optional_or_none)
@@ -2122,18 +2298,21 @@ class LinkBudgetApp:
                         group_items.append(("Ground Station", gs_name))
                     elif item[0] == "scintillation":
                         group_items.append(("Scintillation", "Included" if self.scint_var.get() else "Excluded"))
-                    elif item[0] == "panel":
-                        _kind, label_text, panel_entry, _tooltip = item
-                        text = panel_entry.get().strip()
-                        if text and panel_entry is eirp_entry and budget.get("eirp_source") == "tx_chain":
-                            text += " (not used)"
-                        if text:
+                    elif item[0] == "eirp_mode":
+                        group_items.append(
+                            (
+                                "EIRP Source",
+                                "Tx chain" if eirp_mode_var.get() == "tx_chain" else "EIRP value",
+                            )
+                        )
+                    elif item[0] in ("panel", "field"):
+                        key = f"panel:{item[1]}" if item[0] == "panel" else item[1]
+                        label_widget, entry_widget, _colour = field_widgets[key]
+                        text = entry_widget.get().strip()
+                        # Fields greyed out (ignored by the calculation) are left out.
+                        if text and not entry_widget.instate(["disabled"]):
+                            label_text = item[1] if item[0] == "panel" else entry_labels[key]
                             group_items.append((label_text, text))
-                    else:
-                        key = item[1]
-                        text = entries[key].get().strip()
-                        if text:
-                            group_items.append((entry_labels[key], text))
                 input_groups.append((group_title, group_items))
             last_report.update(
                 budget=budget,
