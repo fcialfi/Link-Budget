@@ -375,6 +375,67 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
     return rows
 
 
+@dataclass
+class SummaryCheck:
+    """One key result of the summary, checked against its requirement."""
+
+    label: str
+    clear: float
+    rain: float
+    requirement: str
+    # "pass", "fail", or None when there is no requirement to check.
+    status: Optional[str]
+
+
+def summary_checks(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[SummaryCheck]:
+    """Key results (Eb/No, margins, PFD margin) with their pass/fail status.
+
+    A check passes only when it passes in both conditions (clear sky and
+    rain faded). The PFD margin does not depend on the weather, so it has
+    the same value in both columns.
+    """
+
+    required_margin = extra_info.get("required_margin_db")
+    by_label = {row.label: row for row in link_budget_rows(budget, required_margin)}
+    checks: List[SummaryCheck] = []
+
+    def add(label: str, requirement: str, threshold: Optional[float] = None) -> None:
+        row = by_label.get(label)
+        if row is None:
+            return
+        if threshold is not None:
+            row = ResultRow(row.group, row.label, row.clear, row.rain, threshold)
+        statuses = [row.status(row.clear), row.status(row.rain)]
+        overall = "fail" if "fail" in statuses else ("pass" if "pass" in statuses else None)
+        checks.append(SummaryCheck(label, row.clear, row.rain, requirement, overall))
+
+    if "required_ebno_db" in budget:
+        add("Received Eb/No [dB]", f"≥ {budget['required_ebno_db']:g} dB", budget["required_ebno_db"])
+    else:
+        add("Received Eb/No [dB]", "–")
+    add("Data Recovery Margin [dB]", f"≥ {required_margin:g} dB" if required_margin is not None else "–")
+    add("MEAN – 3σ [dB]", "≥ 0 dB")
+    add("MARGIN – Worst Case RSS [dB]", "≥ 0 dB")
+    if pfd_applicable(extra_info):
+        pfd_margin = next((r for r in pfd_rows(budget, extra_info) if r.threshold is not None), None)
+        if pfd_margin is not None:
+            checks.append(
+                SummaryCheck(pfd_margin.label, pfd_margin.value, pfd_margin.value, "≥ 0 dB", pfd_margin.status())
+            )
+    return checks
+
+
+def summary_verdict(checks: Sequence[SummaryCheck]) -> Tuple[Optional[str], str]:
+    """Overall status ("pass", "fail" or None) and a one-line verdict."""
+
+    failed = [check.label.split(" [")[0] for check in checks if check.status == "fail"]
+    if failed:
+        return "fail", "Requirement not met: " + ", ".join(failed) + "."
+    if any(check.status is not None for check in checks):
+        return "pass", "All checked requirements are met in both conditions."
+    return None, "No requirement set: enter a Required Eb/No to check the margins."
+
+
 def rain_percentage(link_availability_pct: float) -> float:
     """Percentage of time p used for the rain-faded condition."""
 
@@ -534,45 +595,15 @@ def build_static_report_pdf(
     story.append(Spacer(1, 3 * mm))
 
     # ---- Summary -----------------------------------------------------------
-    rows = link_budget_rows(budget, extra_info.get("required_margin_db"))
-    by_label = {row.label: row for row in rows}
     rain_p = rain_percentage(context.link_availability_pct)
-    required_margin = extra_info.get("required_margin_db")
 
     summary_data = [[P("Key result", "head"), P("Clear Sky", "head_right"),
                      P(f"Rain Faded (p = {rain_p:g}%)", "head_right"), P("Requirement", "head"), P("Status", "head")]]
-    checks: List[Tuple[str, Optional[str]]] = []
-
-    def summary_row(label: str, requirement: str, threshold: Optional[float] = None) -> None:
-        row = by_label.get(label)
-        if row is None:
-            return
-        if threshold is not None:
-            row = ResultRow(row.group, row.label, row.clear, row.rain, threshold)
-        statuses = [row.status(row.clear), row.status(row.rain)]
-        overall = "fail" if "fail" in statuses else ("pass" if "pass" in statuses else None)
-        checks.append((label, overall))
+    checks = summary_checks(budget, extra_info)
+    for check in checks:
         summary_data.append(
-            [P(label, "cell_bold"), P(_fmt(row.clear), "cell_right"), P(_fmt(row.rain), "cell_right"),
-             P(requirement), Paragraph(badge(overall), styles["cell"])]
-        )
-
-    if "required_ebno_db" in budget:
-        summary_row("Received Eb/No [dB]", f"≥ {budget['required_ebno_db']:g} dB", budget["required_ebno_db"])
-    else:
-        summary_row("Received Eb/No [dB]", "–")
-    summary_row("Data Recovery Margin [dB]", f"≥ {required_margin:g} dB" if required_margin is not None else "–")
-    summary_row("MEAN – 3σ [dB]", "≥ 0 dB")
-    summary_row("MARGIN – Worst Case RSS [dB]", "≥ 0 dB")
-    pfd_margin_row = None
-    if pfd_applicable(extra_info):
-        pfd_margin_row = next((r for r in pfd_rows(budget, extra_info) if r.threshold is not None), None)
-    if pfd_margin_row is not None:
-        status = pfd_margin_row.status()
-        checks.append((pfd_margin_row.label, status))
-        summary_data.append(
-            [P(pfd_margin_row.label, "cell_bold"), P(_fmt(pfd_margin_row.value), "cell_right"),
-             P(_fmt(pfd_margin_row.value), "cell_right"), P("≥ 0 dB"), Paragraph(badge(status), styles["cell"])]
+            [P(check.label, "cell_bold"), P(_fmt(check.clear), "cell_right"), P(_fmt(check.rain), "cell_right"),
+             P(check.requirement), Paragraph(badge(check.status), styles["cell"])]
         )
     summary_table = Table(
         summary_data,
@@ -585,15 +616,13 @@ def build_static_report_pdf(
             summary_style.append(("BACKGROUND", (0, i), (-1, i), color(_ROW_ALT)))
     summary_table.setStyle(TableStyle(summary_style))
 
-    failed = [label for label, status in checks if status == "fail"]
-    checked = [label for label, status in checks if status is not None]
-    if failed:
-        verdict = (f'<font color="{_FAIL}">Requirement not met:</font> '
-                   + ", ".join(_rich(label.split(" [")[0]) for label in failed) + ".")
-    elif checked:
+    overall, verdict_text = summary_verdict(checks)
+    if overall == "fail":
+        verdict = f'<font color="{_FAIL}">Requirement not met:</font> ' + _rich(verdict_text.split(": ", 1)[1])
+    elif overall == "pass":
         verdict = f'<font color="{_PASS}">All checked requirements are met</font> in both conditions.'
     else:
-        verdict = "No requirement set: enter a Required Eb/No to check the margins."
+        verdict = _rich(verdict_text)
 
     story.append(Paragraph("Summary", styles["h1"]))
     story.append(Paragraph(verdict, styles["verdict"]))
@@ -635,7 +664,7 @@ def build_static_report_pdf(
     data = [[P("Parameter", "head"), P("Clear Sky", "head_right"), P(f"Rain Faded (p = {rain_p:g}%)", "head_right")]]
     style = base_table_style()
     current_group = None
-    for row in rows:
+    for row in link_budget_rows(budget, extra_info.get("required_margin_db")):
         if row.group != current_group:
             current_group = row.group
             style.append(("SPAN", (0, len(data)), (-1, len(data))))

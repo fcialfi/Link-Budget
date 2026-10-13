@@ -193,3 +193,28 @@ def test_tolerance_rows_losses_move_the_other_way(budget):
     nominal = budget["rain_faded"]["total_propagation_loss_db"]
     assert (loss.favourable, loss.adverse) == pytest.approx((nominal - 0.5, nominal + 1.0))
     assert loss.mean == pytest.approx(nominal + 0.25)
+
+
+def test_summary_checks_and_verdict(budget):
+    checks = static_report.summary_checks(budget, EXTRA_INFO)
+    labels = [check.label for check in checks]
+    assert labels[0] == "Received Eb/No [dB]"
+    assert labels[-1] == "PFD Margin [dB]"
+    margin = next(check for check in checks if check.label == "Data Recovery Margin [dB]")
+    assert margin.rain == pytest.approx(budget["rain_faded"]["margin_db"])
+    assert margin.requirement == "≥ 3 dB"
+    assert static_report.summary_verdict(checks)[0] == "pass"
+
+    # A margin requirement above the rain-faded margin fails the whole check.
+    strict = dict(EXTRA_INFO, required_margin_db=budget["rain_faded"]["margin_db"] + 0.1)
+    overall, text = static_report.summary_verdict(static_report.summary_checks(budget, strict))
+    assert overall == "fail"
+    assert text == "Requirement not met: Data Recovery Margin."
+
+    # No PFD check on uplinks.
+    uplink = dict(EXTRA_INFO, pfd_applicable=False)
+    assert "PFD Margin [dB]" not in [c.label for c in static_report.summary_checks(budget, uplink)]
+
+
+def test_summary_verdict_without_requirements():
+    assert static_report.summary_verdict([])[0] is None

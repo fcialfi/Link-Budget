@@ -4,6 +4,8 @@ from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
 import csv
 import math
+import re
+from typing import Callable
 
 # ---------------------------------------------------------------------------
 # Visual theme
@@ -29,6 +31,11 @@ PALETTE = {
     "row_odd": "#ffffff",
     "row_even": "#f3f6fb",
     "selection": "#cfe0fd",
+    "warning": "#c77700",
+    "success_light": "#e8f5e9",
+    "danger_light": "#fdecec",
+    "danger_border": "#f1b5b5",
+    "nav_disabled": "#aab3c0",
 }
 
 
@@ -351,6 +358,11 @@ def _configure_result_tags(table: ttk.Treeview) -> None:
     table.tag_configure("oddrow", background=PALETTE["row_odd"])
     table.tag_configure("pass", foreground=PALETTE["success"])
     table.tag_configure("fail", foreground=PALETTE["danger"])
+    family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+    table.tag_configure("emphasis", font=(family, 10, "bold"))
+    table.tag_configure(
+        "group", background=PALETTE["accent_light"], foreground=PALETTE["accent_dark"], font=(family, 9, "bold")
+    )
 
 
 def _format_checked(value: float, status: str | None, digits: int = 2) -> str:
@@ -726,7 +738,12 @@ class LinkBudgetApp:
                     file=sys.stderr,
                 )
 
-    def _bind_scroll_wheel(self, canvas: tk.Canvas, owner: tk.Widget | None = None) -> None:
+    def _bind_scroll_wheel(
+        self,
+        canvas: tk.Canvas,
+        owner: tk.Widget | None = None,
+        target: Callable[[], tk.Canvas | None] | None = None,
+    ) -> None:
         """Route mouse-wheel scrolling to ``canvas``.
 
         Mouse-wheel events are delivered to a single widget determined by
@@ -741,15 +758,22 @@ class LinkBudgetApp:
         ``Toplevel``), its ``<Destroy>`` pops this canvas back off so
         wheel-scrolling reverts to whichever one -- the main window or an
         outer popup -- was active underneath it.
+
+        ``target``, if given, returns the canvas to scroll at the time of
+        the event (e.g. the one on the page currently shown), instead of
+        ``canvas``.
         """
 
         wheel_event = "<Mousewheel>" if sys.platform == "darwin" else "<MouseWheel>"
 
         def _scroll(event):
+            scrolled = target() if target is not None else canvas
+            if scrolled is None:
+                return
             if sys.platform == "darwin":
-                canvas.yview_scroll(-1 * event.delta, "units")
+                scrolled.yview_scroll(-1 * event.delta, "units")
             else:
-                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                scrolled.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         self._mousewheel_stack.append(_scroll)
         canvas.bind_all(wheel_event, _scroll)
@@ -776,17 +800,38 @@ class LinkBudgetApp:
         (see :meth:`_bind_scroll_wheel`).
         """
 
-        canvas_frame = ttk.Frame(win)
+        canvas_frame, body, canvas = self._make_scrollable_frame(win)
         canvas_frame.pack(fill=tk.BOTH, expand=True)
-        canvas_frame.grid_rowconfigure(0, weight=1)
-        canvas_frame.grid_columnconfigure(0, weight=1)
-
-        canvas = tk.Canvas(canvas_frame, bg=PALETTE["bg"], highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        vscroll = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
-        vscroll.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=vscroll.set)
         self._bind_scroll_wheel(canvas, owner=win)
+        return body
+
+    def _make_scrollable_frame(self, parent: tk.Widget) -> tuple[ttk.Frame, ttk.Frame, tk.Canvas]:
+        """A vertically scrollable area inside ``parent``.
+
+        Returns ``(container, body, canvas)``: the caller places
+        ``container`` and puts its widgets in ``body``; mouse-wheel
+        scrolling is left to the caller (see :meth:`_bind_scroll_wheel`).
+        The scrollbar is shown only when the content is taller than the
+        area.
+        """
+
+        container = ttk.Frame(parent)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(container, bg=PALETTE["bg"], highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vscroll = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        vscroll.grid(row=0, column=1, sticky="ns")
+
+        def _set_scrollbar(first, last):
+            vscroll.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                vscroll.grid_remove()
+            else:
+                vscroll.grid()
+
+        canvas.configure(yscrollcommand=_set_scrollbar)
 
         body = ttk.Frame(canvas)
         window_id = canvas.create_window((0, 0), window=body, anchor="nw")
@@ -798,7 +843,7 @@ class LinkBudgetApp:
         canvas.bind("<Configure>", _on_canvas_configure)
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        return body
+        return container, body, canvas
 
     # ------------------------------------------------------------------
     # Staleness tracking
@@ -1491,9 +1536,12 @@ class LinkBudgetApp:
         parameters panel so they don't need to be retyped.
 
         The popup's own inputs are grouped as in a formal static link budget
-        sheet (geometry and requirements, transmitter, propagation, receiver,
-        data rate and PFD limit) plus favourable/adverse tolerances for the
-        statistical margins. They are remembered for the session, can be
+        sheet (geometry, data channel and requirements, transmitter,
+        propagation and PFD limit, receiver) plus favourable/adverse
+        tolerances for the statistical margins. Each section, and each part
+        of the results (summary, link budget, PFD check, link budget with
+        tolerances), is a page picked from a sidebar; the action buttons and
+        the status stay visible above the pages. They are remembered for the session, can be
         saved into / loaded from a parameters JSON file (as the
         ``fixed_elevation_downlink`` / ``fixed_elevation_uplink`` section),
         and are auto-loaded with ``parameters.json`` at startup.
@@ -1505,40 +1553,141 @@ class LinkBudgetApp:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=PALETTE["bg"])
-        win.geometry("960x880")
-        win.minsize(560, 320)
-
-        scroll_body = self._make_scrollable_window_body(win)
-
-        form = ttk.Frame(scroll_body, padding=15)
-        form.pack(fill=tk.X)
-        form.grid_columnconfigure(0, weight=1)
-
-        ttk.Label(
-            form,
-            text=(
-                "Preliminary worst-case check, independent of any TLE: the slant range is "
-                "derived from the elevation angle and satellite altitude. The inputs of this "
-                "window are remembered, and Save / Load write and read them, together with the "
-                "main window values shown here, in a parameters file (saving into "
-                "parameters.json auto-loads them at startup)."
-            ),
-            foreground=PALETTE["text_muted"],
-            wraplength=680,
-            justify="left",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        win.geometry("1120x860")
+        win.minsize(860, 520)
 
         recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
+        direction_text = "Downlink (S/C → GS)" if rx_is_ground_station else "Uplink (GS → S/C)"
+
+        # Layout: a navy header, an action bar (buttons and status), then a
+        # sidebar listing the input and result pages next to the page shown.
+        header = ttk.Frame(win, style="Header.TFrame", padding=(20, 12))
+        header.pack(fill=tk.X)
+        ttk.Label(header, text=title, style="Header.TLabel").pack(anchor="w")
         ttk.Label(
-            form,
+            header,
             text=(
-                "Fields with blue labels are the same fields as in the main window: editing them "
-                "here changes them there too, and the other way round."
+                f"{direction_text}  ·  preliminary worst-case check at a fixed elevation, independent of any TLE"
             ),
-            foreground=PALETTE["accent"],
-            wraplength=680,
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
+            style="HeaderSub.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
+
+        action_bar = ttk.Frame(win, style="Toolbar.TFrame", padding=(16, 10))
+        action_bar.pack(fill=tk.X)
+        button_row = ttk.Frame(action_bar, style="Toolbar.TFrame")
+        button_row.pack(side=tk.LEFT)
+        status_box = ttk.Frame(action_bar, style="Toolbar.TFrame")
+        status_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(16, 0))
+        tk.Frame(win, bg=PALETTE["border"], height=1).pack(fill=tk.X)
+
+        main_area = ttk.Frame(win)
+        main_area.pack(fill=tk.BOTH, expand=True)
+        sidebar = tk.Frame(main_area, bg=PALETTE["surface"], width=236)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
+        tk.Frame(main_area, bg=PALETTE["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
+        pages_book = ttk.Notebook(main_area, style="Pages.TNotebook")
+        pages_book.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # key -> {"container", "body", "canvas", "nav", "label", "badge", "enabled"}
+        pages: dict[str, dict] = {}
+        current_page = {"key": None}
+        nav_font = (recap_font_family, 10)
+        nav_font_selected = (recap_font_family, 10, "bold")
+
+        def _paint_nav(key: str, hover: bool = False) -> None:
+            page = pages[key]
+            if not page["enabled"]:
+                bg, fg, bar, font = PALETTE["surface"], PALETTE["nav_disabled"], PALETTE["surface"], nav_font
+            elif current_page["key"] == key:
+                bg, fg, bar, font = PALETTE["accent_light"], PALETTE["accent_dark"], PALETTE["accent"], nav_font_selected
+            else:
+                bg = PALETTE["surface_alt"] if hover else PALETTE["surface"]
+                fg, bar, font = PALETTE["text"], bg, nav_font
+            page["nav"].configure(bg=bg)
+            page["bar"].configure(bg=bar)
+            page["label"].configure(bg=bg, fg=fg, font=font)
+            page["badge"].configure(bg=bg)
+
+        def _show_page(key: str) -> None:
+            if key not in pages or not pages[key]["enabled"]:
+                return
+            previous = current_page["key"]
+            current_page["key"] = key
+            pages_book.select(pages[key]["container"])
+            pages[key]["canvas"].yview_moveto(0)
+            for other in {previous, key} - {None}:
+                _paint_nav(other)
+
+        def _set_page_enabled(key: str, enabled: bool) -> None:
+            pages[key]["enabled"] = enabled
+            pages[key]["nav"].configure(cursor="hand2" if enabled else "arrow")
+            _paint_nav(key)
+
+        def _set_page_badge(key: str, text: str = "", colour: str | None = None) -> None:
+            pages[key]["badge"].configure(text=text, fg=colour or PALETTE["text_muted"])
+
+        def _nav_caption(text: str) -> None:
+            tk.Label(
+                sidebar,
+                text=text,
+                bg=PALETTE["surface"],
+                fg=PALETTE["text_muted"],
+                font=(recap_font_family, 8, "bold"),
+                anchor="w",
+            ).pack(fill=tk.X, padx=18, pady=(16, 4))
+
+        def _add_page(key: str, nav_text: str, heading: str = "", description: str = "") -> ttk.Frame:
+            """Add a page and its sidebar entry; return the frame for its content."""
+
+            container, body, canvas = self._make_scrollable_frame(pages_book)
+            pages_book.add(container)
+            nav = tk.Frame(sidebar, bg=PALETTE["surface"], cursor="hand2")
+            nav.pack(fill=tk.X)
+            bar = tk.Frame(nav, bg=PALETTE["surface"], width=4)
+            bar.pack(side=tk.LEFT, fill=tk.Y)
+            label = tk.Label(nav, text=nav_text, bg=PALETTE["surface"], anchor="w", padx=14, pady=7)
+            label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            badge = tk.Label(nav, text="", bg=PALETTE["surface"], font=(recap_font_family, 10, "bold"), padx=12)
+            badge.pack(side=tk.RIGHT)
+            pages[key] = {
+                "container": container, "body": body, "canvas": canvas, "nav": nav, "bar": bar,
+                "label": label, "badge": badge, "enabled": True,
+            }
+            for widget in (nav, bar, label, badge):
+                widget.bind("<Button-1>", lambda _e, k=key: _show_page(k))
+                widget.bind("<Enter>", lambda _e, k=key: k != current_page["key"] and _paint_nav(k, hover=True))
+                widget.bind("<Leave>", lambda _e, k=key: _paint_nav(k))
+            _paint_nav(key)
+
+            content = ttk.Frame(body, padding=(22, 18, 22, 22))
+            content.pack(fill=tk.BOTH, expand=True)
+            pages[key]["content"] = content
+            if heading:
+                ttk.Label(content, text=heading, style="PageTitle.TLabel").pack(anchor="w")
+            if description:
+                ttk.Label(
+                    content, text=description, style="PageSub.TLabel", wraplength=760, justify="left"
+                ).pack(anchor="w", pady=(2, 0))
+            if heading or description:
+                ttk.Frame(content, height=12).pack(fill=tk.X)
+            return content
+
+        def _page_of(widget) -> str | None:
+            """The key of the page that contains ``widget``, if any."""
+
+            containers = {str(page["container"]): key for key, page in pages.items()}
+            while widget is not None:
+                if str(widget) in containers:
+                    return containers[str(widget)]
+                widget = widget.master
+            return None
+
+        self._bind_scroll_wheel(
+            pages_book,
+            owner=win,
+            target=lambda: pages[current_page["key"]]["canvas"] if current_page["key"] else None,
+        )
 
         # Sections in the order of a static link budget sheet. Each item is
         # one of:
@@ -1813,6 +1962,39 @@ class LinkBudgetApp:
             ),
         ]
 
+        # (page key, sidebar name, description) of each section, in the order of field_groups.
+        input_pages = [
+            (
+                "geometry",
+                "Station & Geometry",
+                "Where the link is evaluated: the ground station, the fixed elevation and the satellite "
+                "altitude (together they give the slant range), and the weather availability used for "
+                "rain and cloud attenuation.",
+            ),
+            (
+                "data",
+                "Data Channel",
+                "Bit rate, framing and overheads of the data channel, and the Eb/No and margin the link "
+                "has to achieve.",
+            ),
+            (
+                "transmitter",
+                f"Transmitter ({tx_side})",
+                "EIRP, entered directly or computed from the transmitter chain (power, losses, antenna gain).",
+            ),
+            (
+                "propagation",
+                "Propagation & PFD" if rx_is_ground_station else "Propagation",
+                "Losses between the two antennas besides free space: atmosphere (ITU-R), ionosphere, "
+                "polarisation, multipath and other attenuations"
+                + (", and the regulatory PFD limit." if rx_is_ground_station else "."),
+            ),
+            (
+                "receiver",
+                f"Receiver ({rx_side})",
+                "Figure of merit of the receiving side and the losses of the receiver and demodulator.",
+            ),
+        ]
         entries: dict[str, ttk.Entry] = {}
         entry_labels: dict[str, str] = {}
         entry_defaults: dict[str, str] = {}
@@ -1843,9 +2025,12 @@ class LinkBudgetApp:
         scint_var = tk.BooleanVar(value=self.scint_var.get())
         eirp_used_var = tk.StringVar(value="")
         shared_note = "Shared with the main window."
-        for group_index, (group_title, items) in enumerate(field_groups, start=2):
-            group_frame = ttk.LabelFrame(form, text=group_title, padding=8)
-            group_frame.grid(row=group_index, column=0, sticky="ew", pady=(0, 10))
+        _nav_caption("INPUTS")
+        for group_index, (group_title, items) in enumerate(field_groups):
+            page_key, nav_text, page_description = input_pages[group_index]
+            page_content = _add_page(page_key, nav_text, group_title, page_description)
+            group_frame = ttk.Frame(page_content)
+            group_frame.pack(fill=tk.X)
             group_frame.grid_columnconfigure(1, weight=1)
             group_frame.grid_columnconfigure(3, weight=1)
             r, c = 0, 0
@@ -2409,21 +2594,16 @@ class LinkBudgetApp:
             if id(panel_entry) in parameter_keys
         ]
 
-        tol_row = 2 + len(field_groups)
-        tol_frame = ttk.LabelFrame(
-            form, text="Tolerances (optional, dB of effect on the margin)", padding=8
+        tol_page = _add_page(
+            "tolerances",
+            "Tolerances",
+            "Tolerances",
+            "Optional favourable / adverse deviations from nominal, as positive dB values of effect on "
+            "the margin. They are propagated through the link budget (Results › With Tolerances) and give "
+            "the MEAN − 3σ and Worst Case RSS margins (requires a Required Eb/No).",
         )
-        tol_frame.grid(row=tol_row, column=0, sticky="ew", pady=(0, 10))
-        ttk.Label(
-            tol_frame,
-            text=(
-                "Favourable / adverse deviations from nominal, as positive dB values. "
-                "Used for the MEAN − 3σ and Worst Case RSS margins (requires Required Eb/No)."
-            ),
-            foreground=PALETTE["text_muted"],
-            wraplength=600,
-            justify="left",
-        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+        tol_frame = ttk.Frame(tol_page)
+        tol_frame.pack(fill=tk.X)
         tolerance_help = {
             "Favourable [dB]": (
                 "How much the margin can improve over nominal because of this contributor, as a "
@@ -2565,7 +2745,6 @@ class LinkBudgetApp:
 
         # Results shown are "fresh" until any input they depend on changes.
         results_state = {"fresh": False}
-        stale_note: dict = {}
 
         def _mark_stale(*_args) -> None:
             if not results_state["fresh"] or not win.winfo_exists():
@@ -2574,10 +2753,11 @@ class LinkBudgetApp:
             calc_button.configure(style="Red.TButton")
             export_button.state(["disabled"])
             pdf_button.state(["disabled"])
-            note = stale_note.get("label")
-            if note is not None and note.winfo_exists():
-                first = results_frame.pack_slaves()
-                note.pack(anchor="w", pady=(0, 8), before=first[0]) if first else note.pack(anchor="w")
+            stale_label.pack(anchor="w", before=status_label)
+            verdict_title.configure(text="⚠ OUTDATED", fg=PALETTE["warning"])
+            for key in result_pages:
+                if pages[key]["enabled"]:
+                    _set_page_badge(key, "!", PALETTE["warning"])
 
         _apply_values(self.static_lb_values.get(section, {}))
 
@@ -2611,14 +2791,89 @@ class LinkBudgetApp:
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
-        results_frame = ttk.Frame(scroll_body, padding=(15, 0, 15, 15))
-        results_frame.pack(fill=tk.BOTH, expand=True)
+        _nav_caption("RESULTS")
+        result_pages = {
+            "summary": "Summary",
+            "link_budget": "Link Budget",
+            "pfd": "PFD Check",
+            "tolerance_results": "With Tolerances",
+        }
+        if not rx_is_ground_station:
+            del result_pages["pfd"]  # the PFD limits apply to space-to-Earth links only
+        for key, nav_text in result_pages.items():
+            _add_page(key, nav_text)
+            _set_page_enabled(key, False)
+
+        # Bottom of the sidebar: the key result of the last calculation, and
+        # what the blue labels mean.
+        sidebar_footer = tk.Frame(sidebar, bg=PALETTE["surface"])
+        sidebar_footer.pack(side=tk.BOTTOM, fill=tk.X, padx=14, pady=14)
+        verdict_card = tk.Frame(
+            sidebar_footer, bg=PALETTE["surface_alt"], highlightthickness=1,
+            highlightbackground=PALETTE["border"], padx=12, pady=10,
+        )
+        verdict_title = tk.Label(
+            verdict_card, text="No results yet", bg=PALETTE["surface_alt"], fg=PALETTE["text_muted"],
+            font=(recap_font_family, 9, "bold"), anchor="w", justify="left",
+        )
+        verdict_title.pack(fill=tk.X)
+        verdict_value = tk.Label(
+            verdict_card, text="Press Calculate", bg=PALETTE["surface_alt"], fg=PALETTE["text_muted"],
+            font=(recap_font_family, 10), anchor="w", justify="left", wraplength=190,
+        )
+        verdict_value.pack(fill=tk.X, pady=(2, 0))
+        verdict_card.pack(fill=tk.X)
+        tk.Label(
+            sidebar_footer,
+            text="Blue labels: fields shared with the main window (editing them here changes them there too).",
+            bg=PALETTE["surface"], fg=PALETTE["accent"], font=(recap_font_family, 8),
+            anchor="w", justify="left", wraplength=200,
+        ).pack(fill=tk.X, pady=(10, 0))
 
         status_var = tk.StringVar(value="")
+        stale_label = ttk.Label(
+            status_box,
+            text="⚠ Inputs changed: press Calculate to update the results",
+            style="Toolbar.TLabel",
+            foreground=PALETTE["danger"],
+            font=(recap_font_family, 9, "bold"),
+        )
+        status_label = ttk.Label(
+            status_box, textvariable=status_var, style="Toolbar.TLabel", foreground=PALETTE["text_muted"]
+        )
+        status_label.pack(anchor="w")
+        status_box.bind(
+            "<Configure>",
+            lambda e: [label.configure(wraplength=max(e.width - 8, 120)) for label in (stale_label, status_label)],
+        )
+
+        def _set_verdict(checks) -> None:
+            """Show the overall result in the sidebar card and the Summary entry."""
+
+            if checks is None:
+                verdict_title.configure(text="No results yet", fg=PALETTE["text_muted"])
+                verdict_value.configure(text="Press Calculate", fg=PALETTE["text_muted"])
+                return
+            overall, text = static_report.summary_verdict(checks)
+            margin = next((c for c in checks if c.label == "Data Recovery Margin [dB]"), None)
+            colour = {"pass": PALETTE["success"], "fail": PALETTE["danger"]}.get(overall, PALETTE["text"])
+            verdict_title.configure(
+                text={"pass": "✓ PASS", "fail": "✗ FAIL"}.get(overall, "Not checked"), fg=colour
+            )
+            verdict_value.configure(
+                text=(
+                    f"Margin {margin.clear:.2f} dB clear / {margin.rain:.2f} dB rain"
+                    if margin is not None
+                    else text
+                ),
+                fg=PALETTE["text"],
+            )
+            if overall:
+                _set_page_badge("summary", "✓" if overall == "pass" else "✗", colour)
+
         export_rows: list[tuple[str, str, str, str]] = []
         # Inputs and results of the last successful calculation, for the PDF report.
         last_report: dict = {}
-        direction_text = "Downlink (S/C → GS)" if rx_is_ground_station else "Uplink (GS → S/C)"
 
         def _parse_required(entry: ttk.Entry, label: str) -> float:
             text = entry.get().strip()
@@ -2650,10 +2905,32 @@ class LinkBudgetApp:
         def _field(key: str, parser, **kwargs):
             return parser(entries[key], entry_labels[key], **kwargs)
 
+        def _input_error(exc: Exception) -> None:
+            """Show an input error on the page of the field it names, if any."""
+
+            match = re.search(r"'([^']+)'", str(exc))
+            widget = None
+            if match:
+                name = match.group(1)
+                key = next((k for k, text in entry_labels.items() if text == name), f"panel:{name}")
+                if key in field_widgets:
+                    widget = field_widgets[key][1]
+            page_key = _page_of(widget) if widget is not None else None
+            if page_key:
+                _show_page(page_key)
+            messagebox.showerror("Input Error", str(exc), parent=win)
+            if widget is not None and widget.winfo_exists():
+                widget.focus_set()
+
         def _calculate():
             _remember_values()
-            for widget in results_frame.winfo_children():
-                widget.destroy()
+            for key in result_pages:
+                for widget in pages[key]["content"].winfo_children():
+                    widget.destroy()
+                _set_page_enabled(key, False)
+                _set_page_badge(key)
+            stale_label.pack_forget()
+            _set_verdict(None)
             export_rows.clear()
             last_report.clear()
             export_button.state(["disabled"])
@@ -2751,7 +3028,7 @@ class LinkBudgetApp:
                 rolloff = _parse_optional_or_none(rolloff_entry, "Roll-off Factor")
                 spectral_eff = _parse_optional_or_none(spectral_eff_entry, "Spectral Efficiency [bps/Hz]")
             except ValueError as exc:
-                messagebox.showerror("Input Error", str(exc), parent=win)
+                _input_error(exc)
                 return
 
             gs_name = station_var.get()
@@ -2805,7 +3082,7 @@ class LinkBudgetApp:
                     tolerances=tolerances or None,
                 )
             except ValueError as exc:
-                messagebox.showerror("Input Error", str(exc), parent=win)
+                _input_error(exc)
                 return
             extra_info = {
                 "station": f"{gs_name} ({lat_gs:.4f}°, {lon_gs:.4f}°, {alt_gs_m:g} m)",
@@ -2882,8 +3159,16 @@ class LinkBudgetApp:
                 for label_text, text in group_items:
                     export_rows.append((f"Input: {group_title}", label_text, text, ""))
             export_rows.extend(
-                self._render_fixed_link_budget_results(results_frame, budget, link_availability, extra_info)
+                self._render_fixed_link_budget_results(
+                    {key: pages[key]["content"] for key in result_pages},
+                    budget,
+                    link_availability,
+                    extra_info,
+                )
             )
+            for key in result_pages:
+                _set_page_enabled(key, bool(pages[key]["content"].winfo_children()))
+            _set_verdict(static_report.summary_checks(budget, extra_info))
             export_button.state(["!disabled"])
 
             last_report.update(
@@ -2899,19 +3184,10 @@ class LinkBudgetApp:
                 ),
             )
             pdf_button.state(["!disabled"])
-            stale_note["label"] = ttk.Label(
-                results_frame,
-                text=(
-                    "⚠ Inputs changed since these results were calculated: press Calculate to "
-                    "update them (exports are disabled until then)."
-                ),
-                foreground=PALETTE["danger"],
-                font=(recap_font_family, 9, "bold"),
-                wraplength=720,
-                justify="left",
-            )
             results_state["fresh"] = True
             calc_button.configure(style="TButton")
+            if current_page["key"] not in result_pages:
+                _show_page("summary")
 
         def _default_parameters_path() -> str:
             return (
@@ -3032,8 +3308,6 @@ class LinkBudgetApp:
                 return
             status_var.set(f"PDF report saved to {os.path.abspath(file_path)}")
 
-        button_row = ttk.Frame(form)
-        button_row.grid(row=tol_row + 1, column=0, sticky="w", pady=(6, 0))
         calc_button = ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton")
         calc_button.pack(side=tk.LEFT, padx=(0, 10))
         _add_tooltip(calc_button, "Red when there are no results yet or the inputs changed since the last calculation.")
@@ -3065,18 +3339,19 @@ class LinkBudgetApp:
             "Create a PDF report (A4) of the last calculation: summary with pass/fail checks, "
             "inputs, link budget table, PFD check, tolerances and method.",
         )
-        ttk.Label(form, textvariable=status_var, foreground=PALETTE["text_muted"]).grid(
-            row=tol_row + 2, column=0, sticky="w", pady=(4, 0)
-        )
 
-    def _render_fixed_link_budget_results(self, parent, budget, link_availability_pct, extra_info=None):
+    def _render_fixed_link_budget_results(self, pages, budget, link_availability_pct, extra_info=None):
         """Render the fixed-elevation results and return them as CSV export rows.
 
-        Shows the static-budget info block, the two-condition (clear/rain)
-        link table, the power flux density check with an explanation of how
-        it is computed, and the tolerance contributions. The rows come from
-        :mod:`static_report`, shared with the PDF report. Every table row has
-        a hover tooltip with its definition, and margins are marked
+        ``pages`` maps the result pages of the popup ("summary",
+        "link_budget", optionally "pfd", "tolerance_results") to the frames
+        to fill: the summary (overall verdict, key results checked against
+        their requirements, notes and the static-budget info), the
+        two-condition (clear/rain) link table, the power flux density check
+        with an explanation of how it is computed, and the link budget with
+        tolerances. Pages with nothing to show are left empty. The rows come
+        from :mod:`static_report`, shared with the PDF report. Every table
+        row has a hover tooltip with its definition, and margins are marked
         pass/fail against their requirements. Returns
         ``[(section, parameter, clear_or_value, rain), ...]``.
         """
@@ -3086,75 +3361,162 @@ class LinkBudgetApp:
         rain_p = static_report.rain_percentage(link_availability_pct)
         font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
 
-        ttk.Label(
-            parent,
-            text=(
-                f"Slant Range: {budget['slant_range_km']:.1f} km    "
-                f"Free Space Loss: {budget['path_loss_db']:.2f} dB"
-            ),
-            font=(font_family, 10, "bold"),
-        ).pack(anchor="w", pady=(0, 8))
+        def page_heading(parent, heading: str, description: str = "") -> None:
+            ttk.Label(parent, text=heading, style="PageTitle.TLabel").pack(anchor="w")
+            if description:
+                ttk.Label(
+                    parent, text=description, style="PageSub.TLabel", wraplength=760, justify="left"
+                ).pack(anchor="w", pady=(2, 0))
+            ttk.Frame(parent, height=12).pack(fill=tk.X)
+
+        # ---- Summary ----------------------------------------------------
+        summary = pages["summary"]
+        page_heading(
+            summary,
+            "Summary",
+            f"Slant range {budget['slant_range_km']:.1f} km  ·  free space loss {budget['path_loss_db']:.2f} dB  ·  "
+            f"rain faded at p = {rain_p:g}% of the time",
+        )
         export_rows.append(("Geometry", "Slant Range [km]", f"{budget['slant_range_km']:.2f}", ""))
-        for note in static_report.analysis_notes(extra_info, budget):
-            ttk.Label(
-                parent, text=f"Note: {note}", foreground=PALETTE["danger"], wraplength=720, justify="left"
-            ).pack(anchor="w", pady=(0, 6))
-            export_rows.append(("Note", note, "", ""))
+
+        checks = static_report.summary_checks(budget, extra_info)
+        overall, verdict_text = static_report.summary_verdict(checks)
+        banner_bg, banner_fg = {
+            "pass": (PALETTE["success_light"], PALETTE["success"]),
+            "fail": (PALETTE["danger_light"], PALETTE["danger"]),
+        }.get(overall, (PALETTE["surface_alt"], PALETTE["text_muted"]))
+        banner = tk.Frame(summary, bg=banner_bg, highlightthickness=1, highlightbackground=banner_fg)
+        banner.pack(fill=tk.X)
+        tk.Label(
+            banner,
+            text={"pass": "✓  PASS", "fail": "✗  FAIL"}.get(overall, "NOT CHECKED"),
+            bg=banner_bg, fg=banner_fg, font=(font_family, 14, "bold"), padx=16, pady=10,
+        ).pack(side=tk.LEFT)
+        tk.Label(
+            banner, text=verdict_text, bg=banner_bg, fg=PALETTE["text"], font=(font_family, 10),
+            wraplength=560, justify="left", anchor="w",
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 16))
+        export_rows.append(("Summary", verdict_text, "", ""))
+
+        if checks:
+            tiles = ttk.Frame(summary)
+            tiles.pack(fill=tk.X, pady=(14, 0))
+            per_row = 3
+            for col in range(per_row):
+                tiles.grid_columnconfigure(col, weight=1, uniform="tile")
+            for i, check in enumerate(checks):
+                r, c = divmod(i, per_row)
+                tile = tk.Frame(
+                    tiles, bg=PALETTE["surface"], highlightthickness=1, highlightbackground=PALETTE["border"],
+                    padx=14, pady=10,
+                )
+                tile.grid(row=r, column=c, sticky="nsew", padx=(0 if c == 0 else 10, 0), pady=(0, 10))
+                status_colour = {"pass": PALETTE["success"], "fail": PALETTE["danger"]}.get(
+                    check.status, PALETTE["text_muted"]
+                )
+                top = tk.Frame(tile, bg=PALETTE["surface"])
+                top.pack(fill=tk.X)
+                tk.Label(
+                    top, text={"pass": "PASS", "fail": "FAIL"}.get(check.status, "–"), bg=status_colour
+                    if check.status else PALETTE["surface"], fg="white" if check.status else PALETTE["text_muted"],
+                    font=(font_family, 8, "bold"), padx=6,
+                ).pack(side=tk.RIGHT, anchor="n")
+                tk.Label(
+                    top, text=check.label.replace("MARGIN – ", "Margin – "), bg=PALETTE["surface"],
+                    fg=PALETTE["text_muted"], font=(font_family, 9, "bold"), anchor="w", justify="left",
+                    wraplength=170,
+                ).pack(side=tk.LEFT)
+                same = check.clear == check.rain
+                value_text = f"{check.clear:.2f}" if same else f"{check.clear:.2f}  /  {check.rain:.2f}"
+                tk.Label(
+                    tile, text=value_text, bg=PALETTE["surface"], fg=status_colour if check.status else PALETTE["text"],
+                    font=(font_family, 17, "bold"), anchor="w",
+                ).pack(fill=tk.X, pady=(4, 0))
+                tk.Label(
+                    tile,
+                    text=("" if same else f"clear sky / rain faded  ·  ") + f"required {check.requirement}",
+                    bg=PALETTE["surface"], fg=PALETTE["text_muted"], font=(font_family, 8), anchor="w",
+                ).pack(fill=tk.X)
+
+        def section_heading(parent, text: str) -> None:
+            ttk.Label(parent, text=text, style="Section.TLabel").pack(anchor="w", pady=(14, 6))
+
+        notes = static_report.analysis_notes(extra_info, budget)
+        if notes:
+            section_heading(summary, "Notes")
+            notes_card = tk.Frame(
+                summary, bg=PALETTE["danger_light"], highlightthickness=1,
+                highlightbackground=PALETTE["danger_border"], padx=14, pady=8,
+            )
+            notes_card.pack(fill=tk.X)
+            for note in notes:
+                tk.Label(
+                    notes_card, text=f"•  {note}", bg=PALETTE["danger_light"], fg=PALETTE["danger_dark"],
+                    font=(font_family, 9), wraplength=740, justify="left", anchor="w",
+                ).pack(fill=tk.X, pady=2)
+                export_rows.append(("Note", note, "", ""))
 
         info_rows = static_report.info_rows(budget, extra_info)
         if info_rows:
-            info_frame = ttk.LabelFrame(parent, text="Static Link Budget Info", padding=8)
-            info_frame.pack(fill=tk.X, pady=(0, 10))
-            info_frame.grid_columnconfigure(1, weight=1)
-            info_frame.grid_columnconfigure(3, weight=1)
+            section_heading(summary, "Static Link Budget Info")
+            info_table = ttk.Treeview(
+                summary, columns=("param", "value"), show="headings", height=len(info_rows), selectmode="none"
+            )
+            info_table.heading("param", text="Parameter")
+            info_table.heading("value", text="Value")
+            info_table.column("param", anchor="w", width=380)
+            info_table.column("value", anchor="w", width=420)
+            _configure_result_tags(info_table)
             for i, (label_text, value_text) in enumerate(info_rows):
-                r, c = divmod(i, 2)
-                ttk.Label(
-                    info_frame,
-                    text=f"{label_text}:",
-                    font=(font_family, 9),
-                    foreground=PALETTE["text_muted"],
-                ).grid(row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=1)
-                ttk.Label(
-                    info_frame, text=value_text, font=(font_family, 9, "bold")
-                ).grid(row=r, column=c * 2 + 1, sticky="w", pady=1)
+                info_table.insert(
+                    "", "end", values=(label_text, value_text), tags=("evenrow" if i % 2 == 0 else "oddrow",)
+                )
                 export_rows.append(("Info", label_text, value_text, ""))
+            info_table.pack(fill=tk.X)
 
-        ttk.Label(
+        # ---- Link budget ------------------------------------------------
+        parent = pages["link_budget"]
+        page_heading(
             parent,
-            text=(
-                "Hover over a row for its definition. Margins are marked ✓ / ✗ against their "
-                "requirement (nominal margin ≥ Required Nominal Margin, MEAN − 3σ and Worst Case "
-                "RSS ≥ 0 dB, PFD margin ≥ 0 dB)."
-            ),
-            foreground=PALETTE["text_muted"],
-            wraplength=720,
-            justify="left",
-        ).pack(anchor="w", pady=(0, 4))
+            "Link Budget",
+            "Clear sky and rain faded conditions. Hover over a row for its definition. Margins are "
+            "marked ✓ / ✗ against their requirement (nominal margin ≥ Required Nominal Margin, "
+            "MEAN − 3σ and Worst Case RSS ≥ 0 dB).",
+        )
 
         required_margin = extra_info.get("required_margin_db")
         rows = static_report.link_budget_rows(budget, required_margin)
 
-        table_frame = ttk.LabelFrame(parent, text="Link Budget", padding=4)
+        table_frame = ttk.Frame(parent)
         table_frame.pack(fill=tk.BOTH, expand=True)
+        groups = list(dict.fromkeys(row.group for row in rows))
         table = ttk.Treeview(
-            table_frame, columns=("param", "clear", "rain"), show="headings", height=len(rows)
+            table_frame, columns=("param", "clear", "rain"), show="headings", height=len(rows) + len(groups)
         )
         table.heading("param", text="Parameter")
         table.heading("clear", text="Clear Sky")
         table.heading("rain", text=f"Rain Faded (p={rain_p:g}%)")
-        table.column("param", anchor="w", width=300)
-        table.column("clear", anchor="center", width=140)
-        table.column("rain", anchor="center", width=180)
+        table.column("param", anchor="w", width=360)
+        table.column("clear", anchor="center", width=150)
+        table.column("rain", anchor="center", width=190)
         _configure_result_tags(table)
 
         row_help: dict[str, str] = {}
-        for i, row in enumerate(rows):
+        current_group = None
+        i = 0
+        for row in rows:
+            if row.group != current_group:
+                current_group = row.group
+                table.insert("", "end", values=(row.group.upper(), "", ""), tags=("group",))
+                i = 0
             clear_status = row.status(row.clear)
             rain_status = row.status(row.rain)
             clear_text = _format_checked(row.clear, clear_status)
             rain_text = _format_checked(row.rain, rain_status)
             tags = ["evenrow" if i % 2 == 0 else "oddrow"]
+            i += 1
+            if row.emphasis:
+                tags.append("emphasis")
             if "fail" in (clear_status, rain_status):
                 tags.append("fail")
             elif "pass" in (clear_status, rain_status):
@@ -3169,38 +3531,36 @@ class LinkBudgetApp:
         _TreeviewRowTooltip(table, row_help)
         table.pack(fill=tk.BOTH, expand=True)
 
-        if static_report.pfd_applicable(extra_info):
-            self._render_pfd_section(parent, budget, extra_info, export_rows)
+        if "pfd" in pages and static_report.pfd_applicable(extra_info):
+            page_heading(pages["pfd"], "Power Flux Density", static_report.PFD_EXPLANATION)
+            self._render_pfd_section(pages["pfd"], budget, extra_info, export_rows)
 
         # Tolerances propagated through the link budget (worst case: rain faded).
         tol_rows = static_report.tolerance_rows(budget, "rain_faded")
-        if tol_rows:
-            tol_frame = ttk.LabelFrame(
-                parent, text=f"Link Budget with Tolerances (Rain Faded, p={rain_p:g}%)", padding=8
-            )
-            tol_frame.pack(fill=tk.X, pady=(10, 0))
-            ttk.Label(
+        if tol_rows and "tolerance_results" in pages:
+            tol_frame = pages["tolerance_results"]
+            page_heading(
                 tol_frame,
-                text=static_report.TOLERANCE_TABLE_EXPLANATION,
-                foreground=PALETTE["text_muted"],
-                wraplength=720,
-                justify="left",
-            ).pack(anchor="w", pady=(0, 6))
+                "Link Budget with Tolerances",
+                f"Rain faded condition (p = {rain_p:g}%), the worst case. "
+                + static_report.TOLERANCE_TABLE_EXPLANATION,
+            )
             columns = ("param", "nominal", "fav", "adv", "mean", "var", "pdf")
             tol_table = ttk.Treeview(tol_frame, columns=columns, show="headings", height=len(tol_rows))
             for col, heading, width, anchor in (
-                ("param", "Parameter", 240, "w"),
-                ("nominal", "Nominal", 85, "center"),
-                ("fav", "Favourable", 90, "center"),
-                ("adv", "Adverse", 85, "center"),
-                ("mean", "Mean", 80, "center"),
-                ("var", "Variance [dB²]", 100, "center"),
-                ("pdf", "PDF", 80, "center"),
+                ("param", "Parameter", 270, "w"),
+                ("nominal", "Nominal", 90, "center"),
+                ("fav", "Favourable", 105, "center"),
+                ("adv", "Adverse", 95, "center"),
+                ("mean", "Mean", 85, "center"),
+                ("var", "Variance [dB²]", 125, "center"),
+                ("pdf", "PDF", 90, "center"),
             ):
                 tol_table.heading(col, text=heading)
                 tol_table.column(col, anchor=anchor, width=width)
             _configure_result_tags(tol_table)
             for i, row in enumerate(tol_rows):
+                tags = ("evenrow" if i % 2 == 0 else "oddrow",) + (("emphasis",) if row.emphasis else ())
                 values = (
                     row.label,
                     f"{row.nominal:.2f}",
@@ -3210,7 +3570,7 @@ class LinkBudgetApp:
                     f"{row.variance:.3f}",
                     row.distribution,
                 )
-                tol_table.insert("", "end", values=values, tags=("evenrow" if i % 2 == 0 else "oddrow",))
+                tol_table.insert("", "end", values=values, tags=tags)
                 export_rows.append(
                     (
                         "Tolerances (rain faded)",
@@ -3224,17 +3584,10 @@ class LinkBudgetApp:
         return export_rows
 
     def _render_pfd_section(self, parent, budget, extra_info, export_rows) -> None:
-        """Power flux density check, with an explanation of how it is computed."""
+        """Power flux density check table, with notes on what is missing."""
 
-        pfd_frame = ttk.LabelFrame(parent, text="Power Flux Density (regulatory check)", padding=8)
-        pfd_frame.pack(fill=tk.X, pady=(10, 0))
-        ttk.Label(
-            pfd_frame,
-            text=static_report.PFD_EXPLANATION,
-            foreground=PALETTE["text_muted"],
-            wraplength=720,
-            justify="left",
-        ).pack(anchor="w", pady=(0, 6))
+        pfd_frame = ttk.Frame(parent)
+        pfd_frame.pack(fill=tk.X)
 
         pfd_rows = static_report.pfd_rows(budget, extra_info)
         pfd_table = ttk.Treeview(pfd_frame, columns=("param", "value"), show="headings", height=len(pfd_rows))
@@ -3526,6 +3879,26 @@ class LinkBudgetApp:
         )
 
         style.configure("TNotebook", background=PALETTE["bg"], borderwidth=0)
+        # Notebook without tabs, for windows that switch pages from a sidebar.
+        style.layout("Pages.TNotebook.Tab", [])
+        style.configure(
+            "Pages.TNotebook",
+            background=PALETTE["bg"],
+            borderwidth=0,
+            tabmargins=0,
+            padding=0,
+            bordercolor=PALETTE["bg"],
+            lightcolor=PALETTE["bg"],
+            darkcolor=PALETTE["bg"],
+        )
+        style.configure("Toolbar.TFrame", background=PALETTE["surface"])
+        style.configure("Toolbar.TLabel", background=PALETTE["surface"])
+        style.configure("Card.TLabel", background=PALETTE["surface"])
+        style.configure(
+            "PageTitle.TLabel", foreground=PALETTE["accent_dark"], font=(base_font_family, 15, "bold")
+        )
+        style.configure("PageSub.TLabel", foreground=PALETTE["text_muted"], font=(base_font_family, 10))
+        style.configure("Section.TLabel", foreground=PALETTE["accent_dark"], font=(base_font_family, 11, "bold"))
         style.configure(
             "TNotebook.Tab",
             background=PALETTE["surface_alt"],
