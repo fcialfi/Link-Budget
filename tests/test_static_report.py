@@ -133,3 +133,11 @@ def test_report_pfd_section_only_when_applicable(tmp_path, monkeypatch, budget, 
     assert (b"Power Flux Density" in data) is applicable
     assert (b"PFD Margin" in data) is applicable
     assert b"below 5" in data
+
+
+def test_other_attenuations_row_only_when_set(budget):
+    labels = [row.label for row in static_report.link_budget_rows(budget)]
+    assert "Other Attenuations [dB]" not in labels
+    with_other = dict(budget, other_attenuation_db=0.5)
+    rows = {row.label: row for row in static_report.link_budget_rows(with_other)}
+    assert rows["Other Attenuations [dB]"].clear == 0.5

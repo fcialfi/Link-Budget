@@ -1,5 +1,5 @@
 {
-  "eirp_sat_dbw": 11.0,
+  "eirp_sat_dbw": 4.51,
   "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,
   "uplink_frequency_ghz": 2.0535,
@@ -46,7 +46,8 @@
         "adverse_db": 1.5,
         "distribution": "TRI"
       }
-    }
+    },
+    "station": "Svalbard"
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,
