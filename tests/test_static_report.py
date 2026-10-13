@@ -40,7 +40,7 @@ def budget(monkeypatch):
         occupied_bandwidth_hz=5176.5e3,
         pfd_limit_dbw_m2_4khz=-154.0,
         formatting_overhead=1.02,
-        tolerances=[{"name": "Tx Antenna Gain", "favourable_db": 1.5, "adverse_db": 1.5, "distribution": "TRI"}],
+        tolerances=[{"name": "Tx Antenna Gain", "key": "tx_gain", "favourable_db": 1.5, "adverse_db": 1.5, "distribution": "TRI"}],
     )
 
 
@@ -167,3 +167,29 @@ def test_info_rows_show_zone_and_s4(budget):
     labels = dict(static_report.info_rows(with_scint, {}))
     assert "polar cap" in labels["Geomagnetic Latitude / Ionospheric Zone"]
     assert labels["Ionospheric S4 at Link Frequency"].startswith("0.266")
+
+
+def test_tolerance_rows_propagate_to_the_margin(budget):
+    rows = {row.label: row for row in static_report.tolerance_rows(budget, "rain_faded")}
+    rain = budget["rain_faded"]
+    # Only the Tx antenna gain has a tolerance (+/-1.5 dB TRI) in the fixture.
+    eirp = rows["EIRP [dBW]"]
+    assert eirp.nominal == pytest.approx(budget["eirp_dbw"])
+    assert (eirp.favourable, eirp.adverse) == pytest.approx((budget["eirp_dbw"] + 1.5, budget["eirp_dbw"] - 1.5))
+    assert eirp.variance == pytest.approx(0.375) and eirp.distribution == "TRI"
+    margin = rows["Data Recovery Margin [dB]"]
+    assert margin.nominal == pytest.approx(rain["margin_db"])
+    assert margin.adverse == pytest.approx(rain["margin_statistics"]["adverse_db"])
+    assert "Total Propagation Loss [dB]" not in rows  # no propagation tolerance
+
+
+def test_tolerance_rows_losses_move_the_other_way(budget):
+    stats = calculations.margin_statistics(
+        budget["rain_faded"]["margin_db"],
+        [{"name": "Prop", "key": "propagation", "favourable_db": 0.5, "adverse_db": 1.0, "distribution": "UNI"}],
+    )
+    with_prop = dict(budget, rain_faded=dict(budget["rain_faded"], margin_statistics=stats))
+    loss = {row.label: row for row in static_report.tolerance_rows(with_prop)}["Total Propagation Loss [dB]"]
+    nominal = budget["rain_faded"]["total_propagation_loss_db"]
+    assert (loss.favourable, loss.adverse) == pytest.approx((nominal - 0.5, nominal + 1.0))
+    assert loss.mean == pytest.approx(nominal + 0.25)

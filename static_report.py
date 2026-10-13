@@ -111,6 +111,96 @@ def link_budget_rows(budget: Dict[str, Any], required_margin_db: Optional[float]
     return rows
 
 
+@dataclass
+class ToleranceRow:
+    """One row of the link budget with tolerances (ECSS sheet layout)."""
+
+    label: str
+    nominal: float
+    favourable: float
+    adverse: float
+    mean: float
+    variance: float
+    distribution: str
+    emphasis: bool = False
+
+
+# Which tolerance contributors (GUI keys) affect which link budget quantity, and
+# the sign of a margin improvement on that quantity (+1: the quantity grows
+# when the margin improves, e.g. EIRP; -1: it shrinks, e.g. a loss).
+_TOLERANCE_PATH = (
+    # (label, nominal key or callable, contributors, sign, emphasis)
+    ("Transmitter Power [dBW]", "tx_power_dbw", ("tx_power",), +1, False),
+    ("Tx Antenna Effective Gain [dBi]", "effective_gain_dbi", ("tx_gain",), +1, False),
+    ("EIRP [dBW]", "eirp_dbw", ("tx_power", "tx_gain"), +1, True),
+    ("Total Propagation Loss [dB]", "total_propagation_loss_db", ("propagation",), -1, False),
+    ("Rx G/T [dB/K]", "gt_dbk", ("rx_gt",), +1, False),
+    ("Received S/No [dBHz]", "received_cno_dbhz", ("tx_power", "tx_gain", "propagation", "rx_gt"), +1, True),
+    ("Receiver Degradation [dB]", "receiver_degradation_db", ("rx_degradation",), -1, False),
+    (
+        "Received Eb/No [dB]", "ebno_db",
+        ("tx_power", "tx_gain", "propagation", "rx_gt", "rx_degradation"), +1, True,
+    ),
+    (
+        "Data Recovery Margin [dB]", "margin_db",
+        ("tx_power", "tx_gain", "propagation", "rx_gt", "rx_degradation"), +1, True,
+    ),
+)
+
+
+def tolerance_rows(budget: Dict[str, Any], condition: str = "rain_faded") -> List[ToleranceRow]:
+    """Link budget rows with favourable / adverse / mean / variance columns.
+
+    Each toleranced parameter and every quantity derived from it, down to
+    the Data Recovery Margin, of ``condition`` ("clear" or "rain_faded").
+    Tolerances are effects on the margin, so they add (with the sign of the
+    quantity) along the chain; means and variances of independent
+    contributors add. Rows of contributors without a tolerance, and rows
+    whose nominal value is not available, are left out.
+    """
+
+    cond = budget[condition]
+    stats = cond.get("margin_statistics")
+    if not stats or not stats["contributions"]:
+        return []
+    by_key = {c.get("key") or c["name"]: c for c in stats["contributions"]}
+    rows: List[ToleranceRow] = []
+    for label, nominal_key, contributors, sign, emphasis in _TOLERANCE_PATH:
+        involved = [by_key[k] for k in contributors if k in by_key]
+        if not involved:
+            continue
+        nominal = cond.get(nominal_key, budget.get(nominal_key))
+        if nominal is None:
+            continue
+        fav = sum(c["favourable_db"] for c in involved)
+        adv = sum(c["adverse_db"] for c in involved)
+        mean = sum(c["mean_db"] for c in involved)
+        variance = sum(c["variance_db2"] for c in involved)
+        distribution = involved[0]["distribution"] if len(involved) == 1 else "combined"
+        rows.append(
+            ToleranceRow(
+                label,
+                float(nominal),
+                float(nominal + sign * fav),
+                float(nominal - sign * adv),
+                float(nominal + sign * mean),
+                float(variance),
+                distribution,
+                emphasis,
+            )
+        )
+    return rows
+
+
+TOLERANCE_TABLE_EXPLANATION = (
+    "Each toleranced parameter and the quantities derived from it, down to the margin: nominal "
+    "value, value with every tolerance at its favourable / adverse limit, mean and variance. "
+    "PDF: TRI triangular peaked at nominal, UNI uniform, GAU Gaussian with the limits at ±3σ; "
+    "'combined' where several contributors add (means and variances add). The statistical margins "
+    "(MEAN − 3σ, Worst Case RSS) are in the Link Budget table."
+)
+
+
 def pfd_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[PfdRow]:
     """Rows of the power flux density check."""
 
@@ -590,32 +680,25 @@ def build_static_report_pdf(
         story.append(KeepTogether(pfd_block))
 
     # ---- Tolerances --------------------------------------------------------
-    stats = budget["clear"].get("margin_statistics")
-    if stats and stats["contributions"]:
-        contributions = stats["contributions"]
-        data = [[P(h, "head") for h in ("Contributor", "Favourable [dB]", "Adverse [dB]", "PDF",
-                                         "Mean [dB]", "Variance [dB²]")]]
-        for c in contributions:
-            data.append([P(c["name"]), P(f"+{c['favourable_db']:.2f}", "cell_right"),
-                         P(f"−{c['adverse_db']:.2f}", "cell_right"), P(c["distribution"]),
-                         P(f"{c['mean_db']:.2f}", "cell_right"), P(f"{c['variance_db2']:.3f}", "cell_right")])
-        data.append([P("Total", "cell_bold"),
-                     P(f"+{sum(c['favourable_db'] for c in contributions):.2f}", "cell_right"),
-                     P(f"−{sum(c['adverse_db'] for c in contributions):.2f}", "cell_right"), "",
-                     P(f"{sum(c['mean_db'] for c in contributions):.2f}", "cell_right"),
-                     P(f"{stats['variance_db2']:.3f}", "cell_right")])
-        table = Table(data, colWidths=[content_w * f for f in (0.32, 0.15, 0.14, 0.09, 0.14, 0.16)])
+    tol_rows = tolerance_rows(budget, "rain_faded")
+    if tol_rows:
+        data = [[P("Parameter", "head")] + [P(h, "head_right") for h in (
+            "Nominal", "Favourable", "Adverse", "Mean", "Variance [dB²]")] + [P("PDF", "head")]]
         style = base_table_style()
-        style.append(("LINEABOVE", (0, -1), (-1, -1), 0.8, color(_NAVY)))
+        for i, row in enumerate(tol_rows, start=1):
+            weight = "cell_bold" if row.emphasis else "cell"
+            data.append(
+                [P(row.label, weight)]
+                + [P(f"{v:.2f}", "cell_right") for v in (row.nominal, row.favourable, row.adverse, row.mean)]
+                + [P(f"{row.variance:.3f}", "cell_right"), P(row.distribution)]
+            )
+            if row.emphasis:
+                style.append(("BACKGROUND", (0, i), (-1, i), color(_ROW_ALT)))
+        table = Table(data, colWidths=[content_w * f for f in (0.31, 0.11, 0.12, 0.11, 0.1, 0.13, 0.12)])
         table.setStyle(TableStyle(style))
         story.append(KeepTogether([
-            Paragraph("Tolerances", styles["h1"]),
-            Paragraph(_rich(
-                "Favourable/adverse deviations of each contributor, as effect on the margin. TRI: triangular "
-                "peaked at nominal; UNI: uniform; GAU: Gaussian with the limits at ±3σ. Contributors are "
-                "independent: means and variances add, σ is the square root of the total variance, and the "
-                "Worst Case RSS margin is the nominal margin minus the root-sum-square of the adverse values."
-            ), styles["body"]),
+            Paragraph(f"Link Budget with Tolerances (Rain Faded, p = {rain_p:g}%)", styles["h1"]),
+            Paragraph(_rich(TOLERANCE_TABLE_EXPLANATION), styles["body"]),
             Spacer(1, 2 * mm),
             table,
         ]))
