@@ -593,6 +593,105 @@ def margin_statistics(nominal_margin_db: float, tolerances: list) -> Dict[str, A
     }
 
 
+# North geomagnetic (dipole) pole, IGRF-13 epoch 2020.
+GEOMAGNETIC_POLE_LAT_DEG = 80.65
+GEOMAGNETIC_POLE_LON_DEG = -72.68
+
+# Reference frequency of most published S4 statistics (GPS L1).
+GPS_L1_MHZ = 1575.42
+
+
+def geomagnetic_latitude_deg(lat_deg: float, lon_deg: float) -> float:
+    """Approximate geomagnetic latitude from a centred dipole model.
+
+    ``sin(phi_m) = sin(phi) sin(phi_p) + cos(phi) cos(phi_p) cos(lambda - lambda_p)``
+    with the dipole pole of :data:`GEOMAGNETIC_POLE_LAT_DEG` /
+    :data:`GEOMAGNETIC_POLE_LON_DEG`. Accurate to a few degrees, enough to
+    tell the ionospheric scintillation zones apart.
+    """
+
+    phi = np.radians(lat_deg)
+    phi_p = np.radians(GEOMAGNETIC_POLE_LAT_DEG)
+    dlon = np.radians(lon_deg - GEOMAGNETIC_POLE_LON_DEG)
+    sin_m = np.sin(phi) * np.sin(phi_p) + np.cos(phi) * np.cos(phi_p) * np.cos(dlon)
+    return float(np.degrees(np.arcsin(np.clip(sin_m, -1.0, 1.0))))
+
+
+# (zone, upper bound of |geomagnetic latitude| in deg, guidance on the S4 to use)
+IONOSPHERIC_ZONES = (
+    (
+        "equatorial",
+        20.0,
+        "strongest ionospheric scintillation (post-sunset, solar maximum): use local S4 "
+        "statistics.",
+    ),
+    (
+        "mid-latitude",
+        58.0,
+        "ionospheric scintillation is usually weak: a small manual allowance is usually enough.",
+    ),
+    (
+        "auroral oval",
+        72.0,
+        "scintillation driven by geomagnetic activity; S4 = 0.3 at L1 for 99.9% of the time "
+        "was measured in Kiruna (ESA AWS-TN-ESA-SYS-0052).",
+    ),
+    (
+        "polar cap",
+        90.0,
+        "outside the auroral oval, scintillation is moderate: S4 = 0.3 at L1 (Kiruna, auroral "
+        "oval, active solar years) is a conservative upper bound (ESA AWS-TN-ESA-SYS-0052).",
+    ),
+)
+
+
+def ionospheric_zone(geomagnetic_lat_deg: float) -> Dict[str, str]:
+    """Ionospheric scintillation zone from the geomagnetic latitude (approximate bounds)."""
+
+    abs_lat = abs(geomagnetic_lat_deg)
+    for name, upper, guidance in IONOSPHERIC_ZONES:
+        if abs_lat < upper:
+            return {"zone": name, "guidance": guidance}
+    name, _upper, guidance = IONOSPHERIC_ZONES[-1]
+    return {"zone": name, "guidance": guidance}
+
+
+def ionospheric_scintillation_fade_db(
+    s4_ref: float, freq_mhz: float, ref_freq_mhz: float = GPS_L1_MHZ
+) -> Dict[str, Any]:
+    """Ionospheric scintillation fade from an S4 index (ITU-R P.531).
+
+    The S4 index measured at ``ref_freq_mhz`` is scaled to ``freq_mhz`` as
+    ``f**-1.5`` (valid for S4 below about 0.4); the peak-to-peak power
+    fluctuation is ``27.5 * S4**1.26`` dB, and the fade is taken as half of
+    it (symmetric fluctuation). This is the method of ESA technical note
+    AWS-TN-ESA-SYS-0052 for the L-band downlink.
+    """
+
+    if s4_ref < 0 or freq_mhz <= 0 or ref_freq_mhz <= 0:
+        raise ValueError("S4 must be non-negative and the frequencies positive.")
+    s4 = s4_ref * (freq_mhz / ref_freq_mhz) ** -1.5
+    fluctuation = 27.5 * s4**1.26
+    return {
+        "s4_ref": float(s4_ref),
+        "ref_freq_mhz": float(ref_freq_mhz),
+        "s4": float(s4),
+        "peak_to_peak_db": float(fluctuation),
+        "fade_db": float(fluctuation / 2.0),
+        "valid": bool(max(s4, s4_ref) < 0.4),
+    }
+
+
+def tropospheric_scintillation_model_valid(freq_ghz: float, elevation_deg: float) -> bool:
+    """Whether the ITU-R P.618 tropospheric scintillation method applies.
+
+    The method is given for elevations of at least 5 deg and frequencies of
+    about 4 to 20 GHz; outside that range the library extrapolates.
+    """
+
+    return elevation_deg >= 5.0 and 4.0 <= freq_ghz <= 20.0
+
+
 def power_flux_density(
     eirp_dbw: float,
     slant_range_km: float,
@@ -652,6 +751,8 @@ def calculate_fixed_elevation_link_budget(
     rx_beamwidth_3db_deg: Optional[float] = None,
     formatting_overhead: float = 1.0,
     tolerances: Optional[list] = None,
+    ionospheric_s4_ref: Optional[float] = None,
+    ionospheric_s4_ref_freq_mhz: float = GPS_L1_MHZ,
 ) -> Dict[str, Any]:
     """Preliminary link budget at a single, user-chosen fixed elevation angle.
 
@@ -680,6 +781,13 @@ def calculate_fixed_elevation_link_budget(
     flux density at the receiving site is also returned (see
     :func:`power_flux_density`), together with a margin against
     ``pfd_limit_dbw_m2_4khz`` when that is provided too.
+
+    When ``ionospheric_s4_ref`` is given, the ionospheric loss is the
+    scintillation fade derived from it (:func:`ionospheric_scintillation_fade_db`,
+    returned under ``ionospheric_scintillation``) instead of
+    ``ionospheric_loss_db``. The ground station's geomagnetic latitude and
+    ionospheric zone, and whether the tropospheric scintillation model is
+    valid at this frequency and elevation, are always returned.
 
     ``polarisation_loss_db=None`` derives the polarisation mismatch loss from
     ``tx_axial_ratio_db`` and ``rx_axial_ratio_db`` (worst-case orientation,
@@ -732,6 +840,14 @@ def calculate_fixed_elevation_link_budget(
     slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
     freq_ghz = freq.to(u.GHz).value
     path_loss = 20 * np.log10(slant_range_km) + 20 * np.log10(freq_ghz) + 92.45
+    ionospheric_scintillation = None
+    if ionospheric_s4_ref is not None:
+        ionospheric_scintillation = ionospheric_scintillation_fade_db(
+            ionospheric_s4_ref, freq_ghz * 1000.0, ionospheric_s4_ref_freq_mhz
+        )
+        ionospheric_loss_db = ionospheric_scintillation["fade_db"]
+    geomagnetic_lat = geomagnetic_latitude_deg(lat_gs, lon_gs)
+
     polarisation_range = None
     if tx_axial_ratio_db is not None and rx_axial_ratio_db is not None:
         polarisation_range = polarisation_mismatch_loss_db(tx_axial_ratio_db, rx_axial_ratio_db)
@@ -819,7 +935,13 @@ def calculate_fixed_elevation_link_budget(
         "frequency_mhz": freq_ghz * 1000.0,
         "bitrate_formatted_bps": ebno_bitrate,
         "bitrate_dbhz": bitrate_dbhz,
+        "geomagnetic_latitude_deg": geomagnetic_lat,
+        "ionospheric_zone": ionospheric_zone(geomagnetic_lat),
+        "scintillation_included": bool(include_scintillation),
+        "tropospheric_scintillation_valid": tropospheric_scintillation_model_valid(freq_ghz, elevation_deg),
     }
+    if ionospheric_scintillation is not None:
+        out["ionospheric_scintillation"] = ionospheric_scintillation
     if polarisation_range is not None:
         out["polarisation_loss_range_db"] = polarisation_range
     if rx_depointing_deg is not None:
