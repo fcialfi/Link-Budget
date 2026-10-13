@@ -55,7 +55,8 @@
     "framing_mode": "ccsds",
     "ccsds_interleaving": 5.0,
     "ccsds_ocf": true,
-    "ccsds_fecf": false
+    "ccsds_fecf": false,
+    "ccsds_packet_error_control": true
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,

@@ -1599,16 +1599,17 @@ class LinkBudgetApp:
                         ("ccsds_options",),
                         F(
                             "ccsds_packet_length", "Source Packet Length [B]", "", "empty = not deducted",
-                            "Total length of the Space Packets (primary header included); packets "
-                            "span transfer frames. Each packet's 6-byte primary header and its "
-                            "secondary header are not user data: they lower the information bit rate, "
-                            "not the margin (Eb/No is referred to the frame bit rate). Leave empty not "
-                            "to deduct packet headers.",
+                            "Total length of the Source Packets (header to error control); packets span "
+                            "transfer frames. Each packet's 6-byte header, data field header and packet "
+                            "error control are not user data: they lower the information bit rate, not "
+                            "the margin (Eb/No is referred to the frame bit rate). Leave empty not to "
+                            "deduct packet overheads.",
                         ),
                         F(
-                            "ccsds_packet_sec_header", "Packet Secondary Header [B]", "0", None,
-                            "Length of the packet secondary header (e.g. a time code) when the packet "
-                            "Sec. Header Flag is 1. Used with the packet length.",
+                            "ccsds_packet_sec_header", "Data Field Header (CUC) [B]", "0", None,
+                            "Length of the packet data field header (e.g. a CUC time code: optional "
+                            "1-byte P-field + coarse and fine time octets) when the Data Field Header "
+                            "Flag is 1. Used with the packet length.",
                         ),
                         ("framing_used",),
                     ]
@@ -1824,6 +1825,7 @@ class LinkBudgetApp:
         framing_mode_var = tk.StringVar(value="manual")
         ccsds_ocf_var = tk.BooleanVar(value=True)
         ccsds_fecf_var = tk.BooleanVar(value=False)
+        ccsds_pec_var = tk.BooleanVar(value=True)
         framing_used_var = tk.StringVar(value="")
         ccsds_option_buttons: list = []
         iono_rows: dict[str, tuple[list, tk.StringVar]] = {}
@@ -1878,8 +1880,9 @@ class LinkBudgetApp:
                         options_row = ttk.Frame(group_frame)
                         options_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=2)
                         for text, var in (
-                            ("Operational Control Field (OCF, 4 bytes)", ccsds_ocf_var),
-                            ("Frame Error Control Field (FECF, 2 bytes)", ccsds_fecf_var),
+                            ("Frame OCF (4 B)", ccsds_ocf_var),
+                            ("Frame FECF (2 B)", ccsds_fecf_var),
+                            ("Packet Error Control (2 B)", ccsds_pec_var),
                         ):
                             button = ttk.Checkbutton(
                                 options_row, text=text, variable=var, command=lambda: _refresh_states()
@@ -1888,9 +1891,10 @@ class LinkBudgetApp:
                             ccsds_option_buttons.append(button)
                         _info_icon(
                             options_row,
-                            "Optional transfer frame trailer, as in the mission ICD (OCF flag in the "
-                            "primary header). The OCF carries the CLCW; the FECF (CRC) is often "
-                            "omitted when RS coding is used.",
+                            "As in the mission ICD. Frame OCF and FECF: the optional transfer frame "
+                            "trailer (the OCF carries the CLCW; the FECF is often omitted with RS "
+                            "coding). Packet Error Control: the 16-bit CRC at the end of each Source "
+                            "Packet, deducted when the packet length is given.",
                         ).pack(side=tk.LEFT)
                     elif kind == "framing_used":
                         ttk.Label(
@@ -2155,6 +2159,7 @@ class LinkBudgetApp:
                 ccsds_fecf_var.get(),
                 packet_length_bytes=packet_length,
                 packet_secondary_header_bytes=packet_sec_header,
+                packet_error_control_bytes=2 if ccsds_pec_var.get() else 0,
             )
             return coded_kbps, framing
 
@@ -2371,6 +2376,7 @@ class LinkBudgetApp:
                 values["framing_mode"] = framing_mode_var.get()
                 values["ccsds_ocf"] = bool(ccsds_ocf_var.get())
                 values["ccsds_fecf"] = bool(ccsds_fecf_var.get())
+                values["ccsds_packet_error_control"] = bool(ccsds_pec_var.get())
             values["scintillation"] = bool(scint_var.get())
             return values
 
@@ -2394,6 +2400,7 @@ class LinkBudgetApp:
             framing_mode_var.set(framing_mode if framing_mode in ("manual", "ccsds") else "manual")
             ccsds_ocf_var.set(bool(values.get("ccsds_ocf", True)))
             ccsds_fecf_var.set(bool(values.get("ccsds_fecf", False)))
+            ccsds_pec_var.set(bool(values.get("ccsds_packet_error_control", True)))
             iono_mode = values.get("ionospheric_mode")
             iono_mode_var.set(iono_mode if iono_mode in ("manual", "s4") else "manual")
             scintillation = values.get("scintillation")
@@ -2446,6 +2453,7 @@ class LinkBudgetApp:
         station_var.trace_add("write", lambda *_args: _refresh_states())
         watched_vars = [
             station_var, eirp_mode_var, iono_mode_var, scint_var, framing_mode_var, ccsds_ocf_var, ccsds_fecf_var,
+            ccsds_pec_var,
         ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
@@ -2705,8 +2713,10 @@ class LinkBudgetApp:
                         if framing_mode_var.get() == "ccsds":
                             group_items.append(
                                 (
-                                    "OCF / FECF",
-                                    f"{'yes' if ccsds_ocf_var.get() else 'no'} / {'yes' if ccsds_fecf_var.get() else 'no'}",
+                                    "Frame OCF / FECF, Packet Error Control",
+                                    f"{'yes' if ccsds_ocf_var.get() else 'no'} / "
+                                    f"{'yes' if ccsds_fecf_var.get() else 'no'}, "
+                                    f"{'yes' if ccsds_pec_var.get() else 'no'}",
                                 )
                             )
                     elif item[0] in ("iono_used", "eirp_used", "framing_used"):

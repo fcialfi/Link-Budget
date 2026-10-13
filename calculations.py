@@ -716,6 +716,7 @@ def ccsds_tm_overheads(
     convolutional: bool = True,
     packet_length_bytes: Optional[float] = None,
     packet_secondary_header_bytes: float = 0,
+    packet_error_control_bytes: float = 0,
 ) -> Dict[str, Any]:
     """Formatting and coding factors of a CCSDS TM downlink.
 
@@ -725,8 +726,10 @@ def ccsds_tm_overheads(
     FECF (2 bytes); the rest is the data field (the First Header Pointer is
     part of the 6-byte primary header). When ``packet_length_bytes`` (total
     Space Packet length, packets spanning frames) is given, the share of
-    every packet taken by its 6-byte primary header and its
-    ``packet_secondary_header_bytes`` is not counted as user data.
+    every packet taken by its 6-byte primary header, its data field header
+    (``packet_secondary_header_bytes``, e.g. a CUC time code) and its
+    ``packet_error_control_bytes`` (e.g. a 16-bit CRC) is not counted as
+    user data.
     Each RS codeblock
     (``255 * I`` bytes) gets a 32-bit attached sync marker, and the whole
     stream is convolutionally encoded at rate 1/2 when ``convolutional``.
@@ -753,10 +756,15 @@ def ccsds_tm_overheads(
         raise ValueError("The transfer frame has no room left for data.")
     user_data = float(data_field)
     if packet_length_bytes is not None:
-        packet_overhead = CCSDS_SPACE_PACKET_HEADER_BYTES + packet_secondary_header_bytes
-        if packet_secondary_header_bytes < 0 or packet_length_bytes <= packet_overhead:
+        packet_overhead = (
+            CCSDS_SPACE_PACKET_HEADER_BYTES + packet_secondary_header_bytes + packet_error_control_bytes
+        )
+        if min(packet_secondary_header_bytes, packet_error_control_bytes) < 0 or (
+            packet_length_bytes <= packet_overhead
+        ):
             raise ValueError(
-                "The packet length must exceed its primary (6 bytes) and secondary headers."
+                "The packet length must exceed its header (6 bytes), data field header and "
+                "error control."
             )
         user_data = data_field * (packet_length_bytes - packet_overhead) / packet_length_bytes
     codeblock = CCSDS_RS_N * interleaving_depth

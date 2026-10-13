@@ -997,3 +997,10 @@ def test_ccsds_tm_overheads_packet_headers_per_packet():
     assert packets["coding"] == pytest.approx(plain["coding"])
     with pytest.raises(ValueError):
         calculations.ccsds_tm_overheads(5, packet_length_bytes=16, packet_secondary_header_bytes=10)
+
+
+def test_ccsds_tm_overheads_packet_error_control():
+    framing = calculations.ccsds_tm_overheads(
+        5, ocf=True, packet_length_bytes=1000, packet_secondary_header_bytes=7, packet_error_control_bytes=2
+    )
+    assert framing["user_data_bytes"] == pytest.approx(1105 * (1000 - 6 - 7 - 2) / 1000)
