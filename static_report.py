@@ -140,6 +140,31 @@ def pfd_notes(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[str]:
     return []
 
 
+def analysis_notes(extra_info: Dict[str, Any]) -> List[str]:
+    """Warnings about how far the results can be trusted."""
+
+    notes: List[str] = []
+    elevation = extra_info.get("elevation_deg")
+    if elevation is not None and elevation < 5.0:
+        notes.append(
+            f"Elevation {elevation:g}° is below 5°: the ITU-R P.676 gaseous attenuation model used "
+            "here is only recommended for elevations of 5–90°, so the atmospheric attenuation is "
+            "approximate."
+        )
+    if extra_info.get("tolerances_ignored"):
+        notes.append(
+            "Tolerances were entered but not used: set a Required Eb/No to get the statistical "
+            "margins (MEAN – 3σ, Worst Case RSS)."
+        )
+    return notes
+
+
+def pfd_applicable(extra_info: Dict[str, Any]) -> bool:
+    """The PFD check applies to space-to-Earth links only (ITU RR Art. 21 limits)."""
+
+    return extra_info.get("pfd_applicable", True)
+
+
 PFD_EXPLANATION = (
     "The power flux density (PFD) is the power per unit area reaching the receiving site: "
     "PFD = EIRP − 10·log10(4π·d²), with d the slant range. No atmospheric loss is subtracted "
@@ -395,7 +420,9 @@ def build_static_report_pdf(
     summary_row("Data Recovery Margin [dB]", f"≥ {required_margin:g} dB" if required_margin is not None else "–")
     summary_row("MEAN – 3σ [dB]", "≥ 0 dB")
     summary_row("MARGIN – Worst Case RSS [dB]", "≥ 0 dB")
-    pfd_margin_row = next((r for r in pfd_rows(budget, extra_info) if r.threshold is not None), None)
+    pfd_margin_row = None
+    if pfd_applicable(extra_info):
+        pfd_margin_row = next((r for r in pfd_rows(budget, extra_info) if r.threshold is not None), None)
     if pfd_margin_row is not None:
         status = pfd_margin_row.status()
         checks.append((pfd_margin_row.label, status))
@@ -429,6 +456,9 @@ def build_static_report_pdf(
     story.append(Spacer(1, 2 * mm))
     if len(summary_data) > 1:
         story.append(summary_table)
+    for note in analysis_notes(extra_info):
+        story.append(Spacer(1, 1.5 * mm))
+        story.append(Paragraph(f'<font color="{_FAIL}"><b>Note:</b></font> {_rich(note)}', styles["small"]))
 
     # ---- Inputs ------------------------------------------------------------
     input_groups = [(title, items) for title, items in context.input_groups if items]
@@ -488,7 +518,7 @@ def build_static_report_pdf(
     ))
 
     # ---- PFD ---------------------------------------------------------------
-    pfd = pfd_rows(budget, extra_info)
+    pfd = pfd_rows(budget, extra_info) if pfd_applicable(extra_info) else []
     pfd_block = [Paragraph("Power Flux Density (regulatory check)", styles["h1"]),
                  Paragraph(_rich(PFD_EXPLANATION), styles["body"]), Spacer(1, 2 * mm)]
     data = [[P("Parameter", "head"), P("Value", "head_right"), P("Status", "head")]]
@@ -502,7 +532,8 @@ def build_static_report_pdf(
     for note in pfd_notes(budget, extra_info):
         pfd_block.append(Spacer(1, 1.5 * mm))
         pfd_block.append(Paragraph(f'<font color="{_FAIL}">{_rich(note)}</font>', styles["small"]))
-    story.append(KeepTogether(pfd_block))
+    if pfd:
+        story.append(KeepTogether(pfd_block))
 
     # ---- Tolerances --------------------------------------------------------
     stats = budget["clear"].get("margin_statistics")

@@ -104,3 +104,32 @@ def test_build_static_report_pdf(tmp_path, budget):
     data = path.read_bytes()
     assert data.startswith(b"%PDF")
     assert b"/Title" in data
+
+
+def test_analysis_notes():
+    assert static_report.analysis_notes({"elevation_deg": 5.0}) == []
+    low = static_report.analysis_notes({"elevation_deg": 3.0})
+    assert len(low) == 1 and "below 5°" in low[0]
+    ignored = static_report.analysis_notes({"elevation_deg": 10.0, "tolerances_ignored": True})
+    assert len(ignored) == 1 and "Required Eb/No" in ignored[0]
+
+
+@pytest.mark.parametrize("applicable", [True, False])
+def test_report_pfd_section_only_when_applicable(tmp_path, monkeypatch, budget, applicable):
+    rl_config = pytest.importorskip("reportlab.rl_config")
+    # Uncompressed content streams, so the page text can be searched directly.
+    monkeypatch.setattr(rl_config, "pageCompression", 0)
+    path = tmp_path / "report.pdf"
+    context = static_report.ReportContext(
+        title="Fixed-Elevation Link Budget",
+        direction="Downlink (S/C → GS)" if applicable else "Uplink (GS → S/C)",
+        station="Svalbard",
+        elevation_deg=3.0,
+        link_availability_pct=99.99,
+    )
+    extra = dict(EXTRA_INFO, pfd_applicable=applicable, elevation_deg=3.0)
+    static_report.build_static_report_pdf(str(path), budget, extra, context)
+    data = path.read_bytes()
+    assert (b"Power Flux Density" in data) is applicable
+    assert (b"PFD Margin" in data) is applicable
+    assert b"below 5" in data

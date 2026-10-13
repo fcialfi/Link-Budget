@@ -7,7 +7,7 @@
   "gt_gs_dbk": 7.0,
   "gt_sat_dbk": 0.5,
   "antenna_diameter_m": 3.0,
-  "link_availability_pct": 99.0,
+  "link_availability_pct": 99.99,
   "other_attenuations_db": 0.0,
   "uplink_other_attenuations_db": 0.5,
   "bitrate_mbps": 3.57,

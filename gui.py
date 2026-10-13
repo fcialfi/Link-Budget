@@ -1716,7 +1716,7 @@ class LinkBudgetApp:
                 ],
             ),
             (
-                "Data Rate & PFD Limit",
+                "Data Rate & PFD Limit" if rx_is_ground_station else "Data Rate",
                 [
                     (
                         "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
@@ -1724,14 +1724,21 @@ class LinkBudgetApp:
                         "information bit rate. Eb/No is referred to the information bit rate "
                         "times this factor (the bit rate excluding coding). Empty = 1.",
                     ),
-                    (
-                        "pfd_limit", "PFD Limit [dBW/m²/4kHz]", "", "e.g. -154",
-                        "Regulatory power flux density limit in a 4 kHz reference bandwidth "
-                        "(ITU Radio Regulations Art. 21, ECSS-E-ST-50-05C). It depends on the "
-                        "frequency band and on the elevation angle. When set, the PFD Margin is "
-                        "computed.",
-                    ),
-                ],
+                ]
+                + (
+                    [
+                        (
+                            "pfd_limit", "PFD Limit [dBW/m²/4kHz]", "", "e.g. -154",
+                            "Regulatory power flux density limit in a 4 kHz reference bandwidth "
+                            "(ITU Radio Regulations Art. 21, ECSS-E-ST-50-05C). It depends on the "
+                            "frequency band and on the elevation angle. When set, the PFD Margin "
+                            "is computed.",
+                        ),
+                    ]
+                    # PFD limits apply to space stations (downlink) only.
+                    if rx_is_ground_station
+                    else []
+                ),
             ),
         ]
 
@@ -1957,7 +1964,7 @@ class LinkBudgetApp:
                 rx_axial_ratio_db = _field("rx_axial_ratio_db", _parse_optional_or_none)
                 multipath_loss_db = _field("multipath_loss_db", _parse_optional)
                 modulation_degradation_db = _field("modulation_degradation_db", _parse_optional)
-                pfd_limit = _field("pfd_limit", _parse_optional_or_none)
+                pfd_limit = _field("pfd_limit", _parse_optional_or_none) if "pfd_limit" in entries else None
                 formatting_overhead = _field("formatting_overhead", _parse_optional, default=1.0)
                 if formatting_overhead <= 0:
                     raise ValueError("'Formatting Overhead (factor)' must be greater than 0.")
@@ -2060,6 +2067,9 @@ class LinkBudgetApp:
                 "pointing_loss_db": pointing_loss_db,
                 "required_margin_db": required_margin,
                 "bandwidth_missing": occupied_bandwidth_hz is None,
+                "pfd_applicable": rx_is_ground_station,
+                "elevation_deg": elevation_deg,
+                "tolerances_ignored": bool(tolerances) and required_ebno is None,
             }
             for key, entry in entries.items():
                 text = entry.get().strip()
@@ -2287,6 +2297,11 @@ class LinkBudgetApp:
             font=(font_family, 10, "bold"),
         ).pack(anchor="w", pady=(0, 8))
         export_rows.append(("Geometry", "Slant Range [km]", f"{budget['slant_range_km']:.2f}", ""))
+        for note in static_report.analysis_notes(extra_info):
+            ttk.Label(
+                parent, text=f"Note: {note}", foreground=PALETTE["danger"], wraplength=720, justify="left"
+            ).pack(anchor="w", pady=(0, 6))
+            export_rows.append(("Note", note, "", ""))
 
         info_rows = static_report.info_rows(budget, extra_info)
         if info_rows:
@@ -2356,7 +2371,8 @@ class LinkBudgetApp:
         _TreeviewRowTooltip(table, row_help)
         table.pack(fill=tk.BOTH, expand=True)
 
-        self._render_pfd_section(parent, budget, extra_info, export_rows)
+        if static_report.pfd_applicable(extra_info):
+            self._render_pfd_section(parent, budget, extra_info, export_rows)
 
         # Tolerance contributions are the same for both conditions.
         clear_stats = budget["clear"].get("margin_statistics")
