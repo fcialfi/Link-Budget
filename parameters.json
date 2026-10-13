@@ -14,7 +14,7 @@
   "rolloff": 0.45,
   "demod_loss_db": 1.0,
   "demod_loss_sat_db": 1.0,
-  "overhead": 2.31493,
+  "overhead": 2.32757,
   "spectral_efficiency_bpshz": 1.0,
   "uplink_bitrate_mbps": 1.0,
   "uplink_rolloff": 0.35,
@@ -38,7 +38,7 @@
     "rx_depointing_deg": 0.1,
     "rx_beamwidth_deg": 3.97,
     "modulation_degradation_db": 0.5,
-    "formatting_overhead": 1.00905,
+    "formatting_overhead": 1.01456,
     "pfd_limit": -154.0,
     "tolerances": {
       "tx_gain": {
@@ -55,7 +55,9 @@
     "framing_mode": "ccsds",
     "ccsds_interleaving": 5.0,
     "ccsds_ocf": true,
-    "ccsds_fecf": false
+    "ccsds_fecf": false,
+    "ccsds_packet_header": true,
+    "ccsds_mpdu_header": false
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,

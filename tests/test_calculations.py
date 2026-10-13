@@ -984,3 +984,13 @@ def test_ccsds_tm_overheads_options_and_validation():
     for depth in (0, 9, 2.5):
         with pytest.raises(ValueError):
             calculations.ccsds_tm_overheads(depth)
+
+
+def test_ccsds_tm_overheads_packet_and_mpdu_headers():
+    plain = calculations.ccsds_tm_overheads(5, ocf=True)
+    packets = calculations.ccsds_tm_overheads(5, ocf=True, packet_header=True, mpdu_header=True)
+    assert packets["data_field_bytes"] == plain["data_field_bytes"] == 1105
+    assert packets["user_data_bytes"] == 1105 - 6 - 2
+    assert packets["formatting"] == pytest.approx(1115 / 1097)
+    # The channel coding (and so the Eb/No reference rate) does not change.
+    assert packets["coding"] == pytest.approx(plain["coding"])

@@ -702,6 +702,8 @@ def tropospheric_scintillation_model_valid(freq_ghz: float, elevation_deg: float
 CCSDS_TM_PRIMARY_HEADER_BYTES = 6
 CCSDS_TM_OCF_BYTES = 4
 CCSDS_TM_FECF_BYTES = 2
+CCSDS_MPDU_HEADER_BYTES = 2
+CCSDS_SPACE_PACKET_HEADER_BYTES = 6
 CCSDS_ASM_BYTES = 4
 CCSDS_RS_K = 223
 CCSDS_RS_N = 255
@@ -713,18 +715,24 @@ def ccsds_tm_overheads(
     fecf: bool = False,
     secondary_header_bytes: int = 0,
     convolutional: bool = True,
+    packet_header: bool = False,
+    mpdu_header: bool = False,
 ) -> Dict[str, Any]:
     """Formatting and coding factors of a CCSDS TM downlink.
 
     Transfer frames of ``223 * interleaving_depth`` bytes (RS(255,223)
     with interleaving depth I, no virtual fill) carry a 6-byte primary
     header, an optional secondary header, the optional OCF (4 bytes) and
-    FECF (2 bytes); the rest is the data field. Each RS codeblock
+    FECF (2 bytes); the rest is the data field. With ``packet_header`` one
+    Space Packet primary header (6 bytes) per frame, and with
+    ``mpdu_header`` the 2-byte M_PDU header, are not counted as user data.
+    Each RS codeblock
     (``255 * I`` bytes) gets a 32-bit attached sync marker, and the whole
     stream is convolutionally encoded at rate 1/2 when ``convolutional``.
 
-    Returns ``frame_bytes``, ``data_field_bytes``, ``codeblock_bytes``,
-    ``formatting`` (frame / data field), ``coding`` (channel bits per frame
+    Returns ``frame_bytes``, ``data_field_bytes``, ``user_data_bytes``,
+    ``codeblock_bytes``, ``formatting`` (frame / user data), ``coding``
+    (channel bits per frame
     bit) and ``total`` (= formatting * coding, the coded-over-information
     bit rate ratio).
     """
@@ -740,15 +748,21 @@ def ccsds_tm_overheads(
         - (CCSDS_TM_OCF_BYTES if ocf else 0)
         - (CCSDS_TM_FECF_BYTES if fecf else 0)
     )
-    if data_field <= 0:
+    user_data = (
+        data_field
+        - (CCSDS_SPACE_PACKET_HEADER_BYTES if packet_header else 0)
+        - (CCSDS_MPDU_HEADER_BYTES if mpdu_header else 0)
+    )
+    if user_data <= 0:
         raise ValueError("The transfer frame has no room left for data.")
     codeblock = CCSDS_RS_N * interleaving_depth
-    formatting = frame / data_field
+    formatting = frame / user_data
     coding = (codeblock + CCSDS_ASM_BYTES) / frame * (2.0 if convolutional else 1.0)
     return {
         "interleaving_depth": interleaving_depth,
         "frame_bytes": frame,
         "data_field_bytes": data_field,
+        "user_data_bytes": user_data,
         "codeblock_bytes": codeblock,
         "formatting": float(formatting),
         "coding": float(coding),

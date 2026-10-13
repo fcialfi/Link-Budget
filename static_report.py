@@ -221,7 +221,8 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
         rows.append(
             (
                 "CCSDS Transfer Frame [bytes]",
-                f"{framing['frame_bytes']} (data field {framing['data_field_bytes']}, RS I={framing['interleaving_depth']})",
+                f"{framing['frame_bytes']} (data field {framing['data_field_bytes']}, user data "
+                f"{framing['user_data_bytes']}, RS I={framing['interleaving_depth']})",
             )
         )
         rows.append(("Formatting / Coding Factor", f"{framing['formatting']:.5f} / {framing['coding']:.5f}"))

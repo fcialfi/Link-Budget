@@ -1811,6 +1811,8 @@ class LinkBudgetApp:
         framing_mode_var = tk.StringVar(value="manual")
         ccsds_ocf_var = tk.BooleanVar(value=True)
         ccsds_fecf_var = tk.BooleanVar(value=False)
+        ccsds_packet_var = tk.BooleanVar(value=True)
+        ccsds_mpdu_var = tk.BooleanVar(value=False)
         framing_used_var = tk.StringVar(value="")
         ccsds_option_buttons: list = []
         iono_rows: dict[str, tuple[list, tk.StringVar]] = {}
@@ -1865,8 +1867,10 @@ class LinkBudgetApp:
                         options_row = ttk.Frame(group_frame)
                         options_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=2)
                         for text, var in (
-                            ("Operational Control Field (OCF, 4 bytes)", ccsds_ocf_var),
-                            ("Frame Error Control Field (FECF, 2 bytes)", ccsds_fecf_var),
+                            ("OCF (4 B)", ccsds_ocf_var),
+                            ("FECF (2 B)", ccsds_fecf_var),
+                            ("Source packet header (6 B per frame)", ccsds_packet_var),
+                            ("M_PDU header (2 B)", ccsds_mpdu_var),
                         ):
                             button = ttk.Checkbutton(
                                 options_row, text=text, variable=var, command=lambda: _refresh_states()
@@ -1875,8 +1879,12 @@ class LinkBudgetApp:
                             ccsds_option_buttons.append(button)
                         _info_icon(
                             options_row,
-                            "Optional transfer frame fields, as in the mission ICD. The OCF is usually "
-                            "present; the FECF (CRC) is often omitted when RS coding is used.",
+                            "Frame and packet overheads, as in the mission ICD. OCF (Operational "
+                            "Control Field) and FECF (CRC) are the optional frame trailer; the FECF "
+                            "is often omitted when RS coding is used. The Source Packet primary "
+                            "header (6 bytes, one packet per frame) and the M_PDU header (2 bytes, "
+                            "packet service) are not user data either. These only change the "
+                            "information bit rate: Eb/No is referred to the frame bit rate.",
                         ).pack(side=tk.LEFT)
                     elif kind == "framing_used":
                         ttk.Label(
@@ -2129,7 +2137,13 @@ class LinkBudgetApp:
                 raise ValueError(f"enter the {bitrate_label.split(' [')[0]} and the RS interleaving depth")
             if coded_kbps <= 0:
                 raise ValueError("the coded bit rate must be greater than 0")
-            framing = calculations.ccsds_tm_overheads(depth, ccsds_ocf_var.get(), ccsds_fecf_var.get())
+            framing = calculations.ccsds_tm_overheads(
+                depth,
+                ccsds_ocf_var.get(),
+                ccsds_fecf_var.get(),
+                packet_header=ccsds_packet_var.get(),
+                mpdu_header=ccsds_mpdu_var.get(),
+            )
             return coded_kbps, framing
 
         def _write_computed(key: str, text: str) -> None:
@@ -2163,7 +2177,8 @@ class LinkBudgetApp:
             _write_computed("formatting_overhead", f"{framing['formatting']:.6g}")
             self.on_panel_entry_edited(overhead_entry)
             framing_used_var.set(
-                f"Frame {framing['frame_bytes']} B (data field {framing['data_field_bytes']} B): "
+                f"Frame {framing['frame_bytes']} B (data field {framing['data_field_bytes']} B, user data "
+                f"{framing['user_data_bytes']} B): "
                 f"coding {framing['coding']:.5f} (ASM + RS(255,223) I={framing['interleaving_depth']} "
                 f"+ conv 1/2), formatting {framing['formatting']:.5f}, total {framing['total']:.5f}\n"
                 f"Coded {coded_kbps:.1f} kbit/s → formatted {coded_kbps / framing['coding']:.1f} kbit/s "
@@ -2339,6 +2354,8 @@ class LinkBudgetApp:
                 values["framing_mode"] = framing_mode_var.get()
                 values["ccsds_ocf"] = bool(ccsds_ocf_var.get())
                 values["ccsds_fecf"] = bool(ccsds_fecf_var.get())
+                values["ccsds_packet_header"] = bool(ccsds_packet_var.get())
+                values["ccsds_mpdu_header"] = bool(ccsds_mpdu_var.get())
             values["scintillation"] = bool(scint_var.get())
             return values
 
@@ -2362,6 +2379,8 @@ class LinkBudgetApp:
             framing_mode_var.set(framing_mode if framing_mode in ("manual", "ccsds") else "manual")
             ccsds_ocf_var.set(bool(values.get("ccsds_ocf", True)))
             ccsds_fecf_var.set(bool(values.get("ccsds_fecf", False)))
+            ccsds_packet_var.set(bool(values.get("ccsds_packet_header", True)))
+            ccsds_mpdu_var.set(bool(values.get("ccsds_mpdu_header", False)))
             iono_mode = values.get("ionospheric_mode")
             iono_mode_var.set(iono_mode if iono_mode in ("manual", "s4") else "manual")
             scintillation = values.get("scintillation")
@@ -2414,6 +2433,7 @@ class LinkBudgetApp:
         station_var.trace_add("write", lambda *_args: _refresh_states())
         watched_vars = [
             station_var, eirp_mode_var, iono_mode_var, scint_var, framing_mode_var, ccsds_ocf_var, ccsds_fecf_var,
+            ccsds_packet_var, ccsds_mpdu_var,
         ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
@@ -2671,10 +2691,14 @@ class LinkBudgetApp:
                         )
                     elif item[0] == "ccsds_options":
                         if framing_mode_var.get() == "ccsds":
+                            yes_no = lambda var: "yes" if var.get() else "no"  # noqa: E731
                             group_items.append(
                                 (
-                                    "OCF / FECF",
-                                    f"{'yes' if ccsds_ocf_var.get() else 'no'} / {'yes' if ccsds_fecf_var.get() else 'no'}",
+                                    "OCF / FECF / Packet hdr / M_PDU hdr",
+                                    " / ".join(
+                                        yes_no(v)
+                                        for v in (ccsds_ocf_var, ccsds_fecf_var, ccsds_packet_var, ccsds_mpdu_var)
+                                    ),
                                 )
                             )
                     elif item[0] in ("iono_used", "eirp_used", "framing_used"):
