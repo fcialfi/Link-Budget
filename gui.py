@@ -1787,7 +1787,7 @@ class LinkBudgetApp:
         # changing it here never touches the main window's pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
         iono_mode_var = tk.StringVar(value="manual")
-        iono_used_var = tk.StringVar(value="")
+        iono_rows: dict[str, tuple[list, tk.StringVar]] = {}
         # Tropospheric scintillation is also this window's own choice: the
         # ITU-R P.618 model does not apply to every link (see the results notes).
         scint_var = tk.BooleanVar(value=self.scint_var.get())
@@ -1831,14 +1831,42 @@ class LinkBudgetApp:
                             "station's geomagnetic zone is shown below as guidance for S4.",
                         ).pack(side=tk.LEFT)
                     elif kind == "iono_used":
-                        ttk.Label(
-                            group_frame,
-                            textvariable=iono_used_var,
-                            font=(recap_font_family, 9, "bold"),
-                            foreground=PALETTE["accent_dark"],
-                            wraplength=760,
-                            justify="left",
-                        ).grid(row=r, column=0, columnspan=4, sticky="w", pady=(4, 4))
+                        # Small summary table: one row per piece of information.
+                        iono_box = ttk.Frame(group_frame)
+                        iono_box.grid(row=r, column=0, columnspan=4, sticky="w", pady=(4, 6))
+                        for i, (row_key, row_label) in enumerate(
+                            (
+                                ("zone", "Station zone"),
+                                ("guidance", "S4 guidance"),
+                                ("s4", "S4 at link frequency"),
+                                ("fluctuation", "Peak-to-peak fluctuation"),
+                                ("loss", "Ionospheric loss used"),
+                            )
+                        ):
+                            emphasis = row_key == "loss"
+                            name_label = ttk.Label(
+                                iono_box,
+                                text=f"{row_label}:",
+                                foreground=PALETTE["text"] if emphasis else PALETTE["text_muted"],
+                                font=(recap_font_family, 9, "bold") if emphasis else (recap_font_family, 9),
+                            )
+                            name_label.grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=1)
+                            row_var = tk.StringVar(value="")
+                            value_label = ttk.Label(
+                                iono_box,
+                                textvariable=row_var,
+                                foreground=PALETTE["accent_dark"] if emphasis else PALETTE["text"],
+                                font=(recap_font_family, 9, "bold") if emphasis else (recap_font_family, 9),
+                                wraplength=620,
+                                justify="left",
+                            )
+                            value_label.grid(row=i, column=1, sticky="w", pady=1)
+                            widgets = [name_label, value_label]
+                            if row_key == "guidance":
+                                icon = _info_icon(iono_box, calculations.IONOSPHERIC_ZONES_SOURCE)
+                                icon.grid(row=i, column=2, sticky="w", padx=(4, 0))
+                                widgets.append(icon)
+                            iono_rows[row_key] = (widgets, row_var)
                     elif kind == "eirp_mode":
                         mode_row = ttk.Frame(group_frame)
                         mode_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
@@ -1967,19 +1995,19 @@ class LinkBudgetApp:
             _set_field_enabled("ionospheric_loss_db", not from_s4)
             _set_field_enabled("iono_s4_ref", from_s4)
             _set_field_enabled("iono_s4_ref_freq_mhz", from_s4)
-            lines = []
+            if not iono_rows:
+                return
+            values = {key: "" for key in iono_rows}
             station = station_var.get()
             if station in calculations.GROUND_STATIONS:
                 lat, lon, _alt = calculations.GROUND_STATIONS[station]
                 geomag = calculations.geomagnetic_latitude_deg(lat, lon)
                 zone = calculations.ionospheric_zone(geomag)
-                lines.append(
-                    f"{station}: geomagnetic latitude {geomag:.1f}° → {zone['zone']} (approx.): "
-                    f"{zone['guidance']}"
-                )
+                values["zone"] = f"{station} — geomagnetic latitude {geomag:.1f}° → {zone['zone']} (approx.)"
+                values["guidance"] = zone["guidance"]
             if not from_s4:
                 text = _field_text("ionospheric_loss_db") or "0"
-                lines.append(f"Ionospheric loss used in the calculation: {text} dB (manual)")
+                values["loss"] = f"{text} dB (manual value)"
             else:
                 try:
                     s4_ref = float(_field_text("iono_s4_ref"))
@@ -1987,15 +2015,24 @@ class LinkBudgetApp:
                     freq_mhz = float(_field_text(f"panel:{freq_label}")) * 1000.0
                     scint = calculations.ionospheric_scintillation_fade_db(s4_ref, freq_mhz, ref_freq)
                 except ValueError:
-                    lines.append("Ionospheric loss used in the calculation: enter S4, its frequency and the link frequency")
+                    values["loss"] = "enter S4, its reference frequency and the link frequency"
                 else:
-                    lines.append(
-                        f"Ionospheric loss used in the calculation: {scint['fade_db']:.2f} dB "
-                        f"(S4 {s4_ref:g} @ {ref_freq:g} MHz → {scint['s4']:.3f} @ {freq_mhz:g} MHz, "
-                        f"{scint['peak_to_peak_db']:.2f} dB peak-to-peak, fade = half)"
-                        + ("" if scint["valid"] else " — S4 ≥ 0.4: f^-1.5 scaling not valid, indicative only")
+                    values["s4"] = (
+                        f"{scint['s4']:.3f} at {freq_mhz:g} MHz "
+                        f"(from {s4_ref:g} at {ref_freq:g} MHz, scaled as f^-1.5)"
+                        + ("" if scint["valid"] else " — S4 ≥ 0.4: scaling not valid, indicative only")
                     )
-            iono_used_var.set("\n".join(lines))
+                    values["fluctuation"] = f"{scint['peak_to_peak_db']:.2f} dB (27.5 · S4^1.26)"
+                    values["loss"] = f"{scint['fade_db']:.2f} dB (half of the peak-to-peak fluctuation)"
+            for key, (widgets, row_var) in iono_rows.items():
+                row_var.set(values[key])
+                # S4 rows only make sense when the loss is derived from S4.
+                visible = from_s4 or key not in ("s4", "fluctuation")
+                for widget in widgets:
+                    if visible:
+                        widget.grid()
+                    else:
+                        widget.grid_remove()
 
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
