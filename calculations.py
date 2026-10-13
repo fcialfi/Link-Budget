@@ -702,7 +702,6 @@ def tropospheric_scintillation_model_valid(freq_ghz: float, elevation_deg: float
 CCSDS_TM_PRIMARY_HEADER_BYTES = 6
 CCSDS_TM_OCF_BYTES = 4
 CCSDS_TM_FECF_BYTES = 2
-CCSDS_MPDU_HEADER_BYTES = 2
 CCSDS_SPACE_PACKET_HEADER_BYTES = 6
 CCSDS_ASM_BYTES = 4
 CCSDS_RS_K = 223
@@ -715,17 +714,19 @@ def ccsds_tm_overheads(
     fecf: bool = False,
     secondary_header_bytes: int = 0,
     convolutional: bool = True,
-    packet_header: bool = False,
-    mpdu_header: bool = False,
+    packet_length_bytes: Optional[float] = None,
+    packet_secondary_header_bytes: float = 0,
 ) -> Dict[str, Any]:
     """Formatting and coding factors of a CCSDS TM downlink.
 
     Transfer frames of ``223 * interleaving_depth`` bytes (RS(255,223)
     with interleaving depth I, no virtual fill) carry a 6-byte primary
     header, an optional secondary header, the optional OCF (4 bytes) and
-    FECF (2 bytes); the rest is the data field. With ``packet_header`` one
-    Space Packet primary header (6 bytes) per frame, and with
-    ``mpdu_header`` the 2-byte M_PDU header, are not counted as user data.
+    FECF (2 bytes); the rest is the data field (the First Header Pointer is
+    part of the 6-byte primary header). When ``packet_length_bytes`` (total
+    Space Packet length, packets spanning frames) is given, the share of
+    every packet taken by its 6-byte primary header and its
+    ``packet_secondary_header_bytes`` is not counted as user data.
     Each RS codeblock
     (``255 * I`` bytes) gets a 32-bit attached sync marker, and the whole
     stream is convolutionally encoded at rate 1/2 when ``convolutional``.
@@ -748,13 +749,16 @@ def ccsds_tm_overheads(
         - (CCSDS_TM_OCF_BYTES if ocf else 0)
         - (CCSDS_TM_FECF_BYTES if fecf else 0)
     )
-    user_data = (
-        data_field
-        - (CCSDS_SPACE_PACKET_HEADER_BYTES if packet_header else 0)
-        - (CCSDS_MPDU_HEADER_BYTES if mpdu_header else 0)
-    )
-    if user_data <= 0:
+    if data_field <= 0:
         raise ValueError("The transfer frame has no room left for data.")
+    user_data = float(data_field)
+    if packet_length_bytes is not None:
+        packet_overhead = CCSDS_SPACE_PACKET_HEADER_BYTES + packet_secondary_header_bytes
+        if packet_secondary_header_bytes < 0 or packet_length_bytes <= packet_overhead:
+            raise ValueError(
+                "The packet length must exceed its primary (6 bytes) and secondary headers."
+            )
+        user_data = data_field * (packet_length_bytes - packet_overhead) / packet_length_bytes
     codeblock = CCSDS_RS_N * interleaving_depth
     formatting = frame / user_data
     coding = (codeblock + CCSDS_ASM_BYTES) / frame * (2.0 if convolutional else 1.0)
@@ -762,7 +766,7 @@ def ccsds_tm_overheads(
         "interleaving_depth": interleaving_depth,
         "frame_bytes": frame,
         "data_field_bytes": data_field,
-        "user_data_bytes": user_data,
+        "user_data_bytes": float(user_data),
         "codeblock_bytes": codeblock,
         "formatting": float(formatting),
         "coding": float(coding),

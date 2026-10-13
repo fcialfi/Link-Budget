@@ -986,11 +986,14 @@ def test_ccsds_tm_overheads_options_and_validation():
             calculations.ccsds_tm_overheads(depth)
 
 
-def test_ccsds_tm_overheads_packet_and_mpdu_headers():
+def test_ccsds_tm_overheads_packet_headers_per_packet():
     plain = calculations.ccsds_tm_overheads(5, ocf=True)
-    packets = calculations.ccsds_tm_overheads(5, ocf=True, packet_header=True, mpdu_header=True)
+    packets = calculations.ccsds_tm_overheads(5, ocf=True, packet_length_bytes=1000, packet_secondary_header_bytes=10)
     assert packets["data_field_bytes"] == plain["data_field_bytes"] == 1105
-    assert packets["user_data_bytes"] == 1105 - 6 - 2
-    assert packets["formatting"] == pytest.approx(1115 / 1097)
+    # Packets span frames: each packet loses 6 + 10 header bytes out of 1000.
+    assert packets["user_data_bytes"] == pytest.approx(1105 * (1000 - 16) / 1000)
+    assert packets["formatting"] == pytest.approx(1115 / packets["user_data_bytes"])
     # The channel coding (and so the Eb/No reference rate) does not change.
     assert packets["coding"] == pytest.approx(plain["coding"])
+    with pytest.raises(ValueError):
+        calculations.ccsds_tm_overheads(5, packet_length_bytes=16, packet_secondary_header_bytes=10)
