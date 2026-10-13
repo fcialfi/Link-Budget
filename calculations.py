@@ -762,7 +762,15 @@ def calculate_fixed_elevation_link_budget(
             "rain_attenuation_db": atm["rain"],
             "scintillation_db": atm["scintillation"],
             "atmospheric_attenuation_db": atm["total"],
-            "total_propagation_loss_db": path_loss + atm["total"] + ionospheric_loss_db + polarisation_loss_db,
+            # Every loss listed in the Propagation section of the results.
+            "total_propagation_loss_db": (
+                path_loss
+                + atm["total"]
+                + ionospheric_loss_db
+                + polarisation_loss_db
+                + multipath_loss_db
+                + other_att
+            ),
             "rx_power_dbw": rx_power,
             "received_cno_dbhz": received_cno_db,
             "cno_dbhz": cno_db,

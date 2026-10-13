@@ -391,7 +391,10 @@ _FIXED_LB_ROW_HELP = {
     ),
     "Multipath Losses [dB]": "Multipath allowance entered in the Propagation section.",
     "Other Attenuations [dB]": "Other static attenuation (Propagation section), subtracted from Rx Power.",
-    "Total Propagation Loss [dB]": "Free space loss + atmospheric attenuation + ionospheric and polarisation losses.",
+    "Total Propagation Loss [dB]": (
+        "Free space loss + atmospheric attenuation + ionospheric, polarisation and multipath losses "
+        "+ other attenuations."
+    ),
     "Rx G/T [dB/K]": "Receiving figure of merit: antenna gain over system noise temperature.",
     "Rx Antenna Pointing Loss [dB]": "Receive antenna depointing loss: 12·(depointing angle / 3 dB beamwidth)².",
     "Rx Power [dBW]": (

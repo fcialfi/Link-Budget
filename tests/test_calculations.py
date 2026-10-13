@@ -844,3 +844,31 @@ def test_save_json_section_writes_top_level_values(tmp_path):
         "rolloff": 0.35,
         "fixed_elevation_downlink": {"elevation_deg": 3.0},
     }
+
+
+def test_fixed_elevation_total_propagation_loss_includes_all_path_losses(_stub_atmospheric_contributions):
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=3.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        ionospheric_loss_db=0.05,
+        polarisation_loss_db=0.09,
+        multipath_loss_db=0.2,
+    )
+    clear = budget["clear"]
+    total = budget["path_loss_db"] + 0.5 + 0.05 + 0.09 + 0.2 + 3.0
+    assert clear["total_propagation_loss_db"] == pytest.approx(total)
+    # Rx power = EIRP - total propagation loss (no pointing losses here).
+    assert clear["rx_power_dbw"] == pytest.approx(4.51 - total)
