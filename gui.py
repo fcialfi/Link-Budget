@@ -1503,7 +1503,7 @@ class LinkBudgetApp:
                 "Preliminary worst-case check, independent of any TLE: the slant range is "
                 "derived from the elevation angle and satellite altitude. The inputs of this "
                 "window are remembered, and Save / Load write and read them, together with the "
-                "parameters panel values shown below, in a parameters file (saving into "
+                "main window values shown here, in a parameters file (saving into "
                 "parameters.json auto-loads them at startup)."
             ),
             foreground=PALETTE["text_muted"],
@@ -1511,115 +1511,91 @@ class LinkBudgetApp:
             justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        panel_frame = ttk.LabelFrame(
-            form, text="Parameters Panel Values (linked to the main window)", padding=8
-        )
-        panel_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        panel_frame.grid_columnconfigure(1, weight=1)
-        panel_frame.grid_columnconfigure(3, weight=1)
         recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
         ttk.Label(
-            panel_frame,
+            form,
             text=(
-                "These are the same fields as in the main window: editing them here changes "
-                "them there too, and the other way round."
+                "Fields with blue labels are the same fields as in the main window: editing them "
+                "here changes them there too, and the other way round."
             ),
-            foreground=PALETTE["text_muted"],
+            foreground=PALETTE["accent"],
             wraplength=680,
             justify="left",
-        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8))
 
-        def _panel_label(row: int, col: int, text: str) -> None:
-            ttk.Label(panel_frame, text=f"{text}:").grid(
-                row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 18, 4), pady=2
-            )
+        # Sections in the order of a static link budget sheet. Each item is
+        # one of:
+        #   ("field", key, label, default text, placeholder, tooltip) -- an
+        #       input of this window. Fields with a real default ("0", the
+        #       minimum elevation, ...) start filled in; fields whose empty
+        #       value means "not used" (or "derive it automatically") show a
+        #       greyed-out example that is never treated as real input.
+        #   ("panel", label, panel entry, tooltip) -- a parameters panel
+        #       field, edited through the panel's own StringVar, with the
+        #       panel's handling (derived values, stale flags) on every edit.
+        #   ("station",) / ("scintillation",) -- the panel's ground station
+        #       selector and scintillation switch.
+        def F(key, label, default, placeholder, tooltip):
+            return ("field", key, label, default, placeholder, tooltip)
 
-        _panel_label(1, 0, "Ground Station")
-        gs_box = ttk.Combobox(
-            panel_frame,
-            textvariable=self.gs_var,
-            values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
-            postcommand=lambda: gs_box.configure(
-                values=list(self.gs_menu["values"]) if self.gs_menu is not None else []
-            ),
-            state="readonly",
-            width=15,
-        )
-        gs_box.grid(row=1, column=1, sticky="w", pady=2)
-        gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
-        ttk.Checkbutton(
-            panel_frame,
-            text="Scintillation loss",
-            variable=self.scint_var,
-            command=self.set_analysis_stale,
-        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(18, 0), pady=2)
+        def L(label, panel_entry, tooltip=""):
+            return ("panel", label, panel_entry, tooltip)
 
-        # (label, parameters panel entry) -- edited through the panel's own
-        # StringVar, with the panel's key bindings (derived values, stale
-        # flags) fired on every edit, so nothing behaves differently from
-        # typing in the main window.
-        panel_specs = [
-            (freq_label, freq_entry),
-            (eirp_label, eirp_entry),
-            (gt_label, gt_entry),
-            (demod_loss_label, demod_loss_entry),
-            (bitrate_label, bitrate_entry),
-            (overhead_label, overhead_entry),
-            ("Roll-off Factor", rolloff_entry),
-            ("Spectral Efficiency [bps/Hz]", spectral_eff_entry),
-            (other_att_label, other_att_entry),
-            ("Antenna Diameter GS [m]", self.d_gs_entry),
-            ("Link Availability [%]", self.LA_entry),
-        ]
-        panel_tooltips = {
-            eirp_label: "Not needed when the Transmitter Power below is set (EIRP from the Tx chain).",
-            "Roll-off Factor": "With the spectral efficiency, gives the occupied bandwidth used for the PFD in 4 kHz.",
-            "Spectral Efficiency [bps/Hz]": "With the roll-off, gives the occupied bandwidth used for the PFD in 4 kHz.",
-            "Antenna Diameter GS [m]": "Used by the ITU-R atmospheric model and for the default GS beamwidth.",
-            "Link Availability [%]": "Rain/cloud attenuation is computed for p = 100 − availability [% of time].",
-        }
-        for i, (label_text, panel_entry) in enumerate(panel_specs):
-            r, c = divmod(i, 2)
-            _panel_label(r + 2, c, label_text)
-            linked = ttk.Entry(panel_frame, textvariable=self._linked_var(panel_entry), width=15)
-            linked.grid(row=r + 2, column=c * 2 + 1, sticky="w", pady=2)
-            linked.bind("<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited))
-            if label_text in panel_tooltips:
-                _add_tooltip(linked, panel_tooltips[label_text])
-
-        parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
-        panel_keys = [
-            (parameter_keys[id(panel_entry)], panel_entry)
-            for _label, panel_entry in panel_specs
-            if id(panel_entry) in parameter_keys
-        ]
-
-        # Grouped inputs: (group title, [(key, label, default text, placeholder, tooltip)]).
-        # Fields with a real default ("0", the minimum elevation, ...) start
-        # filled in; fields whose empty value means "not used" (or "derive it
-        # automatically") instead show a greyed-out example that is never
-        # treated as real input.
         field_groups = [
             (
-                "Geometry & Requirements",
+                "Ground Station & Geometry",
                 [
-                    (
+                    ("station",),
+                    F(
                         "elevation_deg", "Elevation Angle [deg]", f"{MIN_ELEVATION_DEG:g}", None,
                         "Required. Elevation of the satellite seen from the ground station; the "
                         "minimum operational elevation gives the worst case (longest slant range).",
                     ),
-                    (
+                    F(
                         "sat_altitude_km", "Satellite Altitude [km]", "", "e.g. 628",
                         "Required. Circular-orbit altitude used, with the elevation, to derive the "
                         "slant range.",
                     ),
-                    (
+                    L(
+                        "Antenna Diameter GS [m]", self.d_gs_entry,
+                        "Used by the ITU-R atmospheric model"
+                        + (" and for the default Rx beamwidth." if rx_is_ground_station else "."),
+                    ),
+                    L(
+                        "Link Availability [%]", self.LA_entry,
+                        "Weather availability: rain/cloud attenuation is computed for "
+                        "p = 100 − availability [% of time].",
+                    ),
+                    ("scintillation",),
+                ],
+            ),
+            (
+                "Data Channel & Requirements",
+                [
+                    L(bitrate_label, bitrate_entry, "Bit rate including coding."),
+                    L(
+                        overhead_label, overhead_entry,
+                        "Coded bit rate / information bit rate (coding and formatting).",
+                    ),
+                    F(
+                        "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
+                        "Bit rate including formatting (frame headers, ...) divided by the "
+                        "information bit rate. Eb/No is referred to the information bit rate "
+                        "times this factor (the bit rate excluding coding). Empty = 1.",
+                    ),
+                    L(
+                        "Roll-off Factor", rolloff_entry,
+                        "With the spectral efficiency, gives the occupied bandwidth"
+                        + (" used for the PFD in 4 kHz." if rx_is_ground_station else "."),
+                    ),
+                    L("Spectral Efficiency [bps/Hz]", spectral_eff_entry),
+                    F(
                         "required_ebno_db", "Required Eb/No [dB]", "", "e.g. 2.6",
                         "Eb/No threshold of the modulation/coding for the required error rate. "
                         "When set, the Data Recovery Margin (received minus required Eb/No) is "
                         "computed.",
                     ),
-                    (
+                    F(
                         "required_margin_db", "Required Nominal Margin [dB]", "3", None,
                         "Requirement on the nominal Data Recovery Margin (typically ≥ 3 dB): the "
                         "margin is shown green/red against it. MEAN − 3σ and Worst Case RSS are "
@@ -1630,34 +1606,40 @@ class LinkBudgetApp:
             (
                 f"Transmitter ({tx_side})",
                 [
-                    (
+                    L(freq_label, freq_entry),
+                    L(
+                        eirp_label, eirp_entry,
+                        "Used when Transmitter Power is empty; otherwise the EIRP comes from the "
+                        "Tx chain below.",
+                    ),
+                    F(
                         "tx_power_w", "Transmitter Power [W]", "", "e.g. 3.3",
                         "When set, the EIRP is computed from the Tx chain (power − circuit loss − "
-                        "VSWR loss + antenna gain) and replaces the EIRP of the parameters panel. "
-                        "Leave empty to use the panel EIRP.",
+                        "VSWR loss + antenna gain) and replaces the EIRP above. Leave empty to "
+                        "use that EIRP.",
                     ),
-                    (
+                    F(
                         "ant_circuit_loss_db", "Antenna Circuit Loss [dB]", "0", None,
                         "Losses between transmitter and antenna (cables, filters, couplers). "
                         "Part of the Tx chain: used only when Transmitter Power is set.",
                     ),
-                    (
+                    F(
                         "vswr", "VSWR (:1)", "", "e.g. 1.5",
                         "Overall VSWR, e.g. 1.5 for 1.5:1; gives the mismatch loss "
                         "−10·log10(1 − Γ²). Part of the Tx chain: used only when Transmitter "
                         "Power is set.",
                     ),
-                    (
+                    F(
                         "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 0",
                         "Tx antenna gain towards the receiver. Required when Transmitter Power is "
                         "set.",
                     ),
-                    (
+                    F(
                         "ant_axial_ratio_db", "Tx Antenna Axial Ratio [dB]", "", "e.g. 3",
                         "With the Rx axial ratio, gives the polarisation mismatch loss when that "
                         "field is left empty.",
                     ),
-                    (
+                    F(
                         "tx_pointing_loss_db", "Tx Antenna Pointing Loss [dB]", "0", None,
                         "Transmit antenna pointing / mispointing loss, subtracted from Rx Power "
                         "(0 for an omnidirectional antenna).",
@@ -1665,69 +1647,32 @@ class LinkBudgetApp:
                 ],
             ),
             (
-                "Propagation",
+                "Propagation & PFD Limit" if rx_is_ground_station else "Propagation",
                 [
-                    (
+                    L(
+                        other_att_label, other_att_entry,
+                        "Any other static attenuation, subtracted from Rx Power.",
+                    ),
+                    F(
                         "ionospheric_loss_db", "Ionospheric Loss [dB]", "0", None,
                         "Ionospheric scintillation/absorption allowance (ITU-R P.531); higher at "
                         "polar and equatorial latitudes. Subtracted from Rx Power.",
                     ),
-                    (
+                    F(
                         "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "", "auto from axial ratios",
                         "Subtracted from Rx Power. Leave empty to compute it from the Tx and Rx "
                         "axial ratios (worst-case orientation of the polarisation ellipses), or 0 "
                         "when those are not both set.",
                     ),
-                    (
+                    F(
                         "multipath_loss_db", "Multipath Losses [dB]", "0", None,
                         "Allowance for multipath/ground reflections, mainly at low elevation. "
                         "Subtracted from Rx Power.",
                     ),
-                ],
-            ),
-            (
-                f"Receiver ({rx_side})",
-                [
-                    (
-                        "rx_axial_ratio_db", "Rx Antenna Axial Ratio [dB]", "", "e.g. 1",
-                        "With the Tx axial ratio, gives the polarisation mismatch loss when that "
-                        "field is left empty.",
-                    ),
-                    (
-                        "rx_depointing_deg", "Rx Antenna Depointing Angle [deg]", "", "e.g. 0.1",
-                        "Tracking/pointing error of the receive antenna; gives the pointing loss "
-                        "12·(angle / beamwidth)², subtracted from Rx Power.",
-                    ),
-                    (
-                        "rx_beamwidth_deg", "Rx Antenna 3dB Beamwidth [deg]", "",
-                        "auto from GS diameter" if rx_is_ground_station else "e.g. 10",
-                        "Used together with the depointing angle. "
-                        + (
-                            "Leave empty to use 70·λ/D from the GS antenna diameter."
-                            if rx_is_ground_station
-                            else "Required when the depointing angle is set."
-                        ),
-                    ),
-                    (
-                        "modulation_degradation_db", "Modulation Degradation [dB]", "0", None,
-                        "Modulator/filter implementation loss, added to the receiver (demodulator) "
-                        "degradation of the parameters panel. Lowers Eb/No.",
-                    ),
-                ],
-            ),
-            (
-                "Data Rate & PFD Limit" if rx_is_ground_station else "Data Rate",
-                [
-                    (
-                        "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
-                        "Bit rate including formatting (frame headers, ...) divided by the "
-                        "information bit rate. Eb/No is referred to the information bit rate "
-                        "times this factor (the bit rate excluding coding). Empty = 1.",
-                    ),
                 ]
                 + (
                     [
-                        (
+                        F(
                             "pfd_limit", "PFD Limit [dBW/m²/4kHz]", "", "e.g. -154",
                             "Regulatory power flux density limit in a 4 kHz reference bandwidth "
                             "(ITU Radio Regulations Art. 21, ECSS-E-ST-50-05C). It depends on the "
@@ -1740,20 +1685,101 @@ class LinkBudgetApp:
                     else []
                 ),
             ),
+            (
+                f"Receiver ({rx_side})",
+                [
+                    L(gt_label, gt_entry, "Receiving figure of merit: antenna gain over system noise temperature."),
+                    L(
+                        demod_loss_label, demod_loss_entry,
+                        "Receiver (demodulator) implementation loss. Lowers Eb/No.",
+                    ),
+                    F(
+                        "modulation_degradation_db", "Modulation Degradation [dB]", "0", None,
+                        "Modulator/filter implementation loss, added to the demodulator loss. "
+                        "Lowers Eb/No.",
+                    ),
+                    F(
+                        "rx_axial_ratio_db", "Rx Antenna Axial Ratio [dB]", "", "e.g. 1",
+                        "With the Tx axial ratio, gives the polarisation mismatch loss when that "
+                        "field is left empty.",
+                    ),
+                    F(
+                        "rx_depointing_deg", "Rx Antenna Depointing Angle [deg]", "", "e.g. 0.1",
+                        "Tracking/pointing error of the receive antenna; gives the pointing loss "
+                        "12·(angle / beamwidth)², subtracted from Rx Power.",
+                    ),
+                    F(
+                        "rx_beamwidth_deg", "Rx Antenna 3dB Beamwidth [deg]", "",
+                        "auto from GS diameter" if rx_is_ground_station else "e.g. 10",
+                        "Used together with the depointing angle. "
+                        + (
+                            "Leave empty to use 70·λ/D from the GS antenna diameter."
+                            if rx_is_ground_station
+                            else "Required when the depointing angle is set."
+                        ),
+                    ),
+                ],
+            ),
         ]
 
         entries: dict[str, ttk.Entry] = {}
         entry_labels: dict[str, str] = {}
         entry_defaults: dict[str, str] = {}
-        for group_index, (group_title, specs) in enumerate(field_groups, start=2):
+        panel_specs: list[tuple[str, ttk.Entry]] = []
+        shared_note = "Shared with the main window."
+        for group_index, (group_title, items) in enumerate(field_groups, start=2):
             group_frame = ttk.LabelFrame(form, text=group_title, padding=8)
             group_frame.grid(row=group_index, column=0, sticky="ew", pady=(0, 10))
             group_frame.grid_columnconfigure(1, weight=1)
             group_frame.grid_columnconfigure(3, weight=1)
-            for i, (key, label_text, default, placeholder, tooltip) in enumerate(specs):
+            for i, item in enumerate(items):
                 r, c = divmod(i, 2)
+                padx = (0 if c == 0 else 18, 4)
+                kind = item[0]
+                if kind == "scintillation":
+                    ttk.Checkbutton(
+                        group_frame,
+                        text="Scintillation loss",
+                        variable=self.scint_var,
+                        command=self.set_analysis_stale,
+                    ).grid(row=r, column=c * 2, columnspan=2, sticky="w", padx=padx, pady=2)
+                    continue
+                if kind == "station":
+                    ttk.Label(group_frame, text="Ground Station:", foreground=PALETTE["accent"]).grid(
+                        row=r, column=c * 2, sticky="w", padx=padx, pady=2
+                    )
+                    gs_box = ttk.Combobox(
+                        group_frame,
+                        textvariable=self.gs_var,
+                        values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
+                        state="readonly",
+                        width=15,
+                    )
+                    gs_box.configure(
+                        postcommand=lambda box=gs_box: box.configure(
+                            values=list(self.gs_menu["values"]) if self.gs_menu is not None else []
+                        )
+                    )
+                    gs_box.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
+                    _add_tooltip(gs_box, f"{shared_note} Its location sets the ITU-R atmospheric attenuation.")
+                    continue
+                if kind == "panel":
+                    _kind, label_text, panel_entry, tooltip = item
+                    ttk.Label(group_frame, text=f"{label_text}:", foreground=PALETTE["accent"]).grid(
+                        row=r, column=c * 2, sticky="w", padx=padx, pady=2
+                    )
+                    linked = ttk.Entry(group_frame, textvariable=self._linked_var(panel_entry), width=15)
+                    linked.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
+                    linked.bind(
+                        "<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited)
+                    )
+                    _add_tooltip(linked, f"{shared_note} {tooltip}".strip())
+                    panel_specs.append((label_text, panel_entry))
+                    continue
+                _kind, key, label_text, default, placeholder, tooltip = item
                 ttk.Label(group_frame, text=f"{label_text}:").grid(
-                    row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=2
+                    row=r, column=c * 2, sticky="w", padx=padx, pady=2
                 )
                 if placeholder:
                     entry = _PlaceholderEntry(group_frame, placeholder, width=15)
@@ -1764,6 +1790,13 @@ class LinkBudgetApp:
                 entries[key] = entry
                 entry_labels[key] = label_text
                 entry_defaults[key] = default
+
+        parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
+        panel_keys = [
+            (parameter_keys[id(panel_entry)], panel_entry)
+            for _label, panel_entry in panel_specs
+            if id(panel_entry) in parameter_keys
+        ]
 
         tol_row = 2 + len(field_groups)
         tol_frame = ttk.LabelFrame(
@@ -2080,27 +2113,28 @@ class LinkBudgetApp:
             )
             export_button.state(["!disabled"])
 
-            panel_items = [("Ground Station", gs_name)]
-            for label_text, panel_entry in panel_specs:
-                text = panel_entry.get().strip()
-                if not text:
-                    continue
-                if panel_entry is eirp_entry and budget.get("eirp_source") == "tx_chain":
-                    text += " (not used)"
-                panel_items.append((label_text, text))
-            panel_items.append(("Scintillation", "Included" if self.scint_var.get() else "Excluded"))
-            input_groups = [("Parameters Panel", panel_items)]
-            for group_title, specs in field_groups:
-                input_groups.append(
-                    (
-                        group_title,
-                        [
-                            (entry_labels[key], entries[key].get().strip())
-                            for key, *_rest in specs
-                            if entries[key].get().strip()
-                        ],
-                    )
-                )
+            # Inputs for the report, in the same sections as this window.
+            input_groups = []
+            for group_title, items in field_groups:
+                group_items = []
+                for item in items:
+                    if item[0] == "station":
+                        group_items.append(("Ground Station", gs_name))
+                    elif item[0] == "scintillation":
+                        group_items.append(("Scintillation", "Included" if self.scint_var.get() else "Excluded"))
+                    elif item[0] == "panel":
+                        _kind, label_text, panel_entry, _tooltip = item
+                        text = panel_entry.get().strip()
+                        if text and panel_entry is eirp_entry and budget.get("eirp_source") == "tx_chain":
+                            text += " (not used)"
+                        if text:
+                            group_items.append((label_text, text))
+                    else:
+                        key = item[1]
+                        text = entries[key].get().strip()
+                        if text:
+                            group_items.append((entry_labels[key], text))
+                input_groups.append((group_title, group_items))
             last_report.update(
                 budget=budget,
                 extra_info=extra_info,
