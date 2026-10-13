@@ -11,6 +11,7 @@ a = Analysis(
     binaries=[],
     datas=itur_datas + [
         ('calculations.py', '.'),
+        ('static_report.py', '.'),
     ],
     hiddenimports=[
         'itur',

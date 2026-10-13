@@ -150,6 +150,7 @@ import json
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import calculations
+import static_report
 
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
@@ -574,7 +575,28 @@ class LinkBudgetApp:
         with open(file_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
 
-        field_map = {
+        field_map = self._parameter_entries()
+
+        for key, entry in field_map.items():
+            if key in payload and entry is not None:
+                entry.delete(0, tk.END)
+                entry.insert(0, str(payload[key]))
+
+        for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
+            if isinstance(payload.get(section), dict):
+                self.static_lb_values[section] = payload[section]
+        self.current_param_file = os.path.abspath(file_path)
+
+        if self.param_file_var is not None:
+            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
+
+        self.update_link_budget_derived()
+        self.set_analysis_stale()
+
+    def _parameter_entries(self) -> dict:
+        """``parameters.json`` key -> parameters panel entry."""
+
+        return {
             "eirp_sat_dbw": self.eirp_sat_entry,
             "eirp_gs_dbw": self.eirp_gs_entry,
             "frequency_ghz": self.freq_entry,
@@ -598,21 +620,20 @@ class LinkBudgetApp:
             "uplink_spectral_efficiency_bpshz": self.uplink_spectral_eff_entry,
         }
 
-        for key, entry in field_map.items():
-            if key in payload and entry is not None:
-                entry.delete(0, tk.END)
-                entry.insert(0, str(payload[key]))
+    def _linked_var(self, entry: ttk.Entry) -> tk.StringVar:
+        """A StringVar shared by a parameters panel entry and its copies.
 
-        for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
-            if isinstance(payload.get(section), dict):
-                self.static_lb_values[section] = payload[section]
-        self.current_param_file = os.path.abspath(file_path)
+        Created on first use and attached to ``entry`` as its textvariable,
+        so another widget using the same variable edits the panel value
+        directly, and the other way round.
+        """
 
-        if self.param_file_var is not None:
-            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
-
-        self.update_link_budget_derived()
-        self.set_analysis_stale()
+        var = getattr(entry, "_linked_var", None)
+        if var is None:
+            var = tk.StringVar(value=entry.get())
+            entry.configure(textvariable=var)
+            entry._linked_var = var
+        return var
 
     def load_parameters_from_file(self):
         """Let the user pick a parameters JSON file and load it."""
@@ -1480,61 +1501,98 @@ class LinkBudgetApp:
             form,
             text=(
                 "Preliminary worst-case check, independent of any TLE: the slant range is "
-                "derived from the elevation angle and satellite altitude. Frequency, G/T, bit "
-                "rate and the other values below are taken from the parameters panel. The "
-                "inputs of this window are remembered, and can be saved to / loaded from a "
-                "parameters file (saving into parameters.json auto-loads them at startup)."
+                "derived from the elevation angle and satellite altitude. The inputs of this "
+                "window are remembered, and Save / Load write and read them, together with the "
+                "parameters panel values shown below, in a parameters file (saving into "
+                "parameters.json auto-loads them at startup)."
             ),
             foreground=PALETTE["text_muted"],
             wraplength=680,
             justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        recap_frame = ttk.LabelFrame(form, text="Using From Parameters Panel", padding=8)
-        recap_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        recap_frame.grid_columnconfigure(1, weight=1)
-        recap_frame.grid_columnconfigure(3, weight=1)
-
+        panel_frame = ttk.LabelFrame(
+            form, text="Parameters Panel Values (linked to the main window)", padding=8
+        )
+        panel_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        panel_frame.grid_columnconfigure(1, weight=1)
+        panel_frame.grid_columnconfigure(3, weight=1)
         recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
-        # (label, getter, text shown when empty, whether empty should be flagged in red)
-        recap_specs = [
-            ("Ground Station", lambda: self.gs_var.get(), "not set", True),
-            (freq_label, lambda: freq_entry.get().strip(), "not set", True),
-            (eirp_label, lambda: eirp_entry.get().strip(), "not set (needs Tx chain)", False),
-            (gt_label, lambda: gt_entry.get().strip(), "not set", True),
-            (demod_loss_label, lambda: demod_loss_entry.get().strip(), "not set", True),
-            (bitrate_label, lambda: bitrate_entry.get().strip(), "not set", True),
-            (overhead_label, lambda: overhead_entry.get().strip(), "not set", True),
-            (other_att_label, lambda: other_att_entry.get().strip(), "0 (default)", False),
-            ("Antenna Diameter GS [m]", lambda: self.d_gs_entry.get().strip(), "not set", True),
-            ("Link Availability [%]", lambda: self.LA_entry.get().strip(), "not set", True),
-            ("Scintillation", lambda: "Included" if self.scint_var.get() else "Excluded", "", False),
+        ttk.Label(
+            panel_frame,
+            text=(
+                "These are the same fields as in the main window: editing them here changes "
+                "them there too, and the other way round."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=680,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+
+        def _panel_label(row: int, col: int, text: str) -> None:
+            ttk.Label(panel_frame, text=f"{text}:").grid(
+                row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 18, 4), pady=2
+            )
+
+        _panel_label(1, 0, "Ground Station")
+        gs_box = ttk.Combobox(
+            panel_frame,
+            textvariable=self.gs_var,
+            values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
+            postcommand=lambda: gs_box.configure(
+                values=list(self.gs_menu["values"]) if self.gs_menu is not None else []
+            ),
+            state="readonly",
+            width=15,
+        )
+        gs_box.grid(row=1, column=1, sticky="w", pady=2)
+        gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
+        ttk.Checkbutton(
+            panel_frame,
+            text="Scintillation loss",
+            variable=self.scint_var,
+            command=self.set_analysis_stale,
+        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(18, 0), pady=2)
+
+        # (label, parameters panel entry) -- edited through the panel's own
+        # StringVar, with the panel's key bindings (derived values, stale
+        # flags) fired on every edit, so nothing behaves differently from
+        # typing in the main window.
+        panel_specs = [
+            (freq_label, freq_entry),
+            (eirp_label, eirp_entry),
+            (gt_label, gt_entry),
+            (demod_loss_label, demod_loss_entry),
+            (bitrate_label, bitrate_entry),
+            (overhead_label, overhead_entry),
+            ("Roll-off Factor", rolloff_entry),
+            ("Spectral Efficiency [bps/Hz]", spectral_eff_entry),
+            (other_att_label, other_att_entry),
+            ("Antenna Diameter GS [m]", self.d_gs_entry),
+            ("Link Availability [%]", self.LA_entry),
         ]
-        recap_value_labels: list[ttk.Label] = []
-        for i, (label_text, _getter, _empty_text, _flag_empty) in enumerate(recap_specs):
+        panel_tooltips = {
+            eirp_label: "Not needed when the Transmitter Power below is set (EIRP from the Tx chain).",
+            "Roll-off Factor": "With the spectral efficiency, gives the occupied bandwidth used for the PFD in 4 kHz.",
+            "Spectral Efficiency [bps/Hz]": "With the roll-off, gives the occupied bandwidth used for the PFD in 4 kHz.",
+            "Antenna Diameter GS [m]": "Used by the ITU-R atmospheric model and for the default GS beamwidth.",
+            "Link Availability [%]": "Rain/cloud attenuation is computed for p = 100 − availability [% of time].",
+        }
+        for i, (label_text, panel_entry) in enumerate(panel_specs):
             r, c = divmod(i, 2)
-            ttk.Label(
-                recap_frame,
-                text=f"{label_text}:",
-                font=(recap_font_family, 9),
-                foreground=PALETTE["text_muted"],
-            ).grid(row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=1)
-            value_label = ttk.Label(recap_frame, font=(recap_font_family, 9, "bold"))
-            value_label.grid(row=r, column=c * 2 + 1, sticky="w", pady=1)
-            recap_value_labels.append(value_label)
+            _panel_label(r + 2, c, label_text)
+            linked = ttk.Entry(panel_frame, textvariable=self._linked_var(panel_entry), width=15)
+            linked.grid(row=r + 2, column=c * 2 + 1, sticky="w", pady=2)
+            linked.bind("<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited))
+            if label_text in panel_tooltips:
+                _add_tooltip(linked, panel_tooltips[label_text])
 
-        def _refresh_recap():
-            for (_, getter, empty_text, flag_empty), value_label in zip(recap_specs, recap_value_labels):
-                value = getter()
-                if not value:
-                    value_label.configure(
-                        text=empty_text, foreground=PALETTE["danger"] if flag_empty else PALETTE["text_muted"]
-                    )
-                else:
-                    value_label.configure(text=value, foreground=PALETTE["text"])
-
-        _refresh_recap()
-        win.bind("<FocusIn>", lambda event: _refresh_recap())
+        parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
+        panel_keys = [
+            (parameter_keys[id(panel_entry)], panel_entry)
+            for _label, panel_entry in panel_specs
+            if id(panel_entry) in parameter_keys
+        ]
 
         # Grouped inputs: (group title, [(key, label, default text, placeholder, tooltip)]).
         # Fields with a real default ("0", the minimum elevation, ...) start
@@ -1816,6 +1874,9 @@ class LinkBudgetApp:
 
         status_var = tk.StringVar(value="")
         export_rows: list[tuple[str, str, str, str]] = []
+        # Inputs and results of the last successful calculation, for the PDF report.
+        last_report: dict = {}
+        direction_text = "Downlink (S/C → GS)" if rx_is_ground_station else "Uplink (GS → S/C)"
 
         def _parse_required(entry: ttk.Entry, label: str) -> float:
             text = entry.get().strip()
@@ -1848,12 +1909,13 @@ class LinkBudgetApp:
             return parser(entries[key], entry_labels[key], **kwargs)
 
         def _calculate():
-            _refresh_recap()
             _remember_values()
             for widget in results_frame.winfo_children():
                 widget.destroy()
             export_rows.clear()
+            last_report.clear()
             export_button.state(["disabled"])
+            pdf_button.state(["disabled"])
             try:
                 elevation_deg = _field("elevation_deg", _parse_required)
                 sat_altitude_km = _field("sat_altitude_km", _parse_required)
@@ -2008,6 +2070,41 @@ class LinkBudgetApp:
             )
             export_button.state(["!disabled"])
 
+            panel_items = [("Ground Station", gs_name)]
+            for label_text, panel_entry in panel_specs:
+                text = panel_entry.get().strip()
+                if not text:
+                    continue
+                if panel_entry is eirp_entry and budget.get("eirp_source") == "tx_chain":
+                    text += " (not used)"
+                panel_items.append((label_text, text))
+            panel_items.append(("Scintillation", "Included" if self.scint_var.get() else "Excluded"))
+            input_groups = [("Parameters Panel", panel_items)]
+            for group_title, specs in field_groups:
+                input_groups.append(
+                    (
+                        group_title,
+                        [
+                            (entry_labels[key], entries[key].get().strip())
+                            for key, *_rest in specs
+                            if entries[key].get().strip()
+                        ],
+                    )
+                )
+            last_report.update(
+                budget=budget,
+                extra_info=extra_info,
+                context=static_report.ReportContext(
+                    title=title,
+                    direction=direction_text,
+                    station=gs_name,
+                    elevation_deg=elevation_deg,
+                    link_availability_pct=link_availability,
+                    input_groups=input_groups,
+                ),
+            )
+            pdf_button.state(["!disabled"])
+
         def _default_parameters_path() -> str:
             return (
                 self.current_param_file
@@ -2028,12 +2125,24 @@ class LinkBudgetApp:
             if not file_path:
                 return
             _remember_values()
+            panel_values = {}
+            for key, panel_entry in panel_keys:
+                text = panel_entry.get().strip()
+                if text:
+                    try:
+                        panel_values[key] = float(text)
+                    except ValueError:
+                        panel_values[key] = text
             try:
-                calculations.save_json_section(file_path, section, self.static_lb_values[section])
+                calculations.save_json_section(
+                    file_path, section, self.static_lb_values[section], top_level=panel_values
+                )
             except Exception as exc:
                 messagebox.showerror("Save Error", f"Unable to save the parameters: {exc}", parent=win)
                 return
-            status_var.set(f"Saved to {os.path.abspath(file_path)} (section '{section}')")
+            status_var.set(
+                f"Saved to {os.path.abspath(file_path)} (section '{section}' and the panel values above)"
+            )
 
         def _load():
             file_path = filedialog.askopenfilename(
@@ -2046,10 +2155,16 @@ class LinkBudgetApp:
                 return
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
-                    values = calculations.extract_json_section(json.load(f), section)
+                    payload = json.load(f)
+                values = calculations.extract_json_section(payload, section)
             except Exception as exc:
                 messagebox.showerror("Load Error", f"Unable to load the parameters: {exc}", parent=win)
                 return
+            for key, panel_entry in panel_keys:
+                if key in payload:
+                    panel_entry.delete(0, tk.END)
+                    panel_entry.insert(0, _format_value(payload[key]))
+                    self.on_panel_entry_edited(panel_entry)
             _apply_values(values)
             _remember_values()
             status_var.set(f"Loaded from {os.path.abspath(file_path)} (section '{section}')")
@@ -2080,6 +2195,35 @@ class LinkBudgetApp:
                 return
             status_var.set(f"Results exported to {os.path.abspath(file_path)}")
 
+        def _export_pdf():
+            if not last_report:
+                return
+            direction_slug = "downlink" if rx_is_ground_station else "uplink"
+            file_path = filedialog.asksaveasfilename(
+                parent=win,
+                title="Export Fixed-Elevation Link Budget Report",
+                initialfile=f"static_link_budget_{direction_slug}_{datetime.now():%Y%m%d}.pdf",
+                defaultextension=".pdf",
+                filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+            )
+            if not file_path:
+                return
+            try:
+                static_report.build_static_report_pdf(
+                    file_path, last_report["budget"], last_report["extra_info"], last_report["context"]
+                )
+            except ImportError:
+                messagebox.showerror(
+                    "Export Error",
+                    "The PDF report needs the 'reportlab' package (pip install reportlab).",
+                    parent=win,
+                )
+                return
+            except Exception as exc:
+                messagebox.showerror("Export Error", f"Failed to create the PDF report: {exc}", parent=win)
+                return
+            status_var.set(f"PDF report saved to {os.path.abspath(file_path)}")
+
         button_row = ttk.Frame(form)
         button_row.grid(row=tol_row + 1, column=0, sticky="w", pady=(6, 0))
         ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton").pack(
@@ -2089,20 +2233,30 @@ class LinkBudgetApp:
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             load_button,
-            f"Load this window's inputs from the '{section}' section of a parameters JSON file.",
+            f"Load this window's inputs from the '{section}' section of a parameters JSON file, "
+            "and the parameters panel values shown in this window when the file has them.",
         )
         save_button = ttk.Button(button_row, text="Save...", command=_save)
         save_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             save_button,
-            f"Save this window's inputs as the '{section}' section of a JSON file; the other "
-            "keys already in the file are kept. Saving into parameters.json makes them load "
-            "automatically at startup.",
+            f"Save this window's inputs as the '{section}' section of a JSON file, together "
+            "with the parameters panel values shown in this window; the other keys already in "
+            "the file are kept. Saving into parameters.json makes them load automatically at "
+            "startup.",
         )
         ttk.Button(button_row, text="Reset", command=_reset).pack(side=tk.LEFT, padx=(0, 6))
         export_button = ttk.Button(button_row, text="Export CSV...", command=_export_csv)
-        export_button.pack(side=tk.LEFT)
+        export_button.pack(side=tk.LEFT, padx=(0, 6))
         export_button.state(["disabled"])
+        pdf_button = ttk.Button(button_row, text="Export PDF...", command=_export_pdf)
+        pdf_button.pack(side=tk.LEFT)
+        pdf_button.state(["disabled"])
+        _add_tooltip(
+            pdf_button,
+            "Create a PDF report (A4) of the last calculation: summary with pass/fail checks, "
+            "inputs, link budget table, PFD check, tolerances and method.",
+        )
         ttk.Label(form, textvariable=status_var, foreground=PALETTE["text_muted"]).grid(
             row=tol_row + 2, column=0, sticky="w", pady=(4, 0)
         )
@@ -2112,7 +2266,8 @@ class LinkBudgetApp:
 
         Shows the static-budget info block, the two-condition (clear/rain)
         link table, the power flux density check with an explanation of how
-        it is computed, and the tolerance contributions. Every table row has
+        it is computed, and the tolerance contributions. The rows come from
+        :mod:`static_report`, shared with the PDF report. Every table row has
         a hover tooltip with its definition, and margins are marked
         pass/fail against their requirements. Returns
         ``[(section, parameter, clear_or_value, rain), ...]``.
@@ -2120,7 +2275,7 @@ class LinkBudgetApp:
 
         extra_info = extra_info or {}
         export_rows: list[tuple[str, str, str, str]] = []
-        rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
+        rain_p = static_report.rain_percentage(link_availability_pct)
         font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
 
         ttk.Label(
@@ -2133,63 +2288,7 @@ class LinkBudgetApp:
         ).pack(anchor="w", pady=(0, 8))
         export_rows.append(("Geometry", "Slant Range [km]", f"{budget['slant_range_km']:.2f}", ""))
 
-        # Informational rows that don't vary with the clear/rain condition:
-        # S/C data channel, Tx chain breakdown and receive chain details.
-        info_rows: list[tuple[str, str]] = []
-        if extra_info.get("info_bitrate_kbps") is not None:
-            info_rows.append(("Information Bit Rate (excl. coding) [kbit/s]", f"{extra_info['info_bitrate_kbps']:.2f}"))
-        if budget.get("bitrate_formatted_bps"):
-            info_rows.append(
-                (
-                    "Bit Rate incl. Formatting (excl. coding) [kbit/s]",
-                    f"{budget['bitrate_formatted_bps'] / 1000.0:.2f}",
-                )
-            )
-        if extra_info.get("bitrate_kbps") is not None:
-            info_rows.append(("Bit Rate incl. Coding [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
-        if extra_info.get("code_rate") is not None:
-            info_rows.append(("Code Rate", f"{extra_info['code_rate']:.3f}"))
-        if extra_info.get("occupied_bandwidth_khz") is not None:
-            info_rows.append(("Occupied Bandwidth [kHz]", f"{extra_info['occupied_bandwidth_khz']:.1f}"))
-        if "frequency_mhz" in budget:
-            info_rows.append(("Transmitter Frequency [MHz]", f"{budget['frequency_mhz']:.3f}"))
-        if "tx_power_dbw" in budget:
-            info_rows.append(("Transmitter Power [dBW]", f"{budget['tx_power_dbw']:.2f}"))
-        if "vswr_loss_db" in budget:
-            info_rows.append(("VSWR Losses [dB]", f"{budget['vswr_loss_db']:.2f}"))
-        if "effective_gain_dbi" in budget:
-            info_rows.append(("Effective Gain [dBi]", f"{budget['effective_gain_dbi']:.2f}"))
-        if "eirp_source" in budget:
-            info_rows.append(
-                (
-                    "EIRP Source",
-                    "Tx chain (power + effective gain)"
-                    if budget["eirp_source"] == "tx_chain"
-                    else "Parameters panel",
-                )
-            )
-        if extra_info.get("pointing_loss_db") is not None:
-            info_rows.append(("Tx Antenna Pointing Loss [dB]", f"{extra_info['pointing_loss_db']:.2f}"))
-        if extra_info.get("ant_axial_ratio_db") is not None:
-            info_rows.append(("Tx Antenna Axial Ratio [dB]", f"{extra_info['ant_axial_ratio_db']:.2f}"))
-        if extra_info.get("rx_axial_ratio_db") is not None:
-            info_rows.append(("Rx Antenna Axial Ratio [dB]", f"{extra_info['rx_axial_ratio_db']:.2f}"))
-        if "polarisation_loss_range_db" in budget:
-            pol_range = budget["polarisation_loss_range_db"]
-            info_rows.append(
-                (
-                    "Polarisation Loss from Axial Ratios (best/worst) [dB]",
-                    f"{pol_range['best']:.2f} / {pol_range['worst']:.2f}",
-                )
-            )
-        if "rx_depointing_deg" in budget:
-            info_rows.append(("Rx Antenna Depointing Angle [deg]", f"{budget['rx_depointing_deg']:.2f}"))
-            info_rows.append(("Rx Antenna 3dB Beamwidth [deg]", f"{budget['rx_beamwidth_3db_deg']:.2f}"))
-        if extra_info.get("station"):
-            info_rows.append(("Station Location", extra_info["station"]))
-        if extra_info.get("link_availability_pct") is not None:
-            info_rows.append(("Weather Availability [%]", f"{extra_info['link_availability_pct']:g}"))
-
+        info_rows = static_report.info_rows(budget, extra_info)
         if info_rows:
             info_frame = ttk.LabelFrame(parent, text="Static Link Budget Info", padding=8)
             info_frame.pack(fill=tk.X, pady=(0, 10))
@@ -2220,81 +2319,8 @@ class LinkBudgetApp:
             justify="left",
         ).pack(anchor="w", pady=(0, 4))
 
-        def _check(value: float, threshold: float | None) -> str | None:
-            if threshold is None or value != value:  # NaN never passes or fails
-                return None
-            return "pass" if value >= threshold else "fail"
-
-        clear = budget["clear"]
-        rain = budget["rain_faded"]
         required_margin = extra_info.get("required_margin_db")
-
-        # (label, clear value, rain value, pass/fail threshold or None)
-        rows: list[tuple[str, float, float, float | None]] = []
-
-        def _both(label: str, value: float) -> None:
-            rows.append((label, value, value, None))
-
-        if "eirp_dbw" in budget:
-            _both("EIRP [dBW]", budget["eirp_dbw"])
-        _both("Free Space Loss [dB]", budget["path_loss_db"])
-        rows += [
-            ("Gas Attenuation [dB]", clear["gas_attenuation_db"], rain["gas_attenuation_db"], None),
-            ("Cloud Attenuation [dB]", clear["cloud_attenuation_db"], rain["cloud_attenuation_db"], None),
-            ("Rain Attenuation [dB]", clear["rain_attenuation_db"], rain["rain_attenuation_db"], None),
-            ("Scintillation [dB]", clear["scintillation_db"], rain["scintillation_db"], None),
-            (
-                "Total Atmospheric Attenuation [dB]",
-                clear["atmospheric_attenuation_db"],
-                rain["atmospheric_attenuation_db"],
-                None,
-            ),
-        ]
-        if budget.get("ionospheric_loss_db"):
-            _both("Ionospheric Loss [dB]", budget["ionospheric_loss_db"])
-        if budget.get("polarisation_loss_db"):
-            _both("Polarisation Mismatch Loss [dB]", budget["polarisation_loss_db"])
-        if budget.get("multipath_loss_db"):
-            _both("Multipath Losses [dB]", budget["multipath_loss_db"])
-        rows.append(
-            (
-                "Total Propagation Loss [dB]",
-                clear["total_propagation_loss_db"],
-                rain["total_propagation_loss_db"],
-                None,
-            )
-        )
-        if "gt_dbk" in budget:
-            _both("Rx G/T [dB/K]", budget["gt_dbk"])
-        if "rx_depointing_deg" in budget:
-            _both("Rx Antenna Pointing Loss [dB]", budget["rx_pointing_loss_db"])
-        rows.append(("Rx Power [dBW]", clear["rx_power_dbw"], rain["rx_power_dbw"], None))
-        if "received_cno_dbhz" in clear:
-            rows.append(("Received S/No [dBHz]", clear["received_cno_dbhz"], rain["received_cno_dbhz"], None))
-        if budget.get("modulation_degradation_db"):
-            _both("Modulation Degradation [dB]", budget["modulation_degradation_db"])
-        if "receiver_degradation_db" in budget:
-            _both("Receiver Degradation [dB]", budget["receiver_degradation_db"])
-        rows.append(("C/No after Degradations [dBHz]", clear["cno_dbhz"], rain["cno_dbhz"], None))
-        if "bitrate_dbhz" in budget:
-            _both("Bit Rate incl. Formatting [dBHz]", budget["bitrate_dbhz"])
-        rows.append(("Received Eb/No [dB]", clear["ebno_db"], rain["ebno_db"], None))
-        if "required_ebno_db" in budget:
-            _both("Required Eb/No [dB]", budget["required_ebno_db"])
-        if "margin_db" in clear:
-            rows.append(("Data Recovery Margin [dB]", clear["margin_db"], rain["margin_db"], required_margin))
-        clear_stats = clear.get("margin_statistics")
-        rain_stats = rain.get("margin_statistics")
-        if clear_stats and rain_stats:
-            for key, label, threshold in (
-                ("favourable_db", "Margin – All Favourable [dB]", None),
-                ("adverse_db", "Margin – All Adverse [dB]", None),
-                ("mean_db", "Margin Mean [dB]", None),
-                ("sigma_db", "Margin σ [dB]", None),
-                ("mean_minus_3sigma_db", "MEAN – 3σ [dB]", 0.0),
-                ("worst_case_rss_db", "MARGIN – Worst Case RSS [dB]", 0.0),
-            ):
-                rows.append((label, clear_stats[key], rain_stats[key], threshold))
+        rows = static_report.link_budget_rows(budget, required_margin)
 
         table_frame = ttk.LabelFrame(parent, text="Link Budget", padding=4)
         table_frame.pack(fill=tk.BOTH, expand=True)
@@ -2310,29 +2336,30 @@ class LinkBudgetApp:
         _configure_result_tags(table)
 
         row_help: dict[str, str] = {}
-        for i, (label, clear_val, rain_val, threshold) in enumerate(rows):
-            clear_status = _check(clear_val, threshold)
-            rain_status = _check(rain_val, threshold)
-            clear_text = _format_checked(clear_val, clear_status)
-            rain_text = _format_checked(rain_val, rain_status)
+        for i, row in enumerate(rows):
+            clear_status = row.status(row.clear)
+            rain_status = row.status(row.rain)
+            clear_text = _format_checked(row.clear, clear_status)
+            rain_text = _format_checked(row.rain, rain_status)
             tags = ["evenrow" if i % 2 == 0 else "oddrow"]
             if "fail" in (clear_status, rain_status):
                 tags.append("fail")
             elif "pass" in (clear_status, rain_status):
                 tags.append("pass")
-            iid = table.insert("", "end", values=(label, clear_text, rain_text), tags=tuple(tags))
-            help_text = _FIXED_LB_ROW_HELP.get(label)
-            if label == "Data Recovery Margin [dB]" and required_margin is not None:
+            iid = table.insert("", "end", values=(row.label, clear_text, rain_text), tags=tuple(tags))
+            help_text = _FIXED_LB_ROW_HELP.get(row.label)
+            if row.label == "Data Recovery Margin [dB]" and required_margin is not None:
                 help_text = f"{help_text} Requirement: ≥ {required_margin:g} dB."
             if help_text:
                 row_help[iid] = help_text
-            export_rows.append(("Link Budget", label, clear_text, rain_text))
+            export_rows.append(("Link Budget", row.label, clear_text, rain_text))
         _TreeviewRowTooltip(table, row_help)
         table.pack(fill=tk.BOTH, expand=True)
 
         self._render_pfd_section(parent, budget, extra_info, export_rows)
 
         # Tolerance contributions are the same for both conditions.
+        clear_stats = budget["clear"].get("margin_statistics")
         if clear_stats and clear_stats["contributions"]:
             tol_frame = ttk.LabelFrame(parent, text="Tolerance Contributions", padding=8)
             tol_frame.pack(fill=tk.X, pady=(10, 0))
@@ -2394,35 +2421,13 @@ class LinkBudgetApp:
         pfd_frame.pack(fill=tk.X, pady=(10, 0))
         ttk.Label(
             pfd_frame,
-            text=(
-                "The power flux density (PFD) is the power per unit area reaching the receiving "
-                "site: PFD = EIRP − 10·log10(4π·d²), with d the slant range. No atmospheric "
-                "loss is subtracted (conservative, as required for regulatory checks). To "
-                "compare it with the ITU limits it is referred to a 4 kHz bandwidth, assuming "
-                "the power is spread uniformly over the occupied bandwidth B: "
-                "PFD(4 kHz) = PFD − 10·log10(B / 4 kHz). "
-                "PFD Margin = Limit − PFD(4 kHz) must be ≥ 0 dB. The limit depends on the "
-                "frequency band and on the elevation angle (ITU Radio Regulations Art. 21, "
-                "ECSS-E-ST-50-05C)."
-            ),
+            text=static_report.PFD_EXPLANATION,
             foreground=PALETTE["text_muted"],
             wraplength=720,
             justify="left",
         ).pack(anchor="w", pady=(0, 6))
 
-        pfd_rows: list[tuple[str, float, float | None]] = []
-        if "pfd_dbm_m2" in budget:
-            pfd_rows.append(("Power Flux Density [dBm/m²]", budget["pfd_dbm_m2"], None))
-        pfd_rows.append(("Power Flux Density [dBW/m²]", budget["pfd_dbw_m2"], None))
-        if extra_info.get("occupied_bandwidth_khz") is not None:
-            pfd_rows.append(("Occupied Bandwidth [kHz]", extra_info["occupied_bandwidth_khz"], None))
-        if "pfd_dbw_m2_per_4khz" in budget:
-            pfd_rows.append(("Power Flux Density in 4 kHz [dBW/m²/4kHz]", budget["pfd_dbw_m2_per_4khz"], None))
-        if "pfd_limit_dbw_m2_4khz" in budget:
-            pfd_rows.append(("PFD Limit [dBW/m²/4kHz]", budget["pfd_limit_dbw_m2_4khz"], None))
-        if "pfd_margin_db" in budget:
-            pfd_rows.append(("PFD Margin [dB]", budget["pfd_margin_db"], 0.0))
-
+        pfd_rows = static_report.pfd_rows(budget, extra_info)
         pfd_table = ttk.Treeview(pfd_frame, columns=("param", "value"), show="headings", height=len(pfd_rows))
         pfd_table.heading("param", text="Parameter")
         pfd_table.heading("value", text="Value")
@@ -2430,26 +2435,18 @@ class LinkBudgetApp:
         pfd_table.column("value", anchor="center", width=140)
         _configure_result_tags(pfd_table)
         row_help: dict[str, str] = {}
-        for i, (label, value, threshold) in enumerate(pfd_rows):
-            status = None if threshold is None else ("pass" if value >= threshold else "fail")
-            text = _format_checked(value, status, digits=1 if "Bandwidth" in label else 2)
+        for i, row in enumerate(pfd_rows):
+            status = row.status()
+            text = _format_checked(row.value, status, digits=row.digits)
             tags = ["evenrow" if i % 2 == 0 else "oddrow"] + ([status] if status else [])
-            iid = pfd_table.insert("", "end", values=(label, text), tags=tuple(tags))
-            if label in _FIXED_LB_ROW_HELP:
-                row_help[iid] = _FIXED_LB_ROW_HELP[label]
-            export_rows.append(("Power Flux Density", label, text, ""))
+            iid = pfd_table.insert("", "end", values=(row.label, text), tags=tuple(tags))
+            if row.label in _FIXED_LB_ROW_HELP:
+                row_help[iid] = _FIXED_LB_ROW_HELP[row.label]
+            export_rows.append(("Power Flux Density", row.label, text, ""))
         _TreeviewRowTooltip(pfd_table, row_help)
         pfd_table.pack(anchor="w")
 
-        notes = []
-        if extra_info.get("bandwidth_missing"):
-            notes.append(
-                "PFD in 4 kHz not computed: set Roll-off and Spectral Efficiency in the "
-                "parameters panel to get the occupied bandwidth."
-            )
-        elif "pfd_margin_db" not in budget:
-            notes.append("Set a PFD Limit (Data Rate & PFD Limit section) to get the PFD margin.")
-        for note in notes:
+        for note in static_report.pfd_notes(budget, extra_info):
             ttk.Label(pfd_frame, text=note, foreground=PALETTE["danger"], wraplength=720, justify="left").pack(
                 anchor="w", pady=(6, 0)
             )
@@ -2590,6 +2587,35 @@ class LinkBudgetApp:
                 self.channel_bw_ul_var,
                 "UL",
             )
+
+    def on_panel_entry_edited(self, entry: ttk.Entry) -> None:
+        """React to an edit of a parameters panel field, wherever it was typed.
+
+        Shared by the main window and the fixed-elevation popups (which edit
+        the same fields), so both refresh the derived baseband values and
+        flag the uplink budget for recalculation in the same way.
+        """
+
+        uplink_baseband = (
+            self.uplink_bitrate_entry,
+            self.uplink_rolloff_entry,
+            self.uplink_overhead_entry,
+            self.uplink_spectral_eff_entry,
+        )
+        uplink_rf = (
+            self.eirp_gs_entry,
+            self.uplink_freq_entry,
+            self.gt_sat_entry,
+            self.demod_loss_ul_entry,
+            self.other_att_ul_entry,
+        )
+        downlink_baseband = (self.bitrate_entry, self.rolloff_entry, self.overhead_entry, self.spectral_eff_entry)
+        if any(entry is e for e in uplink_baseband):
+            self.on_uplink_baseband_change()
+        elif any(entry is e for e in uplink_rf):
+            self.set_uplink_budget_stale()
+        elif any(entry is e for e in downlink_baseband):
+            self.update_link_budget_derived()
 
     def on_uplink_baseband_change(self, event=None):
         """Refresh derived UL metrics and mark uplink budget for recalculation."""
@@ -3001,10 +3027,8 @@ class LinkBudgetApp:
         ttk.Label(baseband_frame, textvariable=self.channel_bw_var).grid(row=3, column=2, columnspan=2, sticky="w", padx=5)
         baseband_frame.grid_columnconfigure(1, weight=1)
         baseband_frame.grid_columnconfigure(3, weight=1)
-        self.bitrate_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.rolloff_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.overhead_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.spectral_eff_entry.bind("<KeyRelease>", self.update_link_budget_derived)
+        for entry in (self.bitrate_entry, self.rolloff_entry, self.overhead_entry, self.spectral_eff_entry):
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
         self.update_link_budget_derived()
 
         downlink_btn_frame = ttk.LabelFrame(
@@ -3182,7 +3206,7 @@ class LinkBudgetApp:
             self.demod_loss_ul_entry,
             self.other_att_ul_entry,
         ]:
-            entry.bind("<KeyRelease>", lambda event: self.set_uplink_budget_stale())
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
         for entry in [
             self.uplink_bitrate_entry,
@@ -3190,7 +3214,7 @@ class LinkBudgetApp:
             self.uplink_overhead_entry,
             self.uplink_spectral_eff_entry,
         ]:
-            entry.bind("<KeyRelease>", self.on_uplink_baseband_change)
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
         uplink_actions_frame = ttk.LabelFrame(
             uplink_tab, text="Uplink Actions", padding=10

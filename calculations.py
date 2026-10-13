@@ -328,8 +328,17 @@ def extract_json_section(payload: Any, section: str) -> Dict[str, Any]:
     return values
 
 
-def save_json_section(file_path: str, section: str, values: Dict[str, Any]) -> None:
+def save_json_section(
+    file_path: str,
+    section: str,
+    values: Dict[str, Any],
+    top_level: Optional[Dict[str, Any]] = None,
+) -> None:
     """Write ``values`` as ``section`` of the JSON file at ``file_path``.
+
+    ``top_level`` keys (e.g. the main panel parameters used by the section)
+    are written at the top level of the file as well, replacing only those
+    keys.
 
     Every other key already in the file is kept, so the static link budget
     inputs can be saved straight into ``parameters.json`` alongside the main
@@ -345,6 +354,7 @@ def save_json_section(file_path: str, section: str, values: Dict[str, Any]) -> N
         if not isinstance(existing, dict):
             raise ValueError(f"'{file_path}' does not contain a JSON object; not overwriting it.")
         payload = existing
+    payload.update(top_level or {})
     payload[section] = values
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
