@@ -831,3 +831,16 @@ def test_repository_parameters_file_has_valid_fixed_elevation_section():
     with open(path, encoding="utf-8") as f:
         section = calculations.extract_json_section(json.load(f), "fixed_elevation_downlink")
     assert section["elevation_deg"] == 3.0
+
+
+def test_save_json_section_writes_top_level_values(tmp_path):
+    path = tmp_path / "parameters.json"
+    path.write_text('{"gt_gs_dbk": 8.5, "rolloff": 0.35}')
+    calculations.save_json_section(
+        str(path), "fixed_elevation_downlink", {"elevation_deg": 3.0}, top_level={"gt_gs_dbk": 7.0}
+    )
+    assert json.loads(path.read_text()) == {
+        "gt_gs_dbk": 7.0,
+        "rolloff": 0.35,
+        "fixed_elevation_downlink": {"elevation_deg": 3.0},
+    }

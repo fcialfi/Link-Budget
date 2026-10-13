@@ -574,7 +574,28 @@ class LinkBudgetApp:
         with open(file_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
 
-        field_map = {
+        field_map = self._parameter_entries()
+
+        for key, entry in field_map.items():
+            if key in payload and entry is not None:
+                entry.delete(0, tk.END)
+                entry.insert(0, str(payload[key]))
+
+        for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
+            if isinstance(payload.get(section), dict):
+                self.static_lb_values[section] = payload[section]
+        self.current_param_file = os.path.abspath(file_path)
+
+        if self.param_file_var is not None:
+            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
+
+        self.update_link_budget_derived()
+        self.set_analysis_stale()
+
+    def _parameter_entries(self) -> dict:
+        """``parameters.json`` key -> parameters panel entry."""
+
+        return {
             "eirp_sat_dbw": self.eirp_sat_entry,
             "eirp_gs_dbw": self.eirp_gs_entry,
             "frequency_ghz": self.freq_entry,
@@ -598,21 +619,20 @@ class LinkBudgetApp:
             "uplink_spectral_efficiency_bpshz": self.uplink_spectral_eff_entry,
         }
 
-        for key, entry in field_map.items():
-            if key in payload and entry is not None:
-                entry.delete(0, tk.END)
-                entry.insert(0, str(payload[key]))
+    def _linked_var(self, entry: ttk.Entry) -> tk.StringVar:
+        """A StringVar shared by a parameters panel entry and its copies.
 
-        for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
-            if isinstance(payload.get(section), dict):
-                self.static_lb_values[section] = payload[section]
-        self.current_param_file = os.path.abspath(file_path)
+        Created on first use and attached to ``entry`` as its textvariable,
+        so another widget using the same variable edits the panel value
+        directly, and the other way round.
+        """
 
-        if self.param_file_var is not None:
-            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
-
-        self.update_link_budget_derived()
-        self.set_analysis_stale()
+        var = getattr(entry, "_linked_var", None)
+        if var is None:
+            var = tk.StringVar(value=entry.get())
+            entry.configure(textvariable=var)
+            entry._linked_var = var
+        return var
 
     def load_parameters_from_file(self):
         """Let the user pick a parameters JSON file and load it."""
@@ -1480,61 +1500,98 @@ class LinkBudgetApp:
             form,
             text=(
                 "Preliminary worst-case check, independent of any TLE: the slant range is "
-                "derived from the elevation angle and satellite altitude. Frequency, G/T, bit "
-                "rate and the other values below are taken from the parameters panel. The "
-                "inputs of this window are remembered, and can be saved to / loaded from a "
-                "parameters file (saving into parameters.json auto-loads them at startup)."
+                "derived from the elevation angle and satellite altitude. The inputs of this "
+                "window are remembered, and Save / Load write and read them, together with the "
+                "parameters panel values shown below, in a parameters file (saving into "
+                "parameters.json auto-loads them at startup)."
             ),
             foreground=PALETTE["text_muted"],
             wraplength=680,
             justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        recap_frame = ttk.LabelFrame(form, text="Using From Parameters Panel", padding=8)
-        recap_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        recap_frame.grid_columnconfigure(1, weight=1)
-        recap_frame.grid_columnconfigure(3, weight=1)
-
+        panel_frame = ttk.LabelFrame(
+            form, text="Parameters Panel Values (linked to the main window)", padding=8
+        )
+        panel_frame.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        panel_frame.grid_columnconfigure(1, weight=1)
+        panel_frame.grid_columnconfigure(3, weight=1)
         recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
-        # (label, getter, text shown when empty, whether empty should be flagged in red)
-        recap_specs = [
-            ("Ground Station", lambda: self.gs_var.get(), "not set", True),
-            (freq_label, lambda: freq_entry.get().strip(), "not set", True),
-            (eirp_label, lambda: eirp_entry.get().strip(), "not set (needs Tx chain)", False),
-            (gt_label, lambda: gt_entry.get().strip(), "not set", True),
-            (demod_loss_label, lambda: demod_loss_entry.get().strip(), "not set", True),
-            (bitrate_label, lambda: bitrate_entry.get().strip(), "not set", True),
-            (overhead_label, lambda: overhead_entry.get().strip(), "not set", True),
-            (other_att_label, lambda: other_att_entry.get().strip(), "0 (default)", False),
-            ("Antenna Diameter GS [m]", lambda: self.d_gs_entry.get().strip(), "not set", True),
-            ("Link Availability [%]", lambda: self.LA_entry.get().strip(), "not set", True),
-            ("Scintillation", lambda: "Included" if self.scint_var.get() else "Excluded", "", False),
+        ttk.Label(
+            panel_frame,
+            text=(
+                "These are the same fields as in the main window: editing them here changes "
+                "them there too, and the other way round."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=680,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 6))
+
+        def _panel_label(row: int, col: int, text: str) -> None:
+            ttk.Label(panel_frame, text=f"{text}:").grid(
+                row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 18, 4), pady=2
+            )
+
+        _panel_label(1, 0, "Ground Station")
+        gs_box = ttk.Combobox(
+            panel_frame,
+            textvariable=self.gs_var,
+            values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
+            postcommand=lambda: gs_box.configure(
+                values=list(self.gs_menu["values"]) if self.gs_menu is not None else []
+            ),
+            state="readonly",
+            width=15,
+        )
+        gs_box.grid(row=1, column=1, sticky="w", pady=2)
+        gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
+        ttk.Checkbutton(
+            panel_frame,
+            text="Scintillation loss",
+            variable=self.scint_var,
+            command=self.set_analysis_stale,
+        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(18, 0), pady=2)
+
+        # (label, parameters panel entry) -- edited through the panel's own
+        # StringVar, with the panel's key bindings (derived values, stale
+        # flags) fired on every edit, so nothing behaves differently from
+        # typing in the main window.
+        panel_specs = [
+            (freq_label, freq_entry),
+            (eirp_label, eirp_entry),
+            (gt_label, gt_entry),
+            (demod_loss_label, demod_loss_entry),
+            (bitrate_label, bitrate_entry),
+            (overhead_label, overhead_entry),
+            ("Roll-off Factor", rolloff_entry),
+            ("Spectral Efficiency [bps/Hz]", spectral_eff_entry),
+            (other_att_label, other_att_entry),
+            ("Antenna Diameter GS [m]", self.d_gs_entry),
+            ("Link Availability [%]", self.LA_entry),
         ]
-        recap_value_labels: list[ttk.Label] = []
-        for i, (label_text, _getter, _empty_text, _flag_empty) in enumerate(recap_specs):
+        panel_tooltips = {
+            eirp_label: "Not needed when the Transmitter Power below is set (EIRP from the Tx chain).",
+            "Roll-off Factor": "With the spectral efficiency, gives the occupied bandwidth used for the PFD in 4 kHz.",
+            "Spectral Efficiency [bps/Hz]": "With the roll-off, gives the occupied bandwidth used for the PFD in 4 kHz.",
+            "Antenna Diameter GS [m]": "Used by the ITU-R atmospheric model and for the default GS beamwidth.",
+            "Link Availability [%]": "Rain/cloud attenuation is computed for p = 100 − availability [% of time].",
+        }
+        for i, (label_text, panel_entry) in enumerate(panel_specs):
             r, c = divmod(i, 2)
-            ttk.Label(
-                recap_frame,
-                text=f"{label_text}:",
-                font=(recap_font_family, 9),
-                foreground=PALETTE["text_muted"],
-            ).grid(row=r, column=c * 2, sticky="w", padx=(0 if c == 0 else 18, 4), pady=1)
-            value_label = ttk.Label(recap_frame, font=(recap_font_family, 9, "bold"))
-            value_label.grid(row=r, column=c * 2 + 1, sticky="w", pady=1)
-            recap_value_labels.append(value_label)
+            _panel_label(r + 2, c, label_text)
+            linked = ttk.Entry(panel_frame, textvariable=self._linked_var(panel_entry), width=15)
+            linked.grid(row=r + 2, column=c * 2 + 1, sticky="w", pady=2)
+            linked.bind("<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited))
+            if label_text in panel_tooltips:
+                _add_tooltip(linked, panel_tooltips[label_text])
 
-        def _refresh_recap():
-            for (_, getter, empty_text, flag_empty), value_label in zip(recap_specs, recap_value_labels):
-                value = getter()
-                if not value:
-                    value_label.configure(
-                        text=empty_text, foreground=PALETTE["danger"] if flag_empty else PALETTE["text_muted"]
-                    )
-                else:
-                    value_label.configure(text=value, foreground=PALETTE["text"])
-
-        _refresh_recap()
-        win.bind("<FocusIn>", lambda event: _refresh_recap())
+        parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
+        panel_keys = [
+            (parameter_keys[id(panel_entry)], panel_entry)
+            for _label, panel_entry in panel_specs
+            if id(panel_entry) in parameter_keys
+        ]
 
         # Grouped inputs: (group title, [(key, label, default text, placeholder, tooltip)]).
         # Fields with a real default ("0", the minimum elevation, ...) start
@@ -1848,7 +1905,6 @@ class LinkBudgetApp:
             return parser(entries[key], entry_labels[key], **kwargs)
 
         def _calculate():
-            _refresh_recap()
             _remember_values()
             for widget in results_frame.winfo_children():
                 widget.destroy()
@@ -2028,12 +2084,24 @@ class LinkBudgetApp:
             if not file_path:
                 return
             _remember_values()
+            panel_values = {}
+            for key, panel_entry in panel_keys:
+                text = panel_entry.get().strip()
+                if text:
+                    try:
+                        panel_values[key] = float(text)
+                    except ValueError:
+                        panel_values[key] = text
             try:
-                calculations.save_json_section(file_path, section, self.static_lb_values[section])
+                calculations.save_json_section(
+                    file_path, section, self.static_lb_values[section], top_level=panel_values
+                )
             except Exception as exc:
                 messagebox.showerror("Save Error", f"Unable to save the parameters: {exc}", parent=win)
                 return
-            status_var.set(f"Saved to {os.path.abspath(file_path)} (section '{section}')")
+            status_var.set(
+                f"Saved to {os.path.abspath(file_path)} (section '{section}' and the panel values above)"
+            )
 
         def _load():
             file_path = filedialog.askopenfilename(
@@ -2046,10 +2114,16 @@ class LinkBudgetApp:
                 return
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
-                    values = calculations.extract_json_section(json.load(f), section)
+                    payload = json.load(f)
+                values = calculations.extract_json_section(payload, section)
             except Exception as exc:
                 messagebox.showerror("Load Error", f"Unable to load the parameters: {exc}", parent=win)
                 return
+            for key, panel_entry in panel_keys:
+                if key in payload:
+                    panel_entry.delete(0, tk.END)
+                    panel_entry.insert(0, _format_value(payload[key]))
+                    self.on_panel_entry_edited(panel_entry)
             _apply_values(values)
             _remember_values()
             status_var.set(f"Loaded from {os.path.abspath(file_path)} (section '{section}')")
@@ -2089,15 +2163,17 @@ class LinkBudgetApp:
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             load_button,
-            f"Load this window's inputs from the '{section}' section of a parameters JSON file.",
+            f"Load this window's inputs from the '{section}' section of a parameters JSON file, "
+            "and the parameters panel values shown in this window when the file has them.",
         )
         save_button = ttk.Button(button_row, text="Save...", command=_save)
         save_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             save_button,
-            f"Save this window's inputs as the '{section}' section of a JSON file; the other "
-            "keys already in the file are kept. Saving into parameters.json makes them load "
-            "automatically at startup.",
+            f"Save this window's inputs as the '{section}' section of a JSON file, together "
+            "with the parameters panel values shown in this window; the other keys already in "
+            "the file are kept. Saving into parameters.json makes them load automatically at "
+            "startup.",
         )
         ttk.Button(button_row, text="Reset", command=_reset).pack(side=tk.LEFT, padx=(0, 6))
         export_button = ttk.Button(button_row, text="Export CSV...", command=_export_csv)
@@ -2591,6 +2667,35 @@ class LinkBudgetApp:
                 "UL",
             )
 
+    def on_panel_entry_edited(self, entry: ttk.Entry) -> None:
+        """React to an edit of a parameters panel field, wherever it was typed.
+
+        Shared by the main window and the fixed-elevation popups (which edit
+        the same fields), so both refresh the derived baseband values and
+        flag the uplink budget for recalculation in the same way.
+        """
+
+        uplink_baseband = (
+            self.uplink_bitrate_entry,
+            self.uplink_rolloff_entry,
+            self.uplink_overhead_entry,
+            self.uplink_spectral_eff_entry,
+        )
+        uplink_rf = (
+            self.eirp_gs_entry,
+            self.uplink_freq_entry,
+            self.gt_sat_entry,
+            self.demod_loss_ul_entry,
+            self.other_att_ul_entry,
+        )
+        downlink_baseband = (self.bitrate_entry, self.rolloff_entry, self.overhead_entry, self.spectral_eff_entry)
+        if any(entry is e for e in uplink_baseband):
+            self.on_uplink_baseband_change()
+        elif any(entry is e for e in uplink_rf):
+            self.set_uplink_budget_stale()
+        elif any(entry is e for e in downlink_baseband):
+            self.update_link_budget_derived()
+
     def on_uplink_baseband_change(self, event=None):
         """Refresh derived UL metrics and mark uplink budget for recalculation."""
 
@@ -3001,10 +3106,8 @@ class LinkBudgetApp:
         ttk.Label(baseband_frame, textvariable=self.channel_bw_var).grid(row=3, column=2, columnspan=2, sticky="w", padx=5)
         baseband_frame.grid_columnconfigure(1, weight=1)
         baseband_frame.grid_columnconfigure(3, weight=1)
-        self.bitrate_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.rolloff_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.overhead_entry.bind("<KeyRelease>", self.update_link_budget_derived)
-        self.spectral_eff_entry.bind("<KeyRelease>", self.update_link_budget_derived)
+        for entry in (self.bitrate_entry, self.rolloff_entry, self.overhead_entry, self.spectral_eff_entry):
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
         self.update_link_budget_derived()
 
         downlink_btn_frame = ttk.LabelFrame(
@@ -3182,7 +3285,7 @@ class LinkBudgetApp:
             self.demod_loss_ul_entry,
             self.other_att_ul_entry,
         ]:
-            entry.bind("<KeyRelease>", lambda event: self.set_uplink_budget_stale())
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
         for entry in [
             self.uplink_bitrate_entry,
@@ -3190,7 +3293,7 @@ class LinkBudgetApp:
             self.uplink_overhead_entry,
             self.uplink_spectral_eff_entry,
         ]:
-            entry.bind("<KeyRelease>", self.on_uplink_baseband_change)
+            entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
         uplink_actions_frame = ttk.LabelFrame(
             uplink_tab, text="Uplink Actions", padding=10
