@@ -90,7 +90,7 @@ def link_budget_rows(budget: Dict[str, Any], required_margin_db: Optional[float]
         both(demod, "Receiver Degradation [dB]", budget["receiver_degradation_db"])
     per_condition(demod, "C/No after Degradations [dBHz]", "cno_dbhz")
     if "bitrate_dbhz" in budget:
-        both(demod, "Bit Rate incl. Formatting [dBHz]", budget["bitrate_dbhz"])
+        both(demod, "Transfer Frame Bit Rate [dBHz]", budget["bitrate_dbhz"])
     per_condition(demod, "Received Eb/No [dB]", "ebno_db", emphasis=True)
     if "required_ebno_db" in budget:
         both(demod, "Required Eb/No [dB]", budget["required_ebno_db"])
@@ -209,13 +209,13 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
 
     rows: List[Tuple[str, str]] = []
     if extra_info.get("info_bitrate_kbps") is not None:
-        rows.append(("Information Bit Rate (excl. coding) [kbit/s]", f"{extra_info['info_bitrate_kbps']:.2f}"))
+        rows.append(("Information (User Data) Bit Rate [kbit/s]", f"{extra_info['info_bitrate_kbps']:.2f}"))
     if budget.get("bitrate_formatted_bps"):
         rows.append(
-            ("Bit Rate incl. Formatting (excl. coding) [kbit/s]", f"{budget['bitrate_formatted_bps'] / 1000.0:.2f}")
+            ("Transfer Frame Bit Rate (Eb/No ref.) [kbit/s]", f"{budget['bitrate_formatted_bps'] / 1000.0:.2f}")
         )
     if extra_info.get("bitrate_kbps") is not None:
-        rows.append(("Bit Rate incl. Coding [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
+        rows.append(("Coded (Channel) Bit Rate [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
     framing = extra_info.get("ccsds_framing")
     if framing:
         rows.append(
@@ -628,8 +628,9 @@ def build_static_report_pdf(
         "location (gas P.676, cloud P.840, rain P.618/P.837"
         + (", tropospheric scintillation P.618)." if budget.get("scintillation_included") else
            "; tropospheric scintillation excluded)."),
-        "Received S/No = Rx Power + G/T + 228.6 dB (Boltzmann constant); Eb/No referred to the bit "
-        "rate including formatting and excluding coding, after modulation and receiver degradations.",
+        "Received S/No = Rx Power + G/T + 228.6 dB (Boltzmann constant); Eb/No referred to the "
+        "transfer frame bit rate (coded bit rate without channel coding = information bit rate × "
+        "formatting factor), after modulation and receiver degradations.",
         "Statistical margins assume independent contributors (ECSS/CCSDS link budget convention).",
     ]
     if budget.get("ionospheric_scintillation"):

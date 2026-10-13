@@ -886,7 +886,7 @@ def calculate_fixed_elevation_link_budget(
     otherwise. ``rx_depointing_deg`` adds a receive antenna pointing loss
     (:func:`antenna_pointing_loss_db`), using ``rx_beamwidth_3db_deg`` or, if
     that is omitted, the beamwidth of a ``d_gs`` dish at ``freq``. Eb/No is
-    referred to the bit rate including formatting but excluding coding,
+    referred to the transfer frame bit rate (formatting included, channel coding excluded),
     ``bitrate / overhead * formatting_overhead`` (``overhead`` being the
     total coded-over-information rate ratio). When ``tolerances`` (see
     :func:`margin_statistics`) and ``required_ebno`` are given, each

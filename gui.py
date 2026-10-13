@@ -412,9 +412,9 @@ _FIXED_LB_ROW_HELP = {
     "Modulation Degradation [dB]": "Modulator/filter implementation loss entered in the Receiver section.",
     "Receiver Degradation [dB]": "Demodulator implementation loss from the parameters panel.",
     "C/No after Degradations [dBHz]": "Received S/No minus modulation and receiver degradations.",
-    "Bit Rate incl. Formatting [dBHz]": (
-        "10·log10 of the bit rate Eb/No is referred to: information bit rate × formatting "
-        "overhead (coding excluded)."
+    "Transfer Frame Bit Rate [dBHz]": (
+        "10·log10 of the bit rate Eb/No is referred to: the transfer frame bit rate, i.e. the "
+        "coded bit rate without channel coding (= information bit rate × formatting factor)."
     ),
     "Received Eb/No [dB]": "Energy per bit over noise density: C/No after degradations − bit rate [dBHz].",
     "Required Eb/No [dB]": "Eb/No threshold of the modulation/coding for the required error rate.",
@@ -1426,9 +1426,9 @@ class LinkBudgetApp:
             demod_loss_entry=self.demod_loss_entry,
             demod_loss_label="Demodulator Loss [dB]",
             bitrate_entry=self.bitrate_entry,
-            bitrate_label="Bit Rate [Mbps]",
+            bitrate_label="Coded Bit Rate [Mbps]",
             overhead_entry=self.overhead_entry,
-            overhead_label="Overhead (Conv. + RS)",
+            overhead_label="Overhead (coded / info)",
             other_att_entry=self.other_att_entry,
             other_att_label="Other Attenuations [dB]",
             rolloff_entry=self.rolloff_entry,
@@ -1450,9 +1450,9 @@ class LinkBudgetApp:
             demod_loss_entry=self.demod_loss_ul_entry,
             demod_loss_label="Sat Demod Loss [dB]",
             bitrate_entry=self.uplink_bitrate_entry,
-            bitrate_label="UL Bit Rate [Mbps]",
+            bitrate_label="UL Coded Bit Rate [Mbps]",
             overhead_entry=self.uplink_overhead_entry,
-            overhead_label="UL Overhead (Conv. + RS)",
+            overhead_label="UL Overhead (coded / info)",
             other_att_entry=self.other_att_ul_entry,
             other_att_label="Uplink Other Attenuations [dB]",
             rolloff_entry=self.uplink_rolloff_entry,
@@ -1620,20 +1620,20 @@ class LinkBudgetApp:
                 + [
                     L(
                         bitrate_label, bitrate_entry,
-                        "Bit rate including coding: the channel bit rate of the transmitter. In "
-                        "CCSDS mode the formatted and information bit rates are derived from it.",
+                        "Coded (channel) bit rate of the transmitter, channel coding included. In "
+                        "CCSDS mode the transfer frame and information bit rates are derived from it.",
                     ),
                     L(
                         overhead_label, overhead_entry,
-                        "Coded bit rate / information bit rate (coding and formatting). Computed in "
-                        "CCSDS mode.",
+                        "Coded bit rate / information (user data) bit rate = formatting factor × "
+                        "channel coding factor. Computed in CCSDS mode.",
                     ),
                     F(
-                        "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
-                        "Bit rate including formatting (frame headers, ...) divided by the "
-                        "information bit rate. Eb/No is referred to the information bit rate "
-                        "times this factor (the bit rate excluding coding). Empty = 1. Computed in "
-                        "CCSDS mode.",
+                        "formatting_overhead", "Formatting Factor (frame / user data)", "", "e.g. 1.02",
+                        "Transfer frame bit rate divided by the information (user data) bit rate: "
+                        "frame header and trailer, and packet overheads. Eb/No is referred to the "
+                        "transfer frame bit rate = information bit rate × this factor. Empty = 1. "
+                        "Computed in CCSDS mode.",
                     ),
                 ]
                 # Roll-off and spectral efficiency only set the occupied bandwidth
@@ -1878,7 +1878,7 @@ class LinkBudgetApp:
                             "channel coding (32-bit ASM per RS(255,223) codeblock of 255·I bytes, "
                             "convolutional rate 1/2) give the formatting overhead and the total "
                             "overhead, filled in below (the overhead also in the main window), and "
-                            "the formatted and information bit rates.",
+                            "the transfer frame (Eb/No reference) and information bit rates.",
                         ).pack(side=tk.LEFT)
                     elif kind == "ccsds_options":
                         options_row = ttk.Frame(group_frame)
@@ -2204,7 +2204,7 @@ class LinkBudgetApp:
             else:
                 packet_line = "  (packet overheads not deducted: no packet length given)\n"
             formatting_text = (
-                f"Formatting = frame / user data = {frame} / {framing['user_data_bytes']:.1f} = "
+                f"Formatting factor = frame / user data = {frame} / {framing['user_data_bytes']:.1f} = "
                 f"{framing['formatting']:.5f}\n"
                 f"  Frame {frame} B (= 223 × I, I = {depth})\n"
                 f"  − primary header 6 B (includes the First Header Pointer)\n"
@@ -2224,9 +2224,10 @@ class LinkBudgetApp:
             )
             bitrate_text = (
                 f"Coded (channel) bit rate of the transmitter: {coded_kbps:.1f} kbit/s.\n"
-                f"  Formatted = coded / coding = {coded_kbps:.1f} / {framing['coding']:.5f} = "
-                f"{coded_kbps / framing['coding']:.1f} kbit/s (Eb/No reference)\n"
-                f"  Information = coded / overhead = {coded_kbps:.1f} / {framing['total']:.5f} = "
+                f"  Transfer frames = coded / coding = {coded_kbps:.1f} / {framing['coding']:.5f} = "
+                f"{coded_kbps / framing['coding']:.1f} kbit/s (Eb/No reference: ASM, RS check "
+                "symbols and convolutional coding removed)\n"
+                f"  Information (user data) = coded / overhead = {coded_kbps:.1f} / {framing['total']:.5f} = "
                 f"{coded_kbps / framing['total']:.1f} kbit/s\n"
                 f"{shared_note}"
             )
@@ -2273,8 +2274,8 @@ class LinkBudgetApp:
                 f"{framing['user_data_bytes']:.1f} B): "
                 f"coding {framing['coding']:.5f} (ASM + RS(255,223) I={framing['interleaving_depth']} "
                 f"+ conv 1/2), formatting {framing['formatting']:.5f}, total {framing['total']:.5f}\n"
-                f"Coded {coded_kbps:.1f} kbit/s → formatted {coded_kbps / framing['coding']:.1f} kbit/s "
-                f"(Eb/No reference) → information {coded_kbps / framing['total']:.1f} kbit/s"
+                f"Coded {coded_kbps:.1f} kbit/s → transfer frames {coded_kbps / framing['coding']:.1f} kbit/s "
+                f"(Eb/No reference) → user data {coded_kbps / framing['total']:.1f} kbit/s"
             )
 
         def _refresh_states(_event=None) -> None:
@@ -2651,7 +2652,7 @@ class LinkBudgetApp:
                     _coded_kbps, ccsds_framing = _ccsds_framing()
                 formatting_overhead = _field("formatting_overhead", _parse_optional, default=1.0)
                 if formatting_overhead <= 0:
-                    raise ValueError("'Formatting Overhead (factor)' must be greater than 0.")
+                    raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
                 rx_depointing_deg = _field("rx_depointing_deg", _parse_optional_or_none)
                 rx_beamwidth_deg = _field("rx_beamwidth_deg", _parse_optional_or_none)
                 if rx_beamwidth_deg is not None and rx_beamwidth_deg <= 0:
@@ -3753,7 +3754,7 @@ class LinkBudgetApp:
         # Baseband Parameters frame
         baseband_frame = ttk.LabelFrame(param_container, text="Baseband Parameters", padding=10)
         baseband_frame.grid(row=0, column=3, sticky="nsew", pady=5)
-        ttk.Label(baseband_frame, text="Bit Rate [Mbps]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Label(baseband_frame, text="Coded Bit Rate [Mbps]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.bitrate_entry = ttk.Entry(baseband_frame, width=15)
         self.bitrate_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
         ttk.Label(baseband_frame, text="Roll-off Factor").grid(row=0, column=2, sticky="w", padx=5, pady=2)
@@ -3762,7 +3763,7 @@ class LinkBudgetApp:
         ttk.Label(baseband_frame, text="Demodulator Loss [dB]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.demod_loss_entry = ttk.Entry(baseband_frame, width=15)
         self.demod_loss_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-        ttk.Label(baseband_frame, text="Overhead (Conv. + RS)").grid(row=1, column=2, sticky="w", padx=5, pady=2)
+        ttk.Label(baseband_frame, text="Overhead (coded / info)").grid(row=1, column=2, sticky="w", padx=5, pady=2)
         self.overhead_entry = ttk.Entry(baseband_frame, width=15)
         self.overhead_entry.grid(row=1, column=3, sticky="ew", padx=5, pady=2)
         ttk.Label(baseband_frame, text="Spectral Efficiency [b/s/Hz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
@@ -3914,7 +3915,7 @@ class LinkBudgetApp:
             uplink_container, text="Uplink Baseband Parameters", padding=10
         )
         uplink_baseband_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(0, 5))
-        ttk.Label(uplink_baseband_frame, text="UL Bit Rate [Mbps]").grid(
+        ttk.Label(uplink_baseband_frame, text="UL Coded Bit Rate [Mbps]").grid(
             row=0, column=0, sticky="w", padx=5, pady=2
         )
         self.uplink_bitrate_entry = ttk.Entry(uplink_baseband_frame, width=15)
@@ -3924,7 +3925,7 @@ class LinkBudgetApp:
         )
         self.uplink_rolloff_entry = ttk.Entry(uplink_baseband_frame, width=15)
         self.uplink_rolloff_entry.grid(row=0, column=3, sticky="ew", padx=5, pady=2)
-        ttk.Label(uplink_baseband_frame, text="UL Overhead (Conv. + RS)").grid(
+        ttk.Label(uplink_baseband_frame, text="UL Overhead (coded / info)").grid(
             row=1, column=0, sticky="w", padx=5, pady=2
         )
         self.uplink_overhead_entry = ttk.Entry(uplink_baseband_frame, width=15)
