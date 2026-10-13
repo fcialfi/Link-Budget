@@ -219,8 +219,8 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
         pol_range = budget["polarisation_loss_range_db"]
         rows.append(
             (
-                "Polarisation Loss from Axial Ratios (best/worst) [dB]",
-                f"{pol_range['best']:.2f} / {pol_range['worst']:.2f}",
+                "Polarisation Loss from Axial Ratios (co-polar gains) [dB]",
+                f"{pol_range['co_polar']:.2f}",
             )
         )
     if "rx_depointing_deg" in budget:

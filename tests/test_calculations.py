@@ -720,7 +720,7 @@ def test_fixed_elevation_link_budget_polarisation_and_rx_pointing(_stub_atmosphe
         rx_depointing_deg=0.5,
     )
 
-    worst = calculations.polarisation_mismatch_loss_db(3.0, 1.0)["worst"]
+    worst = calculations.polarisation_mismatch_loss_db(3.0, 1.0)["co_polar"]
     assert derived["polarisation_loss_db"] == pytest.approx(worst)
     assert derived["rx_beamwidth_3db_deg"] == pytest.approx(
         calculations.antenna_beamwidth_3db_deg(1.707, 3.0)
@@ -844,3 +844,54 @@ def test_save_json_section_writes_top_level_values(tmp_path):
         "rolloff": 0.35,
         "fixed_elevation_downlink": {"elevation_deg": 3.0},
     }
+
+
+def test_fixed_elevation_total_propagation_loss_includes_all_path_losses(_stub_atmospheric_contributions):
+    budget = calculations.calculate_fixed_elevation_link_budget(
+        freq=1.707 * u.GHz,
+        elevation_deg=5.0,
+        sat_altitude_km=628,
+        lat_gs=78.9,
+        lon_gs=11.9,
+        alt_gs_km=0.1,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=5.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=3.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        ionospheric_loss_db=0.05,
+        polarisation_loss_db=0.09,
+        multipath_loss_db=0.2,
+    )
+    clear = budget["clear"]
+    total = budget["path_loss_db"] + 0.5 + 0.05 + 0.09 + 0.2 + 3.0
+    assert clear["total_propagation_loss_db"] == pytest.approx(total)
+    # Rx power = EIRP - total propagation loss (no pointing losses here).
+    assert clear["rx_power_dbw"] == pytest.approx(4.51 - total)
+
+
+def _reference_sheet_polarisation_loss(d26, d48):
+    """The reference sheet's Excel formula, D26/D48 being the axial ratios in dB."""
+
+    a, b = 10 ** (d26 / 20), 10 ** (d48 / 20)
+    return (
+        -10 * np.log10(((a + b) ** 2) / ((1 + 10 ** (d26 / 10)) * (1 + 10 ** (d48 / 10))))
+        - 10 * np.log10(1 + ((1 - a) / (1 + a)) ** 2)
+        - 10 * np.log10(1 + ((1 - b) / (1 + b)) ** 2)
+    )
+
+
+@pytest.mark.parametrize("tx_ar, rx_ar", [(3.0, 1.0), (0.0, 0.0), (3.0, 3.0), (6.0, 1.0), (0.5, 2.0)])
+def test_polarisation_co_polar_matches_reference_sheet_formula(tx_ar, rx_ar):
+    result = calculations.polarisation_mismatch_loss_db(tx_ar, rx_ar)
+    assert result["co_polar"] == pytest.approx(_reference_sheet_polarisation_loss(tx_ar, rx_ar), abs=1e-12)
+    assert 0.0 <= result["co_polar"] <= result["worst"] + 1e-12
+
+
+def test_polarisation_co_polar_reference_value():
+    # Reference sheet: Tx axial ratio 3 dB, E/S axial ratio 1 dB -> 0.09 dB.
+    assert calculations.polarisation_mismatch_loss_db(3.0, 1.0)["co_polar"] == pytest.approx(0.09, abs=5e-3)

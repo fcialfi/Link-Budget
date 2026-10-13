@@ -473,8 +473,18 @@ def polarisation_mismatch_loss_db(tx_axial_ratio_db: float, rx_axial_ratio_db: f
     Uses the classic polarisation-efficiency formula for two elliptically
     polarised antennas of the same sense, with the voltage axial ratios
     ``r = 10**(AR_dB / 20)``. The loss depends on the (unknown) relative
-    orientation of the polarisation ellipses, so both the ``best`` (aligned
-    major axes) and ``worst`` (orthogonal major axes) cases are returned.
+    orientation of the polarisation ellipses: ``best`` (aligned major axes)
+    and ``worst`` (orthogonal major axes) refer the loss to the antennas'
+    total gains.
+
+    ``co_polar`` is the worst case referred to the antennas' co-polar
+    (circular, dBic) gains, the usual way circularly polarised antenna gains
+    are specified: the cross-polar share of each antenna,
+    ``10*log10(1 + rho**2)`` with ``rho = (1 - r) / (1 + r)``, is already
+    excluded from its gain and is taken off the loss. This is the formula of
+    the reference static link budget sheet and simplifies to
+    ``-20*log10(2*(r1 + r2) / ((1 + r1) * (1 + r2)))``; it is never negative
+    and is 0 for two perfectly circular antennas.
     """
 
     r1 = 10 ** (tx_axial_ratio_db / 20.0)
@@ -483,7 +493,12 @@ def polarisation_mismatch_loss_db(tx_axial_ratio_db: float, rx_axial_ratio_db: f
     cross = (r1**2 - 1) * (r2**2 - 1)
     best = 0.5 + (4 * r1 * r2 + cross) / denom
     worst = 0.5 + (4 * r1 * r2 - cross) / denom
-    return {"best": float(-10 * np.log10(best)), "worst": float(-10 * np.log10(worst))}
+    co_polar = -20 * np.log10(2 * (r1 + r2) / ((1 + r1) * (1 + r2)))
+    return {
+        "best": float(-10 * np.log10(best)),
+        "worst": float(-10 * np.log10(worst)),
+        "co_polar": float(co_polar),
+    }
 
 
 TOLERANCE_DISTRIBUTIONS = ("TRI", "UNI", "GAU")
@@ -668,7 +683,8 @@ def calculate_fixed_elevation_link_budget(
 
     ``polarisation_loss_db=None`` derives the polarisation mismatch loss from
     ``tx_axial_ratio_db`` and ``rx_axial_ratio_db`` (worst-case orientation,
-    see :func:`polarisation_mismatch_loss_db`) when both are given, and 0
+    referred to co-polar antenna gains: the ``co_polar`` value of
+    :func:`polarisation_mismatch_loss_db`) when both are given, and 0
     otherwise. ``rx_depointing_deg`` adds a receive antenna pointing loss
     (:func:`antenna_pointing_loss_db`), using ``rx_beamwidth_3db_deg`` or, if
     that is omitted, the beamwidth of a ``d_gs`` dish at ``freq``. Eb/No is
@@ -720,7 +736,7 @@ def calculate_fixed_elevation_link_budget(
     if tx_axial_ratio_db is not None and rx_axial_ratio_db is not None:
         polarisation_range = polarisation_mismatch_loss_db(tx_axial_ratio_db, rx_axial_ratio_db)
     if polarisation_loss_db is None:
-        polarisation_loss_db = polarisation_range["worst"] if polarisation_range else 0.0
+        polarisation_loss_db = polarisation_range["co_polar"] if polarisation_range else 0.0
 
     rx_pointing_loss_db = 0.0
     if rx_depointing_deg is not None:
@@ -762,7 +778,15 @@ def calculate_fixed_elevation_link_budget(
             "rain_attenuation_db": atm["rain"],
             "scintillation_db": atm["scintillation"],
             "atmospheric_attenuation_db": atm["total"],
-            "total_propagation_loss_db": path_loss + atm["total"] + ionospheric_loss_db + polarisation_loss_db,
+            # Every loss listed in the Propagation section of the results.
+            "total_propagation_loss_db": (
+                path_loss
+                + atm["total"]
+                + ionospheric_loss_db
+                + polarisation_loss_db
+                + multipath_loss_db
+                + other_att
+            ),
             "rx_power_dbw": rx_power,
             "received_cno_dbhz": received_cno_db,
             "cno_dbhz": cno_db,
