@@ -80,17 +80,18 @@ Procedura completa su Windows, dalla cartella del progetto aggiornata a `main`. 
    ```cmd
    pyinstaller gui.spec
    ```
-   Lo spec crea un eseguibile unico: `dist\gui.exe`.
+   Lo spec crea la cartella `dist\Link-Budget-Tool\`, con `Link-Budget-Tool.exe` e le sue librerie (in `_internal\`). È la modalità "cartella": l'eseguibile parte in pochi secondi perché non deve decomprimere nulla, e appena lanciato mostra una schermata con il logo. Si distribuisce l'intera cartella (ad esempio come zip). In `gui.spec` si può impostare `ONEFILE = True` per avere un unico `.exe`, che però a ogni avvio decomprime alcune centinaia di MB in una cartella temporanea e può impiegare minuti a partire, soprattutto con l'antivirus attivo.
 4. **Emetti la licenza** per il cliente (vedi sotto per i dettagli):
    ```cmd
    python license_tool.py issue --private-key C:\secure\link_budget_license_private_key.pem --customer "Nome cliente" --expires 2027-12-31 -o license.key
    ```
-5. **Prepara la cartella da consegnare**, con tutti i file insieme:
-   - `gui.exe`
+5. **Prepara la cartella da consegnare:** in `dist\Link-Budget-Tool\`, accanto a `Link-Budget-Tool.exe`, aggiungi:
    - `license.key`
    - `ground_stations.txt`, `tle.txt`, `parameters.json`
+
+   Poi comprimi l'intera cartella `Link-Budget-Tool` in uno zip.
 6. **Prova prima di consegnare:**
-   - senza `license.key` nella cartella, `gui.exe` deve mostrare "No licence found…" e chiudersi;
+   - senza `license.key` nella cartella, `Link-Budget-Tool.exe` deve mostrare "No licence found…" e chiudersi;
    - con `license.key`, in alto a destra deve comparire "Licensed to … · valid until …".
 
 Se la build fallisce o l'eseguibile non parte, conserva il messaggio d'errore completo (log di PyInstaller o traceback) per correggere `gui.spec`.
