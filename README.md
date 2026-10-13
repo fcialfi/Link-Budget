@@ -60,18 +60,40 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
 ## Creare un eseguibile
-Per generare un eseguibile standalone con PyInstaller (ad esempio su Windows):
+Procedura completa su Windows, dalla cartella del progetto aggiornata a `main`. L'ordine conta: la chiave pubblica della licenza deve esistere **prima** di compilare, altrimenti l'eseguibile nasce senza controllo della licenza (vedi [Licenza a scadenza dell'eseguibile](#licenza-a-scadenza-delleseguibile)).
 
-1. Installa i pacchetti necessari (inclusi PyInstaller e `pytest`, richiesto da `astropy.tests.runner` usato durante il packaging):
-   ```bash
+1. **Prepara l'ambiente** (inclusi PyInstaller e `pytest`, richiesto da `astropy.tests.runner` usato durante il packaging):
+   ```cmd
+   git pull
    pip install -r requirements.txt
    pip install pyinstaller pytest
    ```
-2. Dalla cartella del progetto esegui PyInstaller usando lo spec già configurato:
-   ```bash
+2. **Solo la prima volta, se vuoi il controllo della licenza:** crea la coppia di chiavi e metti la chiave pubblica nel repository, così sarà inclusa in tutte le build successive:
+   ```cmd
+   python license_tool.py keygen --private-key C:\secure\link_budget_license_private_key.pem
+   git add assets\license_public_key.pem
+   git commit -m "Add licence public key"
+   git push
+   ```
+   Se `assets\license_public_key.pem` esiste già, salta questo passo: rifare le chiavi invalida le licenze già emesse.
+3. **Compila** con lo spec già configurato (include `assets\` con logo, icona e chiave pubblica):
+   ```cmd
    pyinstaller gui.spec
    ```
-3. Al termine troverai l'eseguibile in `dist/gui/` (su Windows, `dist/gui/gui.exe`).
+   Lo spec crea un eseguibile unico: `dist\gui.exe`.
+4. **Emetti la licenza** per il cliente (vedi sotto per i dettagli):
+   ```cmd
+   python license_tool.py issue --private-key C:\secure\link_budget_license_private_key.pem --customer "Nome cliente" --expires 2027-12-31 -o license.key
+   ```
+5. **Prepara la cartella da consegnare**, con tutti i file insieme:
+   - `gui.exe`
+   - `license.key`
+   - `ground_stations.txt`, `tle.txt`, `parameters.json`
+6. **Prova prima di consegnare:**
+   - senza `license.key` nella cartella, `gui.exe` deve mostrare "No licence found…" e chiudersi;
+   - con `license.key`, in alto a destra deve comparire "Licensed to … · valid until …".
+
+Se la build fallisce o l'eseguibile non parte, conserva il messaggio d'errore completo (log di PyInstaller o traceback) per correggere `gui.spec`.
 
 Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
 
