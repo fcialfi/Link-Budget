@@ -458,6 +458,9 @@ class ReportContext:
     # [(group title, [(label, value text), ...]), ...] -- inputs as entered.
     input_groups: List[Tuple[str, List[Tuple[str, str]]]] = field(default_factory=list)
     generated_at: Optional[datetime] = None
+    # Company logo drawn in the page header (light artwork for the navy
+    # band); left out when None or unreadable.
+    logo_path: Optional[str] = None
 
 
 # Colours matching the application theme.
@@ -500,6 +503,21 @@ def _fmt(value: float, digits: int = 2) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "n/a"
     return f"{value:.{digits}f}"
+
+
+def _load_logo(path: Optional[str]):
+    """``(image, width / height)`` for ReportLab, or None when the logo can't be read."""
+
+    if not path:
+        return None
+    try:
+        from reportlab.lib.utils import ImageReader
+
+        image = ImageReader(path)
+        width, height = image.getSize()
+        return image, width / height
+    except Exception:
+        return None
 
 
 def build_static_report_pdf(
@@ -765,6 +783,8 @@ def build_static_report_pdf(
     header_text = "Link Budget Tool  ·  Static Link Budget Report"
     stamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
 
+    logo = _load_logo(context.logo_path)
+
     class NumberedCanvas(rl_canvas.Canvas):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -786,9 +806,17 @@ def build_static_report_pdf(
             self.saveState()
             self.setFillColor(color(_NAVY))
             self.rect(0, page_h - 11 * mm, page_w, 11 * mm, stroke=0, fill=1)
+            text_x = margin_x
+            if logo is not None:
+                image, aspect = logo
+                logo_h = 6.5 * mm
+                self.drawImage(
+                    image, margin_x, page_h - 8.75 * mm, logo_h * aspect, logo_h, mask="auto",
+                )
+                text_x = margin_x + logo_h * aspect + 4 * mm
             self.setFillColor(colors.white)
             self.setFont("Helvetica-Bold", 9)
-            self.drawString(margin_x, page_h - 7 * mm, header_text)
+            self.drawString(text_x, page_h - 7 * mm, header_text)
             self.setFont("Helvetica", 8.5)
             self.drawRightString(page_w - margin_x, page_h - 7 * mm, context.direction.replace("→", "->"))
             self.setStrokeColor(color(_BORDER))
@@ -808,7 +836,7 @@ def build_static_report_pdf(
         topMargin=18 * mm,
         bottomMargin=18 * mm,
         title=context.title,
-        author="Link Budget Tool",
+        author="Exostaff",
         subject=f"{context.direction} static link budget",
     )
     doc.build(story, canvasmaker=NumberedCanvas)

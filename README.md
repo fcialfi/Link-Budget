@@ -81,6 +81,24 @@ Il file `__main__.py` è predisposto per essere usato come entry point anche qua
 - In alternativa puoi specificare un percorso diverso impostando le variabili d'ambiente `GROUND_STATIONS_FILE`, `TLE_FILE` o `PARAMETERS_FILE` prima di avviare il programma.
 - Dalla GUI puoi comunque sovrascrivere qualsiasi cosa in qualunque momento con i pulsanti **Load Ground Stations**, **Load TLE from file** e **Import Link Budget Parameters** nella sezione "Observation Settings"; i campi vengono aggiornati immediatamente.
 
+### Licenza a scadenza dell'eseguibile
+L'eseguibile può essere limitato con un file di licenza che scade in una data stabilita (`licensing.py`, lo stesso sistema dell'HKTM CCSDS Signal Generator). La licenza è un piccolo file `license.key`, da mettere nella stessa cartella dell'eseguibile, con il nome del cliente e la data di scadenza, firmato con una chiave privata che ha solo chi emette le licenze. L'eseguibile contiene solo la chiave pubblica: può verificare una licenza ma non crearne una, e modificare il file (ad esempio la data) la invalida. Senza una licenza valida il programma si ferma all'avvio con una spiegazione; la licenza valida è indicata nell'intestazione della finestra, in arancione negli ultimi 30 giorni.
+
+1. **Una volta sola:** crea la coppia di chiavi (richiede `cryptography`, già in `requirements.txt`):
+   ```cmd
+   python license_tool.py keygen --private-key C:\secure\link_budget_license_private_key.pem
+   ```
+   - La **chiave privata** va dove indichi: tienila al sicuro e fuori dal repository. Chi la possiede può emettere licenze; se va persa servono una nuova coppia di chiavi e un nuovo eseguibile.
+   - La **chiave pubblica** va in `assets/license_public_key.pem`. Va inclusa nel repository: ogni eseguibile costruito da quel momento verifica la licenza. Gli eseguibili costruiti senza questo file non hanno il controllo.
+2. **Per ogni cliente:** emetti una licenza e inviala insieme all'eseguibile:
+   ```cmd
+   python license_tool.py issue --private-key C:\secure\link_budget_license_private_key.pem --customer "Nome cliente" --expires 2027-12-31 -o license.key
+   ```
+   La data di scadenza è l'ultimo giorno valido. Per prolungarla basta emettere un nuovo file, senza ricostruire l'eseguibile.
+3. **Verifica facoltativa:** `python license_tool.py verify license.key`
+
+Limiti: è un deterrente, non una protezione dalla copia. L'ultima data vista viene ricordata nel profilo utente, così riportare indietro l'orologio viene rilevato, ma un utente determinato può comunque decompilare un eseguibile Python. Avviando il programma dai sorgenti il controllo non si applica mai.
+
 ### Note sugli avvisi di PyInstaller
 - Lo spec `gui.spec` include esplicitamente `astropy.tests.runner` e `pytest` per evitare l'errore `ModuleNotFoundError: No module named 'astropy.tests.runner'` durante l'esecuzione del binario.
 - Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.

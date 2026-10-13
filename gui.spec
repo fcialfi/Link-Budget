@@ -12,6 +12,11 @@ a = Analysis(
     datas=itur_datas + [
         ('calculations.py', '.'),
         ('static_report.py', '.'),
+        ('licensing.py', '.'),
+        # Logo and icon images; also the licence public key
+        # (assets/license_public_key.pem) once license_tool.py keygen has
+        # created it, which turns the licence check on (see README).
+        ('assets', 'assets'),
     ],
     hiddenimports=[
         'itur',
@@ -58,5 +63,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['Satellite.ico'],  # Se non serve, puoi anche rimuoverla
+    icon=['assets/exostaff_icon.ico'],
 )
