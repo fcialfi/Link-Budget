@@ -1587,17 +1587,38 @@ class LinkBudgetApp:
             ),
             (
                 "Data Channel & Requirements",
-                [
-                    L(bitrate_label, bitrate_entry, "Bit rate including coding."),
+                (
+                    # CCSDS TM framing applies to the downlink (telemetry) only.
+                    [
+                        ("framing_mode",),
+                        F(
+                            "ccsds_interleaving", "RS Interleaving Depth I", "5", None,
+                            "RS(255,223) interleaving depth from the mission ICD: the transfer frame is "
+                            "223·I bytes (I = 5 → 1115 bytes). Used in CCSDS mode.",
+                        ),
+                        ("ccsds_options",),
+                        ("framing_used",),
+                    ]
+                    if rx_is_ground_station
+                    else []
+                )
+                + [
+                    L(
+                        bitrate_label, bitrate_entry,
+                        "Bit rate including coding: the channel bit rate of the transmitter. In "
+                        "CCSDS mode the formatted and information bit rates are derived from it.",
+                    ),
                     L(
                         overhead_label, overhead_entry,
-                        "Coded bit rate / information bit rate (coding and formatting).",
+                        "Coded bit rate / information bit rate (coding and formatting). Computed in "
+                        "CCSDS mode.",
                     ),
                     F(
                         "formatting_overhead", "Formatting Overhead (factor)", "", "e.g. 1.02",
                         "Bit rate including formatting (frame headers, ...) divided by the "
                         "information bit rate. Eb/No is referred to the information bit rate "
-                        "times this factor (the bit rate excluding coding). Empty = 1.",
+                        "times this factor (the bit rate excluding coding). Empty = 1. Computed in "
+                        "CCSDS mode.",
                     ),
                 ]
                 # Roll-off and spectral efficiency only set the occupied bandwidth
@@ -1787,6 +1808,11 @@ class LinkBudgetApp:
         # changing it here never touches the main window's pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
         iono_mode_var = tk.StringVar(value="manual")
+        framing_mode_var = tk.StringVar(value="manual")
+        ccsds_ocf_var = tk.BooleanVar(value=True)
+        ccsds_fecf_var = tk.BooleanVar(value=False)
+        framing_used_var = tk.StringVar(value="")
+        ccsds_option_buttons: list = []
         iono_rows: dict[str, tuple[list, tk.StringVar]] = {}
         # Tropospheric scintillation is also this window's own choice: the
         # ITU-R P.618 model does not apply to every link (see the results notes).
@@ -1801,11 +1827,67 @@ class LinkBudgetApp:
             r, c = 0, 0
             for item in items:
                 kind = item[0]
-                if kind in ("eirp_mode", "eirp_used", "iono_mode", "iono_used"):
+                if kind in (
+                    "eirp_mode", "eirp_used", "iono_mode", "iono_used", "framing_mode", "ccsds_options",
+                    "framing_used",
+                ):
                     # Full-width rows.
                     if c:
                         r, c = r + 1, 0
-                    if kind == "iono_mode":
+                    if kind == "framing_mode":
+                        framing_row = ttk.Frame(group_frame)
+                        framing_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
+                        ttk.Label(
+                            framing_row, text="Data framing:", font=(recap_font_family, 9, "bold")
+                        ).pack(side=tk.LEFT, padx=(0, 8))
+                        for value, text in (
+                            ("manual", "Manual (bit rate and overheads below)"),
+                            ("ccsds", "CCSDS TM: RS(255,223) + convolutional 1/2"),
+                        ):
+                            ttk.Radiobutton(
+                                framing_row,
+                                text=text,
+                                value=value,
+                                variable=framing_mode_var,
+                                command=lambda: _refresh_states(),
+                            ).pack(side=tk.LEFT, padx=(0, 12))
+                        _info_icon(
+                            framing_row,
+                            "CCSDS TM: from the coded (transmitter) bit rate and the RS interleaving "
+                            "depth I, the transfer frame structure (223·I bytes: 6-byte primary "
+                            "header, optional OCF 4 bytes and FECF 2 bytes, data field) and the "
+                            "channel coding (32-bit ASM per RS(255,223) codeblock of 255·I bytes, "
+                            "convolutional rate 1/2) give the formatting overhead and the total "
+                            "overhead, filled in below (the overhead also in the main window), and "
+                            "the formatted and information bit rates.",
+                        ).pack(side=tk.LEFT)
+                    elif kind == "ccsds_options":
+                        options_row = ttk.Frame(group_frame)
+                        options_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=2)
+                        for text, var in (
+                            ("Operational Control Field (OCF, 4 bytes)", ccsds_ocf_var),
+                            ("Frame Error Control Field (FECF, 2 bytes)", ccsds_fecf_var),
+                        ):
+                            button = ttk.Checkbutton(
+                                options_row, text=text, variable=var, command=lambda: _refresh_states()
+                            )
+                            button.pack(side=tk.LEFT, padx=(0, 16))
+                            ccsds_option_buttons.append(button)
+                        _info_icon(
+                            options_row,
+                            "Optional transfer frame fields, as in the mission ICD. The OCF is usually "
+                            "present; the FECF (CRC) is often omitted when RS coding is used.",
+                        ).pack(side=tk.LEFT)
+                    elif kind == "framing_used":
+                        ttk.Label(
+                            group_frame,
+                            textvariable=framing_used_var,
+                            font=(recap_font_family, 9, "bold"),
+                            foreground=PALETTE["accent_dark"],
+                            wraplength=760,
+                            justify="left",
+                        ).grid(row=r, column=0, columnspan=4, sticky="w", pady=(4, 4))
+                    elif kind == "iono_mode":
                         iono_row = ttk.Frame(group_frame)
                         iono_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
                         ttk.Label(
@@ -1986,6 +2068,9 @@ class LinkBudgetApp:
             label_widget, entry_widget, colour = field_widgets[key]
             entry_widget.state(["!disabled"] if enabled else ["disabled"])
             label_widget.configure(foreground=colour if enabled else PALETTE["text_muted"])
+            # Placeholder entries set their own text colour: keep it in step.
+            if isinstance(entry_widget, _PlaceholderEntry) and not entry_widget._showing_placeholder:
+                entry_widget.configure(foreground=PALETTE["text"] if enabled else PALETTE["text_muted"])
 
         def _field_text(key: str) -> str:
             return field_widgets[key][1].get().strip()
@@ -2034,10 +2119,62 @@ class LinkBudgetApp:
                     else:
                         widget.grid_remove()
 
+        def _ccsds_framing() -> tuple[float, dict]:
+            """(coded bit rate [kbit/s], CCSDS overheads); raises ValueError."""
+
+            try:
+                coded_kbps = float(_field_text(f"panel:{bitrate_label}")) * 1000.0
+                depth = float(_field_text("ccsds_interleaving"))
+            except ValueError:
+                raise ValueError(f"enter the {bitrate_label.split(' [')[0]} and the RS interleaving depth")
+            if coded_kbps <= 0:
+                raise ValueError("the coded bit rate must be greater than 0")
+            framing = calculations.ccsds_tm_overheads(depth, ccsds_ocf_var.get(), ccsds_fecf_var.get())
+            return coded_kbps, framing
+
+        def _write_computed(key: str, text: str) -> None:
+            """Fill a computed field, keeping it greyed out."""
+
+            label_widget, entry_widget, _colour = field_widgets[key]
+            if entry_widget.get().strip() == text:
+                return
+            entry_widget.state(["!disabled"])
+            _set_entry_text(entry_widget, text)
+            entry_widget.state(["disabled"])
+
+        def _refresh_framing() -> None:
+            if "ccsds_interleaving" not in field_widgets:
+                return  # uplink: no CCSDS TM framing
+            ccsds = framing_mode_var.get() == "ccsds"
+            _set_field_enabled("ccsds_interleaving", ccsds)
+            for button in ccsds_option_buttons:
+                button.state(["!disabled"] if ccsds else ["disabled"])
+            for key in (f"panel:{overhead_label}", "formatting_overhead"):
+                _set_field_enabled(key, not ccsds)
+            if not ccsds:
+                framing_used_var.set("")
+                return
+            try:
+                coded_kbps, framing = _ccsds_framing()
+            except ValueError as exc:
+                framing_used_var.set(f"CCSDS framing: {exc}")
+                return
+            _write_computed(f"panel:{overhead_label}", f"{framing['total']:.6g}")
+            _write_computed("formatting_overhead", f"{framing['formatting']:.6g}")
+            self.on_panel_entry_edited(overhead_entry)
+            framing_used_var.set(
+                f"Frame {framing['frame_bytes']} B (data field {framing['data_field_bytes']} B): "
+                f"coding {framing['coding']:.5f} (ASM + RS(255,223) I={framing['interleaving_depth']} "
+                f"+ conv 1/2), formatting {framing['formatting']:.5f}, total {framing['total']:.5f}\n"
+                f"Coded {coded_kbps:.1f} kbit/s → formatted {coded_kbps / framing['coding']:.1f} kbit/s "
+                f"(Eb/No reference) → information {coded_kbps / framing['total']:.1f} kbit/s"
+            )
+
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
 
             _refresh_ionosphere()
+            _refresh_framing()
 
             chain = eirp_mode_var.get() == "tx_chain"
             _set_field_enabled(f"panel:{eirp_label}", not chain)
@@ -2085,7 +2222,7 @@ class LinkBudgetApp:
             "iono_s4_ref",
             "iono_s4_ref_freq_mhz",
             f"panel:{freq_label}",
-        ):
+        ) + (("ccsds_interleaving", f"panel:{bitrate_label}") if rx_is_ground_station else ()):
             field_widgets[key][1].bind("<KeyRelease>", _refresh_states, add="+")
 
         parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
@@ -2198,6 +2335,10 @@ class LinkBudgetApp:
             values["eirp_mode"] = eirp_mode_var.get()
             values["station"] = station_var.get()
             values["ionospheric_mode"] = iono_mode_var.get()
+            if rx_is_ground_station:
+                values["framing_mode"] = framing_mode_var.get()
+                values["ccsds_ocf"] = bool(ccsds_ocf_var.get())
+                values["ccsds_fecf"] = bool(ccsds_fecf_var.get())
             values["scintillation"] = bool(scint_var.get())
             return values
 
@@ -2217,6 +2358,10 @@ class LinkBudgetApp:
             eirp_mode_var.set(mode)
             station = values.get("station")
             station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
+            framing_mode = values.get("framing_mode")
+            framing_mode_var.set(framing_mode if framing_mode in ("manual", "ccsds") else "manual")
+            ccsds_ocf_var.set(bool(values.get("ccsds_ocf", True)))
+            ccsds_fecf_var.set(bool(values.get("ccsds_fecf", False)))
             iono_mode = values.get("ionospheric_mode")
             iono_mode_var.set(iono_mode if iono_mode in ("manual", "s4") else "manual")
             scintillation = values.get("scintillation")
@@ -2267,7 +2412,9 @@ class LinkBudgetApp:
             adv_entry.bind("<KeyRelease>", _mark_stale, add="+")
             pdf_box.bind("<<ComboboxSelected>>", _mark_stale, add="+")
         station_var.trace_add("write", lambda *_args: _refresh_states())
-        watched_vars = [station_var, eirp_mode_var, iono_mode_var, scint_var] + [
+        watched_vars = [
+            station_var, eirp_mode_var, iono_mode_var, scint_var, framing_mode_var, ccsds_ocf_var, ccsds_fecf_var,
+        ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
         # The shared variables outlive this window: their traces are removed on close.
@@ -2384,6 +2531,10 @@ class LinkBudgetApp:
                 multipath_loss_db = _field("multipath_loss_db", _parse_optional)
                 modulation_degradation_db = _field("modulation_degradation_db", _parse_optional)
                 pfd_limit = _field("pfd_limit", _parse_optional_or_none) if "pfd_limit" in entries else None
+                ccsds_framing = None
+                if rx_is_ground_station and framing_mode_var.get() == "ccsds":
+                    # Validates the CCSDS inputs; the fields below were filled from them.
+                    _coded_kbps, ccsds_framing = _ccsds_framing()
                 formatting_overhead = _field("formatting_overhead", _parse_optional, default=1.0)
                 if formatting_overhead <= 0:
                     raise ValueError("'Formatting Overhead (factor)' must be greater than 0.")
@@ -2491,6 +2642,7 @@ class LinkBudgetApp:
                 "pfd_applicable": rx_is_ground_station,
                 "elevation_deg": elevation_deg,
                 "tolerances_ignored": bool(tolerances) and required_ebno is None,
+                "ccsds_framing": ccsds_framing,
             }
             # Inputs actually used, in the same sections as this window (CSV and PDF).
             input_groups = []
@@ -2510,7 +2662,22 @@ class LinkBudgetApp:
                                 "From S4 (ITU-R P.531)" if iono_mode_var.get() == "s4" else "Manual",
                             )
                         )
-                    elif item[0] in ("iono_used", "eirp_used"):
+                    elif item[0] == "framing_mode":
+                        group_items.append(
+                            (
+                                "Data Framing",
+                                "CCSDS TM (RS(255,223) + conv 1/2)" if framing_mode_var.get() == "ccsds" else "Manual",
+                            )
+                        )
+                    elif item[0] == "ccsds_options":
+                        if framing_mode_var.get() == "ccsds":
+                            group_items.append(
+                                (
+                                    "OCF / FECF",
+                                    f"{'yes' if ccsds_ocf_var.get() else 'no'} / {'yes' if ccsds_fecf_var.get() else 'no'}",
+                                )
+                            )
+                    elif item[0] in ("iono_used", "eirp_used", "framing_used"):
                         continue
                     elif item[0] == "eirp_mode":
                         group_items.append(

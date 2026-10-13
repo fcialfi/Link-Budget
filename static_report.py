@@ -216,8 +216,17 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
         )
     if extra_info.get("bitrate_kbps") is not None:
         rows.append(("Bit Rate incl. Coding [kbit/s]", f"{extra_info['bitrate_kbps']:.2f}"))
+    framing = extra_info.get("ccsds_framing")
+    if framing:
+        rows.append(
+            (
+                "CCSDS Transfer Frame [bytes]",
+                f"{framing['frame_bytes']} (data field {framing['data_field_bytes']}, RS I={framing['interleaving_depth']})",
+            )
+        )
+        rows.append(("Formatting / Coding Factor", f"{framing['formatting']:.5f} / {framing['coding']:.5f}"))
     if extra_info.get("code_rate") is not None:
-        rows.append(("Code Rate", f"{extra_info['code_rate']:.3f}"))
+        rows.append(("Overall Rate (information / coded)", f"{extra_info['code_rate']:.3f}"))
     if extra_info.get("occupied_bandwidth_khz") is not None:
         rows.append(("Occupied Bandwidth [kHz]", f"{extra_info['occupied_bandwidth_khz']:.1f}"))
     if "frequency_mhz" in budget:
