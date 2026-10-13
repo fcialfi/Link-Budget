@@ -895,3 +895,70 @@ def test_polarisation_co_polar_matches_reference_sheet_formula(tx_ar, rx_ar):
 def test_polarisation_co_polar_reference_value():
     # Reference sheet: Tx axial ratio 3 dB, E/S axial ratio 1 dB -> 0.09 dB.
     assert calculations.polarisation_mismatch_loss_db(3.0, 1.0)["co_polar"] == pytest.approx(0.09, abs=5e-3)
+
+
+@pytest.mark.parametrize(
+    "lat, lon, zone",
+    [
+        (78.2232, 15.6267, "polar cap"),  # Svalbard
+        (67.86, 20.22, "auroral oval"),  # Kiruna
+        (49.87, 8.65, "mid-latitude"),  # Darmstadt
+        (5.0, -52.0, "equatorial"),  # Kourou
+    ],
+)
+def test_geomagnetic_zone_of_reference_sites(lat, lon, zone):
+    geomag = calculations.geomagnetic_latitude_deg(lat, lon)
+    assert calculations.ionospheric_zone(geomag)["zone"] == zone
+
+
+def test_geomagnetic_latitude_of_dipole_pole_is_90():
+    assert calculations.geomagnetic_latitude_deg(
+        calculations.GEOMAGNETIC_POLE_LAT_DEG, calculations.GEOMAGNETIC_POLE_LON_DEG
+    ) == pytest.approx(90.0)
+
+
+def test_ionospheric_scintillation_fade_matches_esa_technical_note():
+    # AWS-TN-ESA-SYS-0052: S4 = 0.3 at L1 -> 0.266 at 1707 MHz -> 5.2 dB peak-to-peak.
+    scint = calculations.ionospheric_scintillation_fade_db(0.3, 1707.0)
+    assert scint["s4"] == pytest.approx(0.266, abs=1e-3)
+    assert scint["peak_to_peak_db"] == pytest.approx(5.2, abs=0.05)
+    assert scint["fade_db"] == pytest.approx(scint["peak_to_peak_db"] / 2)
+    assert scint["valid"]
+    assert not calculations.ionospheric_scintillation_fade_db(0.5, 1707.0)["valid"]
+    with pytest.raises(ValueError):
+        calculations.ionospheric_scintillation_fade_db(-0.1, 1707.0)
+
+
+def test_tropospheric_scintillation_model_validity():
+    assert calculations.tropospheric_scintillation_model_valid(12.0, 10.0)
+    assert not calculations.tropospheric_scintillation_model_valid(1.707, 10.0)
+    assert not calculations.tropospheric_scintillation_model_valid(12.0, 3.0)
+
+
+def test_fixed_elevation_link_budget_ionospheric_loss_from_s4(_stub_atmospheric_contributions):
+    common = dict(
+        freq=1.707 * u.GHz,
+        elevation_deg=3.0,
+        sat_altitude_km=628,
+        lat_gs=78.2232,
+        lon_gs=15.6267,
+        alt_gs_km=0.01,
+        d_gs=3.0,
+        eirp=4.51,
+        gt=7.0,
+        demod_loss=1.0,
+        bitrate=3570e3,
+        overhead=2.29,
+        other_att=0.0,
+        pointing_loss_db=0.0,
+        link_availability_pct=99.99,
+        ionospheric_loss_db=0.05,
+    )
+    manual = calculations.calculate_fixed_elevation_link_budget(**common)
+    from_s4 = calculations.calculate_fixed_elevation_link_budget(**common, ionospheric_s4_ref=0.3)
+    fade = calculations.ionospheric_scintillation_fade_db(0.3, 1707.0)["fade_db"]
+    assert "ionospheric_scintillation" not in manual
+    assert from_s4["ionospheric_loss_db"] == pytest.approx(fade)
+    assert from_s4["clear"]["rx_power_dbw"] == pytest.approx(manual["clear"]["rx_power_dbw"] - fade + 0.05)
+    assert from_s4["ionospheric_zone"]["zone"] == "polar cap"
+    assert not from_s4["tropospheric_scintillation_valid"]

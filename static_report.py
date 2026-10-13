@@ -142,7 +142,12 @@ def pfd_notes(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[str]:
     return []
 
 
-def analysis_notes(extra_info: Dict[str, Any]) -> List[str]:
+# Other Attenuations at or above this value, on top of the computed
+# atmospheric losses, look like a total atmospheric allowance counted twice.
+OTHER_ATTENUATION_WARNING_DB = 1.0
+
+
+def analysis_notes(extra_info: Dict[str, Any], budget: Optional[Dict[str, Any]] = None) -> List[str]:
     """Warnings about how far the results can be trusted."""
 
     notes: List[str] = []
@@ -157,6 +162,27 @@ def analysis_notes(extra_info: Dict[str, Any]) -> List[str]:
         notes.append(
             "Tolerances were entered but not used: set a Required Eb/No to get the statistical "
             "margins (MEAN – 3σ, Worst Case RSS)."
+        )
+    budget = budget or {}
+    if budget.get("scintillation_included") and not budget.get("tropospheric_scintillation_valid", True):
+        notes.append(
+            f"Tropospheric scintillation (ITU-R P.618) is included, but the method is given for "
+            f"elevations of at least 5° and about 4–20 GHz: at {budget.get('frequency_mhz', 0):g} MHz "
+            "and this elevation its value is an extrapolation. Consider excluding it; at L/S band "
+            "ionospheric scintillation dominates."
+        )
+    scint = budget.get("ionospheric_scintillation")
+    if scint and not scint.get("valid", True):
+        notes.append(
+            "S4 ≥ 0.4: the f^-1.5 frequency scaling of ITU-R P.531 does not hold for strong "
+            "scintillation, so the ionospheric fade is only indicative."
+        )
+    other = budget.get("other_attenuation_db") or 0.0
+    if other >= OTHER_ATTENUATION_WARNING_DB:
+        notes.append(
+            f"Other Attenuations of {other:g} dB are added on top of the computed atmospheric, "
+            "ionospheric and polarisation losses: make sure they are not a total atmospheric "
+            "allowance that counts the same effects twice."
         )
     return notes
 
@@ -228,6 +254,22 @@ def info_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[Tuple[
         rows.append(("Rx Antenna 3dB Beamwidth [deg]", f"{budget['rx_beamwidth_3db_deg']:.2f}"))
     if extra_info.get("station"):
         rows.append(("Station Location", extra_info["station"]))
+    if "geomagnetic_latitude_deg" in budget:
+        rows.append(
+            (
+                "Geomagnetic Latitude / Ionospheric Zone",
+                f"{budget['geomagnetic_latitude_deg']:.1f}° ({budget['ionospheric_zone']['zone']}, approx.)",
+            )
+        )
+    scint = budget.get("ionospheric_scintillation")
+    if scint:
+        rows.append(
+            (
+                "Ionospheric S4 at Link Frequency",
+                f"{scint['s4']:.3f} (from {scint['s4_ref']:g} at {scint['ref_freq_mhz']:g} MHz)",
+            )
+        )
+        rows.append(("Ionospheric Peak-to-Peak Fluctuation [dB]", f"{scint['peak_to_peak_db']:.2f}"))
     if extra_info.get("link_availability_pct") is not None:
         rows.append(("Weather Availability [%]", f"{extra_info['link_availability_pct']:g}"))
     return rows
@@ -458,7 +500,7 @@ def build_static_report_pdf(
     story.append(Spacer(1, 2 * mm))
     if len(summary_data) > 1:
         story.append(summary_table)
-    for note in analysis_notes(extra_info):
+    for note in analysis_notes(extra_info, budget):
         story.append(Spacer(1, 1.5 * mm))
         story.append(Paragraph(f'<font color="{_FAIL}"><b>Note:</b></font> {_rich(note)}', styles["small"]))
 
@@ -573,11 +615,24 @@ def build_static_report_pdf(
         "Slant range from the elevation angle and a circular orbit at the given altitude over a "
         "spherical Earth (no TLE involved): a single, typically worst-case, geometry.",
         "Atmospheric attenuation from the ITU-R P.618 slant-path model at the ground station "
-        "location (gas P.676, cloud P.840, rain P.618/P.837, scintillation P.618).",
+        "location (gas P.676, cloud P.840, rain P.618/P.837"
+        + (", tropospheric scintillation P.618)." if budget.get("scintillation_included") else
+           "; tropospheric scintillation excluded)."),
         "Received S/No = Rx Power + G/T + 228.6 dB (Boltzmann constant); Eb/No referred to the bit "
         "rate including formatting and excluding coding, after modulation and receiver degradations.",
         "Statistical margins assume independent contributors (ECSS/CCSDS link budget convention).",
     ]
+    if budget.get("ionospheric_scintillation"):
+        method.insert(
+            2,
+            "Ionospheric scintillation fade from the S4 index (ITU-R P.531): S4 scaled to the link "
+            "frequency as f^-1.5, peak-to-peak power fluctuation 27.5·S4^1.26 dB, fade taken as half "
+            "of it; method and reference S4 (Kiruna, 99.9% of the time) from ESA technical note "
+            "AWS-TN-ESA-SYS-0052. The geomagnetic zone of the station is from a dipole model. For the "
+            "L-band downlink to Svalbard the note finds 1 to more than 3 dB of ionospheric fading and "
+            "1.8 to more than 3 dB of total (tropospheric + ionospheric) attenuation, and recommends "
+            "conservative values until site measurements are available.",
+        )
     story.append(KeepTogether(
         [Paragraph("Method and Assumptions", styles["h1"])]
         + [Paragraph("• " + _rich(item), styles["body"]) for item in method]

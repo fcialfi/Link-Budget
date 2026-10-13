@@ -47,12 +47,17 @@
         "distribution": "TRI"
       }
     },
-    "station": "Svalbard"
+    "station": "Svalbard",
+    "ionospheric_mode": "s4",
+    "iono_s4_ref": 0.3,
+    "iono_s4_ref_freq_mhz": 1575.42,
+    "scintillation": false
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,
     "sat_altitude_km": 628.0,
     "required_ebno_db": 9.6,
-    "required_margin_db": 3.0
+    "required_margin_db": 3.0,
+    "scintillation": false
   }
 }

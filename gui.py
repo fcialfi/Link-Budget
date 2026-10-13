@@ -384,7 +384,10 @@ _FIXED_LB_ROW_HELP = {
         "Scintillation is enabled."
     ),
     "Total Atmospheric Attenuation [dB]": "Combined gas, cloud, rain and scintillation attenuation (ITU-R P.618).",
-    "Ionospheric Loss [dB]": "Ionospheric allowance entered in the Propagation section.",
+    "Ionospheric Loss [dB]": (
+        "Ionospheric loss: the manual value, or the scintillation fade derived from S4 "
+        "(ITU-R P.531, half of the peak-to-peak fluctuation)."
+    ),
     "Polarisation Mismatch Loss [dB]": (
         "Loss due to the different polarisation of Tx and Rx antennas: the entered value, or the "
         "worst case computed from the two axial ratios."
@@ -1501,7 +1504,7 @@ class LinkBudgetApp:
         win = tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=PALETTE["bg"])
-        win.geometry("900x880")
+        win.geometry("960x880")
         win.minsize(560, 320)
 
         scroll_body = self._make_scrollable_window_body(win)
@@ -1678,14 +1681,31 @@ class LinkBudgetApp:
             (
                 "Propagation & PFD Limit" if rx_is_ground_station else "Propagation",
                 [
-                    L(
-                        other_att_label, other_att_entry,
-                        "Any other static attenuation, subtracted from Rx Power.",
-                    ),
+                    ("iono_mode",),
                     F(
                         "ionospheric_loss_db", "Ionospheric Loss [dB]", "0", None,
-                        "Ionospheric scintillation/absorption allowance (ITU-R P.531); higher at "
-                        "polar and equatorial latitudes. Subtracted from Rx Power.",
+                        "Manual ionospheric allowance (scintillation and absorption), subtracted "
+                        "from Rx Power. Used when the ionospheric loss is 'Manual'.",
+                    ),
+                    F(
+                        "iono_s4_ref", "Ionospheric S4 (reference)", "0.3", None,
+                        "S4 scintillation index exceeded for the wanted percentage of time, at the "
+                        "reference frequency (published statistics are mostly at GPS L1). 0.3 is the "
+                        "99.9% value measured in Kiruna (auroral oval, active solar years) used by "
+                        "ESA AWS-TN-ESA-SYS-0052; it is a conservative upper bound for Svalbard. "
+                        "Used when the ionospheric loss is 'From S4'.",
+                    ),
+                    F(
+                        "iono_s4_ref_freq_mhz", "S4 Reference Frequency [MHz]", f"{calculations.GPS_L1_MHZ:g}", None,
+                        "Frequency at which the reference S4 was measured (GPS L1 = 1575.42 MHz). "
+                        "S4 is scaled to the link frequency as f^-1.5 (ITU-R P.531).",
+                    ),
+                    ("iono_used",),
+                    L(
+                        other_att_label, other_att_entry,
+                        "Any other static attenuation, subtracted from Rx Power. Do not put here a "
+                        "total atmospheric allowance (e.g. 3 dB) if the atmospheric, ionospheric "
+                        "and polarisation losses are also computed: they would be counted twice.",
                     ),
                     F(
                         "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "", "auto from axial ratios",
@@ -1696,8 +1716,10 @@ class LinkBudgetApp:
                     ),
                     F(
                         "multipath_loss_db", "Multipath Losses [dB]", "0", None,
-                        "Allowance for multipath/ground reflections, mainly at low elevation. "
-                        "Subtracted from Rx Power.",
+                        "Allowance for multipath/ground reflections (terrain, snow, nearby "
+                        "structures), mainly at low elevation. Subtracted from Rx Power. It is "
+                        "site-specific: simulate it for the actual antenna site, with and without "
+                        "snow, and confirm it by measurement (ESA AWS-TN-ESA-SYS-0052).",
                     ),
                 ]
                 + (
@@ -1764,6 +1786,11 @@ class LinkBudgetApp:
         # The station of this window is its own (saved with its inputs), so
         # changing it here never touches the main window's pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
+        iono_mode_var = tk.StringVar(value="manual")
+        iono_used_var = tk.StringVar(value="")
+        # Tropospheric scintillation is also this window's own choice: the
+        # ITU-R P.618 model does not apply to every link (see the results notes).
+        scint_var = tk.BooleanVar(value=self.scint_var.get())
         eirp_used_var = tk.StringVar(value="")
         shared_note = "Shared with the main window."
         for group_index, (group_title, items) in enumerate(field_groups, start=2):
@@ -1774,11 +1801,45 @@ class LinkBudgetApp:
             r, c = 0, 0
             for item in items:
                 kind = item[0]
-                if kind in ("eirp_mode", "eirp_used"):
+                if kind in ("eirp_mode", "eirp_used", "iono_mode", "iono_used"):
                     # Full-width rows.
                     if c:
                         r, c = r + 1, 0
-                    if kind == "eirp_mode":
+                    if kind == "iono_mode":
+                        iono_row = ttk.Frame(group_frame)
+                        iono_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
+                        ttk.Label(
+                            iono_row, text="Ionospheric loss:", font=(recap_font_family, 9, "bold")
+                        ).pack(side=tk.LEFT, padx=(0, 8))
+                        for value, text in (
+                            ("manual", "Manual"),
+                            ("s4", "From S4 scintillation index (ITU-R P.531)"),
+                        ):
+                            ttk.Radiobutton(
+                                iono_row,
+                                text=text,
+                                value=value,
+                                variable=iono_mode_var,
+                                command=lambda: _refresh_states(),
+                            ).pack(side=tk.LEFT, padx=(0, 12))
+                        _info_icon(
+                            iono_row,
+                            "Manual: the Ionospheric Loss value below. From S4: the ionospheric "
+                            "scintillation fade derived from an S4 index as in ESA "
+                            "AWS-TN-ESA-SYS-0052: S4 scaled to the link frequency as f^-1.5, "
+                            "peak-to-peak fluctuation 27.5·S4^1.26 dB, fade = half of it. The "
+                            "station's geomagnetic zone is shown below as guidance for S4.",
+                        ).pack(side=tk.LEFT)
+                    elif kind == "iono_used":
+                        ttk.Label(
+                            group_frame,
+                            textvariable=iono_used_var,
+                            font=(recap_font_family, 9, "bold"),
+                            foreground=PALETTE["accent_dark"],
+                            wraplength=760,
+                            justify="left",
+                        ).grid(row=r, column=0, columnspan=4, sticky="w", pady=(4, 4))
+                    elif kind == "eirp_mode":
                         mode_row = ttk.Frame(group_frame)
                         mode_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(0, 6))
                         ttk.Label(mode_row, text="EIRP source:", font=(recap_font_family, 9, "bold")).pack(
@@ -1802,7 +1863,7 @@ class LinkBudgetApp:
                             "loss + antenna gain). The fields of the other option are greyed out "
                             "and ignored; the EIRP actually used is shown under the Tx chain.",
                         ).pack(side=tk.LEFT)
-                    else:
+                    else:  # eirp_used
                         ttk.Label(
                             group_frame,
                             textvariable=eirp_used_var,
@@ -1817,14 +1878,16 @@ class LinkBudgetApp:
                     scint_cell.grid(row=r, column=c * 2, columnspan=2, sticky="w", padx=padx, pady=2)
                     ttk.Checkbutton(
                         scint_cell,
-                        text="Scintillation loss",
-                        variable=self.scint_var,
-                        command=self.set_analysis_stale,
+                        text="Tropospheric scintillation",
+                        variable=scint_var,
                     ).pack(side=tk.LEFT)
                     _info_icon(
                         scint_cell,
-                        f"{shared_note} Tropospheric scintillation fade (ITU-R P.618), added to the "
-                        "Rain Faded column. Matters mainly above ~4 GHz.",
+                        "Tropospheric scintillation fade (ITU-R P.618), added to the Rain Faded "
+                        "column. The P.618 method is given for elevations of at least 5° and about "
+                        "4–20 GHz: below that (e.g. L/S band at low elevation) it is an "
+                        "extrapolation, and ionospheric scintillation dominates instead. Saved with "
+                        "the inputs of this window, independent of the main window's switch.",
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
@@ -1899,8 +1962,45 @@ class LinkBudgetApp:
         def _field_text(key: str) -> str:
             return field_widgets[key][1].get().strip()
 
+        def _refresh_ionosphere() -> None:
+            from_s4 = iono_mode_var.get() == "s4"
+            _set_field_enabled("ionospheric_loss_db", not from_s4)
+            _set_field_enabled("iono_s4_ref", from_s4)
+            _set_field_enabled("iono_s4_ref_freq_mhz", from_s4)
+            lines = []
+            station = station_var.get()
+            if station in calculations.GROUND_STATIONS:
+                lat, lon, _alt = calculations.GROUND_STATIONS[station]
+                geomag = calculations.geomagnetic_latitude_deg(lat, lon)
+                zone = calculations.ionospheric_zone(geomag)
+                lines.append(
+                    f"{station}: geomagnetic latitude {geomag:.1f}° → {zone['zone']} (approx.): "
+                    f"{zone['guidance']}"
+                )
+            if not from_s4:
+                text = _field_text("ionospheric_loss_db") or "0"
+                lines.append(f"Ionospheric loss used in the calculation: {text} dB (manual)")
+            else:
+                try:
+                    s4_ref = float(_field_text("iono_s4_ref"))
+                    ref_freq = float(_field_text("iono_s4_ref_freq_mhz"))
+                    freq_mhz = float(_field_text(f"panel:{freq_label}")) * 1000.0
+                    scint = calculations.ionospheric_scintillation_fade_db(s4_ref, freq_mhz, ref_freq)
+                except ValueError:
+                    lines.append("Ionospheric loss used in the calculation: enter S4, its frequency and the link frequency")
+                else:
+                    lines.append(
+                        f"Ionospheric loss used in the calculation: {scint['fade_db']:.2f} dB "
+                        f"(S4 {s4_ref:g} @ {ref_freq:g} MHz → {scint['s4']:.3f} @ {freq_mhz:g} MHz, "
+                        f"{scint['peak_to_peak_db']:.2f} dB peak-to-peak, fade = half)"
+                        + ("" if scint["valid"] else " — S4 ≥ 0.4: f^-1.5 scaling not valid, indicative only")
+                    )
+            iono_used_var.set("\n".join(lines))
+
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
+
+            _refresh_ionosphere()
 
             chain = eirp_mode_var.get() == "tx_chain"
             _set_field_enabled(f"panel:{eirp_label}", not chain)
@@ -1940,7 +2040,15 @@ class LinkBudgetApp:
                 f"+ {gain:g} dBi)"
             )
 
-        for key in tx_chain_keys + ("polarisation_loss_db", "rx_depointing_deg", f"panel:{eirp_label}"):
+        for key in tx_chain_keys + (
+            "polarisation_loss_db",
+            "rx_depointing_deg",
+            f"panel:{eirp_label}",
+            "ionospheric_loss_db",
+            "iono_s4_ref",
+            "iono_s4_ref_freq_mhz",
+            f"panel:{freq_label}",
+        ):
             field_widgets[key][1].bind("<KeyRelease>", _refresh_states, add="+")
 
         parameter_keys = {id(entry): key for key, entry in self._parameter_entries().items()}
@@ -2052,6 +2160,8 @@ class LinkBudgetApp:
                 values["tolerances"] = tolerances_out
             values["eirp_mode"] = eirp_mode_var.get()
             values["station"] = station_var.get()
+            values["ionospheric_mode"] = iono_mode_var.get()
+            values["scintillation"] = bool(scint_var.get())
             return values
 
         def _apply_values(values: dict) -> None:
@@ -2070,6 +2180,11 @@ class LinkBudgetApp:
             eirp_mode_var.set(mode)
             station = values.get("station")
             station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
+            iono_mode = values.get("ionospheric_mode")
+            iono_mode_var.set(iono_mode if iono_mode in ("manual", "s4") else "manual")
+            scintillation = values.get("scintillation")
+            scint_var.set(bool(scintillation) if isinstance(scintillation, bool) else self.scint_var.get())
+            _refresh_states()
             _refresh_states()
             saved_tolerances = values.get("tolerances")
             if not isinstance(saved_tolerances, dict):
@@ -2114,7 +2229,8 @@ class LinkBudgetApp:
             fav_entry.bind("<KeyRelease>", _mark_stale, add="+")
             adv_entry.bind("<KeyRelease>", _mark_stale, add="+")
             pdf_box.bind("<<ComboboxSelected>>", _mark_stale, add="+")
-        watched_vars = [station_var, eirp_mode_var, self.scint_var] + [
+        station_var.trace_add("write", lambda *_args: _refresh_states())
+        watched_vars = [station_var, eirp_mode_var, iono_mode_var, scint_var] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
         # The shared variables outlive this window: their traces are removed on close.
@@ -2217,7 +2333,15 @@ class LinkBudgetApp:
                             "or choose 'Tx chain'."
                         )
                 ant_axial_ratio_db = _field("ant_axial_ratio_db", _parse_optional_or_none)
-                ionospheric_loss_db = _field("ionospheric_loss_db", _parse_optional)
+                if iono_mode_var.get() == "s4":
+                    ionospheric_loss_db = 0.0
+                    iono_s4_ref = _field("iono_s4_ref", _parse_required)
+                    iono_s4_ref_freq = _field("iono_s4_ref_freq_mhz", _parse_required)
+                    if iono_s4_ref < 0 or iono_s4_ref_freq <= 0:
+                        raise ValueError("S4 must be ≥ 0 and its reference frequency > 0.")
+                else:
+                    ionospheric_loss_db = _field("ionospheric_loss_db", _parse_optional)
+                    iono_s4_ref, iono_s4_ref_freq = None, calculations.GPS_L1_MHZ
                 polarisation_loss_db = _field("polarisation_loss_db", _parse_optional_or_none)
                 rx_axial_ratio_db = _field("rx_axial_ratio_db", _parse_optional_or_none)
                 multipath_loss_db = _field("multipath_loss_db", _parse_optional)
@@ -2290,8 +2414,10 @@ class LinkBudgetApp:
                     other_att=other_att,
                     pointing_loss_db=pointing_loss_db,
                     link_availability_pct=link_availability,
-                    include_scintillation=self.scint_var.get(),
+                    include_scintillation=scint_var.get(),
                     required_ebno=required_ebno,
+                    ionospheric_s4_ref=iono_s4_ref,
+                    ionospheric_s4_ref_freq_mhz=iono_s4_ref_freq,
                     tx_power_w=tx_power_w,
                     antenna_circuit_loss_db=ant_circuit_loss_db,
                     vswr=vswr,
@@ -2337,7 +2463,18 @@ class LinkBudgetApp:
                     if item[0] == "station":
                         group_items.append(("Ground Station", gs_name))
                     elif item[0] == "scintillation":
-                        group_items.append(("Scintillation", "Included" if self.scint_var.get() else "Excluded"))
+                        group_items.append(
+                            ("Tropospheric Scintillation", "Included" if scint_var.get() else "Excluded")
+                        )
+                    elif item[0] == "iono_mode":
+                        group_items.append(
+                            (
+                                "Ionospheric Loss",
+                                "From S4 (ITU-R P.531)" if iono_mode_var.get() == "s4" else "Manual",
+                            )
+                        )
+                    elif item[0] in ("iono_used", "eirp_used"):
+                        continue
                     elif item[0] == "eirp_mode":
                         group_items.append(
                             (
@@ -2571,7 +2708,7 @@ class LinkBudgetApp:
             font=(font_family, 10, "bold"),
         ).pack(anchor="w", pady=(0, 8))
         export_rows.append(("Geometry", "Slant Range [km]", f"{budget['slant_range_km']:.2f}", ""))
-        for note in static_report.analysis_notes(extra_info):
+        for note in static_report.analysis_notes(extra_info, budget):
             ttk.Label(
                 parent, text=f"Note: {note}", foreground=PALETTE["danger"], wraplength=720, justify="left"
             ).pack(anchor="w", pady=(0, 6))

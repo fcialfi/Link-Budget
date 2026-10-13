@@ -141,3 +141,29 @@ def test_other_attenuations_row_only_when_set(budget):
     with_other = dict(budget, other_attenuation_db=0.5)
     rows = {row.label: row for row in static_report.link_budget_rows(with_other)}
     assert rows["Other Attenuations [dB]"].clear == 0.5
+
+
+def test_analysis_notes_for_scintillation_and_other_attenuations():
+    budget = {
+        "scintillation_included": True,
+        "tropospheric_scintillation_valid": False,
+        "frequency_mhz": 1707.0,
+        "ionospheric_scintillation": {"valid": False},
+        "other_attenuation_db": 3.0,
+    }
+    notes = static_report.analysis_notes({"elevation_deg": 10.0}, budget)
+    assert any("Tropospheric scintillation" in n for n in notes)
+    assert any("S4 ≥ 0.4" in n for n in notes)
+    assert any("counts the same effects twice" in n for n in notes)
+    clean = dict(budget, scintillation_included=False, ionospheric_scintillation={"valid": True}, other_attenuation_db=0.5)
+    assert static_report.analysis_notes({"elevation_deg": 10.0}, clean) == []
+
+
+def test_info_rows_show_zone_and_s4(budget):
+    with_scint = dict(
+        budget,
+        ionospheric_scintillation=calculations.ionospheric_scintillation_fade_db(0.3, 1707.0),
+    )
+    labels = dict(static_report.info_rows(with_scint, {}))
+    assert "polar cap" in labels["Geomagnetic Latitude / Ionospheric Zone"]
+    assert labels["Ionospheric S4 at Link Frequency"].startswith("0.266")
