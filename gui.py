@@ -247,7 +247,7 @@ class _Tooltip:
             font=("TkDefaultFont", 9),
             padx=8,
             pady=5,
-            wraplength=320,
+            wraplength=560,
             justify="left",
         ).pack()
 
@@ -268,7 +268,8 @@ def _info_icon(parent, text: str) -> ttk.Label:
     """A small "ⓘ" label showing ``text`` when the pointer rests on it."""
 
     icon = ttk.Label(parent, text="ⓘ", foreground=PALETTE["accent"], cursor="question_arrow")
-    _Tooltip(icon, text, delay=150)
+    # Kept on the icon so the text can be updated (e.g. with a live breakdown).
+    icon.tooltip = _Tooltip(icon, text, delay=150)
     return icon
 
 
@@ -1817,6 +1818,9 @@ class LinkBudgetApp:
         # fields the calculation currently ignores. Panel fields use the key
         # "panel:<label>".
         field_widgets: dict[str, tuple[ttk.Label, ttk.Entry, str]] = {}
+        # key -> (info icon, its default text), for fields whose icon can show
+        # a live breakdown of the computed value.
+        info_icons: dict[str, tuple[ttk.Label, str]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
         # The station of this window is its own (saved with its inputs), so
         # changing it here never touches the main window's pass analysis.
@@ -2058,7 +2062,10 @@ class LinkBudgetApp:
                     linked.bind(
                         "<KeyRelease>", lambda event, edited=panel_entry: self.on_panel_entry_edited(edited)
                     )
-                    _info_icon(cell, f"{tooltip} {shared_note}".strip()).pack(side=tk.LEFT, padx=(4, 0))
+                    panel_info = f"{tooltip} {shared_note}".strip()
+                    panel_icon = _info_icon(cell, panel_info)
+                    panel_icon.pack(side=tk.LEFT, padx=(4, 0))
+                    info_icons[f"panel:{label_text}"] = (panel_icon, panel_info)
                     panel_specs.append((label_text, panel_entry))
                     field_widgets[f"panel:{label_text}"] = (label_widget, linked, PALETTE["accent"])
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
@@ -2073,7 +2080,9 @@ class LinkBudgetApp:
                 else:
                     entry = ttk.Entry(cell, width=15)
                 entry.pack(side=tk.LEFT)
-                _info_icon(cell, tooltip).pack(side=tk.LEFT, padx=(4, 0))
+                field_icon = _info_icon(cell, tooltip)
+                field_icon.pack(side=tk.LEFT, padx=(4, 0))
+                info_icons[key] = (field_icon, tooltip)
                 entries[key] = entry
                 entry_labels[key] = label_text
                 entry_defaults[key] = default
@@ -2173,6 +2182,61 @@ class LinkBudgetApp:
             _set_entry_text(entry_widget, text)
             entry_widget.state(["disabled"])
 
+        def _explain_framing(coded_kbps: float, framing: dict) -> None:
+            """Put the breakdown of the CCSDS-derived values in their info icons."""
+
+            depth = framing["interleaving_depth"]
+            frame = framing["frame_bytes"]
+            trailer = []
+            trailer.append("OCF 4 B" if ccsds_ocf_var.get() else "no OCF")
+            trailer.append("FECF 2 B" if ccsds_fecf_var.get() else "no FECF")
+            packet_text = _field_text("ccsds_packet_length")
+            if packet_text:
+                packet_length = float(packet_text)
+                cuc = float(_field_text("ccsds_packet_sec_header") or 0)
+                pec = 2 if ccsds_pec_var.get() else 0
+                per_packet = 6 + cuc + pec
+                packet_line = (
+                    f"  − packet overhead: header 6 + data field header (CUC) {cuc:g} + error "
+                    f"control {pec} = {per_packet:g} B in every {packet_length:g}-B packet "
+                    f"({framing['data_field_bytes'] - framing['user_data_bytes']:.1f} B per frame)\n"
+                )
+            else:
+                packet_line = "  (packet overheads not deducted: no packet length given)\n"
+            formatting_text = (
+                f"Formatting = frame / user data = {frame} / {framing['user_data_bytes']:.1f} = "
+                f"{framing['formatting']:.5f}\n"
+                f"  Frame {frame} B (= 223 × I, I = {depth})\n"
+                f"  − primary header 6 B (includes the First Header Pointer)\n"
+                f"  − trailer: {', '.join(trailer)}\n"
+                f"  = data field {framing['data_field_bytes']} B\n"
+                f"{packet_line}"
+                f"  = user data {framing['user_data_bytes']:.1f} B\n"
+                "Computed from the CCSDS framing (Data framing above)."
+            )
+            coding_text = (
+                f"Overhead = formatting × coding = {framing['formatting']:.5f} × {framing['coding']:.5f} "
+                f"= {framing['total']:.5f}\n"
+                f"  Coding = (RS codeblock {framing['codeblock_bytes']} B + ASM 4 B) / frame {frame} B × 2\n"
+                f"  RS codeblock = frame {frame} B + {framing['codeblock_bytes'] - frame} B check symbols "
+                f"(32 × I); CADU = {framing['codeblock_bytes'] + 4} B; × 2 = convolutional rate 1/2\n"
+                "Computed from the CCSDS framing; also used by the main window."
+            )
+            bitrate_text = (
+                f"Coded (channel) bit rate of the transmitter: {coded_kbps:.1f} kbit/s.\n"
+                f"  Formatted = coded / coding = {coded_kbps:.1f} / {framing['coding']:.5f} = "
+                f"{coded_kbps / framing['coding']:.1f} kbit/s (Eb/No reference)\n"
+                f"  Information = coded / overhead = {coded_kbps:.1f} / {framing['total']:.5f} = "
+                f"{coded_kbps / framing['total']:.1f} kbit/s\n"
+                f"{shared_note}"
+            )
+            for key, text in (
+                ("formatting_overhead", formatting_text),
+                (f"panel:{overhead_label}", coding_text),
+                (f"panel:{bitrate_label}", bitrate_text),
+            ):
+                info_icons[key][0].tooltip.text = text
+
         def _refresh_framing() -> None:
             if "ccsds_interleaving" not in field_widgets:
                 return  # uplink: no CCSDS TM framing
@@ -2183,14 +2247,24 @@ class LinkBudgetApp:
                 button.state(["!disabled"] if ccsds else ["disabled"])
             for key in (f"panel:{overhead_label}", "formatting_overhead"):
                 _set_field_enabled(key, not ccsds)
+            explained = (f"panel:{bitrate_label}", f"panel:{overhead_label}", "formatting_overhead")
+
+            def _restore_info() -> None:
+                for key in explained:
+                    icon, default_text = info_icons[key]
+                    icon.tooltip.text = default_text
+
             if not ccsds:
                 framing_used_var.set("")
+                _restore_info()
                 return
             try:
                 coded_kbps, framing = _ccsds_framing()
             except ValueError as exc:
                 framing_used_var.set(f"CCSDS framing: {exc}")
+                _restore_info()
                 return
+            _explain_framing(coded_kbps, framing)
             _write_computed(f"panel:{overhead_label}", f"{framing['total']:.6g}")
             _write_computed("formatting_overhead", f"{framing['formatting']:.6g}")
             self.on_panel_entry_edited(overhead_entry)
