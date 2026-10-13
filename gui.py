@@ -180,6 +180,17 @@ def _splash_tick(root, progress):
 
 _SPLASH_ROOT, _SPLASH_PROGRESS = _show_startup_splash()
 
+# The packaged executable shows the bootloader's splash screen from the
+# moment it is started (see gui.spec); hand over to the loading window above
+# now that it is up. The module only exists in a PyInstaller build with a
+# splash screen.
+try:
+    import pyi_splash  # type: ignore[import-not-found]
+
+    pyi_splash.close()
+except Exception:
+    pass
+
 from datetime import datetime, timedelta, timezone
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
