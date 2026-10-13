@@ -697,6 +697,91 @@ def tropospheric_scintillation_model_valid(freq_ghz: float, elevation_deg: float
     return elevation_deg >= 5.0 and 4.0 <= freq_ghz <= 20.0
 
 
+# CCSDS TM Space Data Link Protocol (132.0-B) and TM Synchronization and
+# Channel Coding (131.0-B) constants, in bytes.
+CCSDS_TM_PRIMARY_HEADER_BYTES = 6
+CCSDS_TM_OCF_BYTES = 4
+CCSDS_TM_FECF_BYTES = 2
+CCSDS_SPACE_PACKET_HEADER_BYTES = 6
+CCSDS_ASM_BYTES = 4
+CCSDS_RS_K = 223
+CCSDS_RS_N = 255
+
+
+def ccsds_tm_overheads(
+    interleaving_depth: int,
+    ocf: bool = True,
+    fecf: bool = False,
+    secondary_header_bytes: int = 0,
+    convolutional: bool = True,
+    packet_length_bytes: Optional[float] = None,
+    packet_secondary_header_bytes: float = 0,
+    packet_error_control_bytes: float = 0,
+) -> Dict[str, Any]:
+    """Formatting and coding factors of a CCSDS TM downlink.
+
+    Transfer frames of ``223 * interleaving_depth`` bytes (RS(255,223)
+    with interleaving depth I, no virtual fill) carry a 6-byte primary
+    header, an optional secondary header, the optional OCF (4 bytes) and
+    FECF (2 bytes); the rest is the data field (the First Header Pointer is
+    part of the 6-byte primary header). When ``packet_length_bytes`` (total
+    Space Packet length, packets spanning frames) is given, the share of
+    every packet taken by its 6-byte primary header, its data field header
+    (``packet_secondary_header_bytes``, e.g. a CUC time code) and its
+    ``packet_error_control_bytes`` (e.g. a 16-bit CRC) is not counted as
+    user data.
+    Each RS codeblock
+    (``255 * I`` bytes) gets a 32-bit attached sync marker, and the whole
+    stream is convolutionally encoded at rate 1/2 when ``convolutional``.
+
+    Returns ``frame_bytes``, ``data_field_bytes``, ``user_data_bytes``,
+    ``codeblock_bytes``, ``formatting`` (frame / user data), ``coding``
+    (channel bits per frame
+    bit) and ``total`` (= formatting * coding, the coded-over-information
+    bit rate ratio).
+    """
+
+    if int(interleaving_depth) != interleaving_depth or not 1 <= interleaving_depth <= 8:
+        raise ValueError("The RS interleaving depth must be an integer from 1 to 8.")
+    interleaving_depth = int(interleaving_depth)
+    frame = CCSDS_RS_K * interleaving_depth
+    data_field = (
+        frame
+        - CCSDS_TM_PRIMARY_HEADER_BYTES
+        - int(secondary_header_bytes)
+        - (CCSDS_TM_OCF_BYTES if ocf else 0)
+        - (CCSDS_TM_FECF_BYTES if fecf else 0)
+    )
+    if data_field <= 0:
+        raise ValueError("The transfer frame has no room left for data.")
+    user_data = float(data_field)
+    if packet_length_bytes is not None:
+        packet_overhead = (
+            CCSDS_SPACE_PACKET_HEADER_BYTES + packet_secondary_header_bytes + packet_error_control_bytes
+        )
+        if min(packet_secondary_header_bytes, packet_error_control_bytes) < 0 or (
+            packet_length_bytes <= packet_overhead
+        ):
+            raise ValueError(
+                "The packet length must exceed its header (6 bytes), data field header and "
+                "error control."
+            )
+        user_data = data_field * (packet_length_bytes - packet_overhead) / packet_length_bytes
+    codeblock = CCSDS_RS_N * interleaving_depth
+    formatting = frame / user_data
+    coding = (codeblock + CCSDS_ASM_BYTES) / frame * (2.0 if convolutional else 1.0)
+    return {
+        "interleaving_depth": interleaving_depth,
+        "frame_bytes": frame,
+        "data_field_bytes": data_field,
+        "user_data_bytes": float(user_data),
+        "codeblock_bytes": codeblock,
+        "formatting": float(formatting),
+        "coding": float(coding),
+        "total": float(formatting * coding),
+    }
+
+
 def power_flux_density(
     eirp_dbw: float,
     slant_range_km: float,
@@ -801,7 +886,7 @@ def calculate_fixed_elevation_link_budget(
     otherwise. ``rx_depointing_deg`` adds a receive antenna pointing loss
     (:func:`antenna_pointing_loss_db`), using ``rx_beamwidth_3db_deg`` or, if
     that is omitted, the beamwidth of a ``d_gs`` dish at ``freq``. Eb/No is
-    referred to the bit rate including formatting but excluding coding,
+    referred to the transfer frame bit rate (formatting included, channel coding excluded),
     ``bitrate / overhead * formatting_overhead`` (``overhead`` being the
     total coded-over-information rate ratio). When ``tolerances`` (see
     :func:`margin_statistics`) and ``required_ebno`` are given, each

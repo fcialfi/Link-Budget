@@ -962,3 +962,45 @@ def test_fixed_elevation_link_budget_ionospheric_loss_from_s4(_stub_atmospheric_
     assert from_s4["clear"]["rx_power_dbw"] == pytest.approx(manual["clear"]["rx_power_dbw"] - fade + 0.05)
     assert from_s4["ionospheric_zone"]["zone"] == "polar cap"
     assert not from_s4["tropospheric_scintillation_valid"]
+
+
+def test_ccsds_tm_overheads_for_1115_byte_frames():
+    framing = calculations.ccsds_tm_overheads(5, ocf=True, fecf=False)
+    assert framing["frame_bytes"] == 1115
+    assert framing["data_field_bytes"] == 1115 - 6 - 4
+    assert framing["formatting"] == pytest.approx(1115 / 1105)
+    # 32-bit ASM per 1275-byte RS codeblock, convolutional rate 1/2.
+    assert framing["coding"] == pytest.approx((1275 + 4) / 1115 * 2)
+    assert framing["total"] == pytest.approx(framing["formatting"] * framing["coding"])
+    # Never below the bare RS(255,223) + conv 1/2 expansion.
+    assert framing["coding"] > 2 * 255 / 223
+
+
+def test_ccsds_tm_overheads_options_and_validation():
+    with_fecf = calculations.ccsds_tm_overheads(5, ocf=True, fecf=True)
+    assert with_fecf["data_field_bytes"] == 1115 - 12
+    rs_only = calculations.ccsds_tm_overheads(5, convolutional=False)
+    assert rs_only["coding"] == pytest.approx((1275 + 4) / 1115)
+    for depth in (0, 9, 2.5):
+        with pytest.raises(ValueError):
+            calculations.ccsds_tm_overheads(depth)
+
+
+def test_ccsds_tm_overheads_packet_headers_per_packet():
+    plain = calculations.ccsds_tm_overheads(5, ocf=True)
+    packets = calculations.ccsds_tm_overheads(5, ocf=True, packet_length_bytes=1000, packet_secondary_header_bytes=10)
+    assert packets["data_field_bytes"] == plain["data_field_bytes"] == 1105
+    # Packets span frames: each packet loses 6 + 10 header bytes out of 1000.
+    assert packets["user_data_bytes"] == pytest.approx(1105 * (1000 - 16) / 1000)
+    assert packets["formatting"] == pytest.approx(1115 / packets["user_data_bytes"])
+    # The channel coding (and so the Eb/No reference rate) does not change.
+    assert packets["coding"] == pytest.approx(plain["coding"])
+    with pytest.raises(ValueError):
+        calculations.ccsds_tm_overheads(5, packet_length_bytes=16, packet_secondary_header_bytes=10)
+
+
+def test_ccsds_tm_overheads_packet_error_control():
+    framing = calculations.ccsds_tm_overheads(
+        5, ocf=True, packet_length_bytes=1000, packet_secondary_header_bytes=7, packet_error_control_bytes=2
+    )
+    assert framing["user_data_bytes"] == pytest.approx(1105 * (1000 - 6 - 7 - 2) / 1000)
