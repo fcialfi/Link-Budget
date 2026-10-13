@@ -622,26 +622,31 @@ IONOSPHERIC_ZONES = (
     (
         "equatorial",
         20.0,
-        "strongest ionospheric scintillation (post-sunset, solar maximum): use local S4 "
-        "statistics.",
+        "Strongest scintillation (after sunset, solar maximum): use local S4 statistics.",
     ),
     (
         "mid-latitude",
         58.0,
-        "ionospheric scintillation is usually weak: a small manual allowance is usually enough.",
+        "Usually weak scintillation: a small manual value is usually enough.",
     ),
     (
         "auroral oval",
         72.0,
-        "scintillation driven by geomagnetic activity; S4 = 0.3 at L1 for 99.9% of the time "
-        "was measured in Kiruna (ESA AWS-TN-ESA-SYS-0052).",
+        "Scintillation linked to geomagnetic activity: S4 = 0.3 (Kiruna, 99.9%) is representative.",
     ),
     (
         "polar cap",
         90.0,
-        "outside the auroral oval, scintillation is moderate: S4 = 0.3 at L1 (Kiruna, auroral "
-        "oval, active solar years) is a conservative upper bound (ESA AWS-TN-ESA-SYS-0052).",
+        "Moderate scintillation: S4 = 0.3 (Kiruna, 99.9%) is a conservative upper bound.",
     ),
+)
+
+# Where the S4 guidance comes from, for the popup's info icon.
+IONOSPHERIC_ZONES_SOURCE = (
+    "Zones from the geomagnetic latitude of a centred dipole (approximate: the auroral oval moves "
+    "with geomagnetic activity). S4 = 0.3 at GPS L1, exceeded 0.1% of the time, was measured in "
+    "Kiruna (auroral oval) during active years of the solar cycle; ESA technical note "
+    "AWS-TN-ESA-SYS-0052 uses it as an upper bound for Svalbard, which lies outside the oval."
 )
 
 
