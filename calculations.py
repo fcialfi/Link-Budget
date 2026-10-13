@@ -566,6 +566,7 @@ def margin_statistics(nominal_margin_db: float, tolerances: list) -> Dict[str, A
         contributions.append(
             {
                 "name": tol.get("name", ""),
+                "key": tol.get("key"),
                 "favourable_db": fav,
                 "adverse_db": adv,
                 "distribution": dist.upper(),

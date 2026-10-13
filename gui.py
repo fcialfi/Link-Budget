@@ -2730,7 +2730,7 @@ class LinkBudgetApp:
                     )
 
                 tolerances = []
-                for fav_entry, adv_entry, pdf_box, tol_label, _default_pdf in tolerance_widgets.values():
+                for tol_key, (fav_entry, adv_entry, pdf_box, tol_label, _default_pdf) in tolerance_widgets.items():
                     fav = _parse_optional(fav_entry, f"{tol_label} favourable tolerance")
                     adv = _parse_optional(adv_entry, f"{tol_label} adverse tolerance")
                     if fav < 0 or adv < 0:
@@ -2741,6 +2741,7 @@ class LinkBudgetApp:
                         tolerances.append(
                             {
                                 "name": tol_label,
+                                "key": tol_key,
                                 "favourable_db": fav,
                                 "adverse_db": adv,
                                 "distribution": pdf_box.get(),
@@ -3171,56 +3172,51 @@ class LinkBudgetApp:
         if static_report.pfd_applicable(extra_info):
             self._render_pfd_section(parent, budget, extra_info, export_rows)
 
-        # Tolerance contributions are the same for both conditions.
-        clear_stats = budget["clear"].get("margin_statistics")
-        if clear_stats and clear_stats["contributions"]:
-            tol_frame = ttk.LabelFrame(parent, text="Tolerance Contributions", padding=8)
-            tol_frame.pack(fill=tk.X, pady=(10, 0))
-            columns = ("param", "fav", "adv", "pdf", "mean", "var")
-            tol_table = ttk.Treeview(
-                tol_frame, columns=columns, show="headings", height=len(clear_stats["contributions"]) + 1
+        # Tolerances propagated through the link budget (worst case: rain faded).
+        tol_rows = static_report.tolerance_rows(budget, "rain_faded")
+        if tol_rows:
+            tol_frame = ttk.LabelFrame(
+                parent, text=f"Link Budget with Tolerances (Rain Faded, p={rain_p:g}%)", padding=8
             )
+            tol_frame.pack(fill=tk.X, pady=(10, 0))
+            ttk.Label(
+                tol_frame,
+                text=static_report.TOLERANCE_TABLE_EXPLANATION,
+                foreground=PALETTE["text_muted"],
+                wraplength=720,
+                justify="left",
+            ).pack(anchor="w", pady=(0, 6))
+            columns = ("param", "nominal", "fav", "adv", "mean", "var", "pdf")
+            tol_table = ttk.Treeview(tol_frame, columns=columns, show="headings", height=len(tol_rows))
             for col, heading, width, anchor in (
-                ("param", "Parameter", 220, "w"),
-                ("fav", "Favourable [dB]", 120, "center"),
-                ("adv", "Adverse [dB]", 110, "center"),
-                ("pdf", "PDF", 60, "center"),
-                ("mean", "Mean [dB]", 90, "center"),
-                ("var", "Variance [dB²]", 120, "center"),
+                ("param", "Parameter", 240, "w"),
+                ("nominal", "Nominal", 85, "center"),
+                ("fav", "Favourable", 90, "center"),
+                ("adv", "Adverse", 85, "center"),
+                ("mean", "Mean", 80, "center"),
+                ("var", "Variance [dB²]", 100, "center"),
+                ("pdf", "PDF", 80, "center"),
             ):
                 tol_table.heading(col, text=heading)
                 tol_table.column(col, anchor=anchor, width=width)
             _configure_result_tags(tol_table)
-            contributions = clear_stats["contributions"]
-            tol_rows = [
-                (
-                    contrib["name"],
-                    f"+{contrib['favourable_db']:.2f}",
-                    f"-{contrib['adverse_db']:.2f}",
-                    contrib["distribution"],
-                    f"{contrib['mean_db']:.2f}",
-                    f"{contrib['variance_db2']:.3f}",
+            for i, row in enumerate(tol_rows):
+                values = (
+                    row.label,
+                    f"{row.nominal:.2f}",
+                    f"{row.favourable:.2f}",
+                    f"{row.adverse:.2f}",
+                    f"{row.mean:.2f}",
+                    f"{row.variance:.3f}",
+                    row.distribution,
                 )
-                for contrib in contributions
-            ]
-            tol_rows.append(
-                (
-                    "Total",
-                    f"+{sum(c['favourable_db'] for c in contributions):.2f}",
-                    f"-{sum(c['adverse_db'] for c in contributions):.2f}",
-                    "",
-                    f"{sum(c['mean_db'] for c in contributions):.2f}",
-                    f"{clear_stats['variance_db2']:.3f}",
-                )
-            )
-            for i, values in enumerate(tol_rows):
                 tol_table.insert("", "end", values=values, tags=("evenrow" if i % 2 == 0 else "oddrow",))
                 export_rows.append(
                     (
-                        "Tolerances",
-                        values[0],
-                        f"fav {values[1]} / adv {values[2]} {values[3]}".strip(),
-                        f"mean {values[4]} / var {values[5]}",
+                        "Tolerances (rain faded)",
+                        row.label,
+                        f"nominal {values[1]} / fav {values[2]} / adv {values[3]}",
+                        f"mean {values[4]} / var {values[5]} / {values[6]}",
                     )
                 )
             tol_table.pack(fill=tk.X)
