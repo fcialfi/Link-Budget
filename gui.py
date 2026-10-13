@@ -390,6 +390,7 @@ _FIXED_LB_ROW_HELP = {
         "worst case computed from the two axial ratios."
     ),
     "Multipath Losses [dB]": "Multipath allowance entered in the Propagation section.",
+    "Other Attenuations [dB]": "Other static attenuation (Propagation section), subtracted from Rx Power.",
     "Total Propagation Loss [dB]": "Free space loss + atmospheric attenuation + ionospheric and polarisation losses.",
     "Rx G/T [dB/K]": "Receiving figure of merit: antenna gain over system noise temperature.",
     "Rx Antenna Pointing Loss [dB]": "Receive antenna depointing loss: 12·(depointing angle / 3 dB beamwidth)².",
@@ -1756,6 +1757,9 @@ class LinkBudgetApp:
         # "panel:<label>".
         field_widgets: dict[str, tuple[ttk.Label, ttk.Entry, str]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
+        # The station of this window is its own (saved with its inputs), so
+        # changing it here never touches the main window's pass analysis.
+        station_var = tk.StringVar(value=self.gs_var.get())
         eirp_used_var = tk.StringVar(value="")
         shared_note = "Shared with the main window."
         for group_index, (group_title, items) in enumerate(field_groups, start=2):
@@ -1821,14 +1825,14 @@ class LinkBudgetApp:
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
                 if kind == "station":
-                    ttk.Label(group_frame, text="Ground Station:", foreground=PALETTE["accent"]).grid(
+                    ttk.Label(group_frame, text="Ground Station:").grid(
                         row=r, column=c * 2, sticky="w", padx=padx, pady=2
                     )
                     gs_cell = ttk.Frame(group_frame)
                     gs_cell.grid(row=r, column=c * 2 + 1, sticky="w", pady=2)
                     gs_box = ttk.Combobox(
                         gs_cell,
-                        textvariable=self.gs_var,
+                        textvariable=station_var,
                         values=list(self.gs_menu["values"]) if self.gs_menu is not None else [],
                         state="readonly",
                         width=15,
@@ -1839,11 +1843,12 @@ class LinkBudgetApp:
                         )
                     )
                     gs_box.pack(side=tk.LEFT)
-                    gs_box.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
                     _info_icon(
                         gs_cell,
-                        f"{shared_note} Its location (latitude, longitude, altitude) sets the ITU-R "
-                        "atmospheric attenuation; the geometry only uses elevation and altitude.",
+                        "Its location (latitude, longitude, altitude) sets the ITU-R atmospheric "
+                        "attenuation; the geometry only uses elevation and altitude. Saved with "
+                        "the inputs of this window and independent of the station selected in the "
+                        "main window (used as the default).",
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
@@ -2042,6 +2047,7 @@ class LinkBudgetApp:
             if tolerances_out:
                 values["tolerances"] = tolerances_out
             values["eirp_mode"] = eirp_mode_var.get()
+            values["station"] = station_var.get()
             return values
 
         def _apply_values(values: dict) -> None:
@@ -2058,6 +2064,8 @@ class LinkBudgetApp:
                 # whenever a transmitter power was given.
                 mode = "tx_chain" if _format_value(values.get("tx_power_w")) else "eirp"
             eirp_mode_var.set(mode)
+            station = values.get("station")
+            station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
             _refresh_states()
             saved_tolerances = values.get("tolerances")
             if not isinstance(saved_tolerances, dict):
@@ -2212,7 +2220,7 @@ class LinkBudgetApp:
                 messagebox.showerror("Input Error", str(exc), parent=win)
                 return
 
-            gs_name = self.gs_var.get()
+            gs_name = station_var.get()
             if not gs_name or gs_name not in calculations.GROUND_STATIONS:
                 messagebox.showerror("Error", "Please select a valid Ground Station first.", parent=win)
                 return

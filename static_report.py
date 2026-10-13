@@ -74,6 +74,8 @@ def link_budget_rows(budget: Dict[str, Any], required_margin_db: Optional[float]
         both(path, "Polarisation Mismatch Loss [dB]", budget["polarisation_loss_db"])
     if budget.get("multipath_loss_db"):
         both(path, "Multipath Losses [dB]", budget["multipath_loss_db"])
+    if budget.get("other_attenuation_db"):
+        both(path, "Other Attenuations [dB]", budget["other_attenuation_db"])
     per_condition(path, "Total Propagation Loss [dB]", "total_propagation_loss_db", emphasis=True)
     if "gt_dbk" in budget:
         both(rx, "Rx G/T [dB/K]", budget["gt_dbk"])

@@ -785,6 +785,7 @@ def calculate_fixed_elevation_link_budget(
         "ionospheric_loss_db": ionospheric_loss_db,
         "polarisation_loss_db": polarisation_loss_db,
         "multipath_loss_db": multipath_loss_db,
+        "other_attenuation_db": other_att,
         "modulation_degradation_db": modulation_degradation_db,
         "receiver_degradation_db": demod_loss,
         "rx_pointing_loss_db": rx_pointing_loss_db,
