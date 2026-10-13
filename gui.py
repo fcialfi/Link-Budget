@@ -1690,8 +1690,9 @@ class LinkBudgetApp:
                     F(
                         "polarisation_loss_db", "Polarisation Mismatch Loss [dB]", "", "auto from axial ratios",
                         "Subtracted from Rx Power. Leave empty to compute it from the Tx and Rx "
-                        "axial ratios (worst-case orientation of the polarisation ellipses), or 0 "
-                        "when those are not both set.",
+                        "axial ratios (worst-case orientation of the polarisation ellipses, with the "
+                        "antenna gains taken as co-polar/circular gains, as in the reference "
+                        "sheet), or 0 when those are not both set.",
                     ),
                     F(
                         "multipath_loss_db", "Multipath Losses [dB]", "0", None,
@@ -2081,14 +2082,51 @@ class LinkBudgetApp:
                 _set_entry_text(adv_entry, _format_value(item.get("adverse_db")))
                 distribution = str(item.get("distribution", default_pdf)).upper()
                 pdf_box.set(distribution if distribution in calculations.TOLERANCE_DISTRIBUTIONS else default_pdf)
+            _mark_stale()
 
         def _remember_values() -> None:
             self.static_lb_values[section] = _collect_values()
 
+        # Results shown are "fresh" until any input they depend on changes.
+        results_state = {"fresh": False}
+        stale_note: dict = {}
+
+        def _mark_stale(*_args) -> None:
+            if not results_state["fresh"] or not win.winfo_exists():
+                return
+            results_state["fresh"] = False
+            calc_button.configure(style="Red.TButton")
+            export_button.state(["disabled"])
+            pdf_button.state(["disabled"])
+            note = stale_note.get("label")
+            if note is not None and note.winfo_exists():
+                first = results_frame.pack_slaves()
+                note.pack(anchor="w", pady=(0, 8), before=first[0]) if first else note.pack(anchor="w")
+
         _apply_values(self.static_lb_values.get(section, {}))
+
+        # Any edit of an input marks the results as out of date: the popup's
+        # own fields, the shared panel fields (also when edited in the main
+        # window), the station, the EIRP source and the tolerances.
+        for _label, entry_widget, _colour in field_widgets.values():
+            entry_widget.bind("<KeyRelease>", _mark_stale, add="+")
+        for fav_entry, adv_entry, pdf_box, _label, _default in tolerance_widgets.values():
+            fav_entry.bind("<KeyRelease>", _mark_stale, add="+")
+            adv_entry.bind("<KeyRelease>", _mark_stale, add="+")
+            pdf_box.bind("<<ComboboxSelected>>", _mark_stale, add="+")
+        watched_vars = [station_var, eirp_mode_var, self.scint_var] + [
+            self._linked_var(panel_entry) for _label, panel_entry in panel_specs
+        ]
+        # The shared variables outlive this window: their traces are removed on close.
+        traces = [(var, var.trace_add("write", _mark_stale)) for var in watched_vars]
 
         def _on_close():
             _remember_values()
+            for var, trace_id in traces:
+                try:
+                    var.trace_remove("write", trace_id)
+                except tk.TclError:
+                    pass
             win.destroy()
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
@@ -2291,16 +2329,7 @@ class LinkBudgetApp:
                 "elevation_deg": elevation_deg,
                 "tolerances_ignored": bool(tolerances) and required_ebno is None,
             }
-            for key, entry in entries.items():
-                text = entry.get().strip()
-                if text:
-                    export_rows.append(("Input", entry_labels[key], text, ""))
-            export_rows.extend(
-                self._render_fixed_link_budget_results(results_frame, budget, link_availability, extra_info)
-            )
-            export_button.state(["!disabled"])
-
-            # Inputs for the report, in the same sections as this window.
+            # Inputs actually used, in the same sections as this window (CSV and PDF).
             input_groups = []
             for group_title, items in field_groups:
                 group_items = []
@@ -2325,6 +2354,14 @@ class LinkBudgetApp:
                             label_text = item[1] if item[0] == "panel" else entry_labels[key]
                             group_items.append((label_text, text))
                 input_groups.append((group_title, group_items))
+            for group_title, group_items in input_groups:
+                for label_text, text in group_items:
+                    export_rows.append((f"Input: {group_title}", label_text, text, ""))
+            export_rows.extend(
+                self._render_fixed_link_budget_results(results_frame, budget, link_availability, extra_info)
+            )
+            export_button.state(["!disabled"])
+
             last_report.update(
                 budget=budget,
                 extra_info=extra_info,
@@ -2338,6 +2375,19 @@ class LinkBudgetApp:
                 ),
             )
             pdf_button.state(["!disabled"])
+            stale_note["label"] = ttk.Label(
+                results_frame,
+                text=(
+                    "⚠ Inputs changed since these results were calculated: press Calculate to "
+                    "update them (exports are disabled until then)."
+                ),
+                foreground=PALETTE["danger"],
+                font=(recap_font_family, 9, "bold"),
+                wraplength=720,
+                justify="left",
+            )
+            results_state["fresh"] = True
+            calc_button.configure(style="TButton")
 
         def _default_parameters_path() -> str:
             return (
@@ -2460,9 +2510,9 @@ class LinkBudgetApp:
 
         button_row = ttk.Frame(form)
         button_row.grid(row=tol_row + 1, column=0, sticky="w", pady=(6, 0))
-        ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton").pack(
-            side=tk.LEFT, padx=(0, 10)
-        )
+        calc_button = ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton")
+        calc_button.pack(side=tk.LEFT, padx=(0, 10))
+        _add_tooltip(calc_button, "Red when there are no results yet or the inputs changed since the last calculation.")
         load_button = ttk.Button(button_row, text="Load...", command=_load)
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
