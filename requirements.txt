@@ -8,6 +8,8 @@ astropy
 scipy
 # PDF report of the fixed-elevation link budget.
 reportlab
+# Licence check of the packaged executable (licensing.py, license_tool.py).
+cryptography
 # pytest is required both to run the test suite and as a PyInstaller hidden
 # import: astropy.tests.runner optionally imports it, and gui.spec bundles it
 # so the frozen executable does not fail to import astropy at runtime.

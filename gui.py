@@ -4,7 +4,9 @@ from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
 import csv
 import math
+import os
 import re
+import sys
 from typing import Callable
 
 # ---------------------------------------------------------------------------
@@ -32,11 +34,47 @@ PALETTE = {
     "row_even": "#f3f6fb",
     "selection": "#cfe0fd",
     "warning": "#c77700",
+    "warning_on_dark": "#ffb74d",
     "success_light": "#e8f5e9",
     "danger_light": "#fdecec",
     "danger_border": "#f1b5b5",
     "nav_disabled": "#aab3c0",
 }
+
+
+# Logo and icon images (assets/), found next to this file or, in the packaged
+# executable, in PyInstaller's extraction folder.
+_ASSETS_DIR = os.path.join(
+    getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), "assets"
+)
+LOGO_HEADER_FILE = "exostaff_logo_header.png"  # 44 px high, for the window headers
+LOGO_SPLASH_FILE = "exostaff_logo_splash.png"  # 60 px high, for the startup splash
+LOGO_FILE = "exostaff_logo.png"  # full size, for the PDF report
+ICON_FILE = "exostaff_icon.ico"
+ICON_PNG_FILE = "exostaff_icon_64.png"
+
+
+def _asset_path(name: str) -> str | None:
+    """Path of an assets/ file, or None when it is missing."""
+
+    path = os.path.join(_ASSETS_DIR, name)
+    return path if os.path.isfile(path) else None
+
+
+def _load_image(name: str, master=None) -> "tk.PhotoImage | None":
+    """An assets/ PNG as a Tk image, or None when missing or unreadable.
+
+    The caller must keep a reference to the image (e.g. on the widget that
+    shows it), or Tk discards it.
+    """
+
+    path = _asset_path(name)
+    if path is None:
+        return None
+    try:
+        return tk.PhotoImage(file=path, master=master)
+    except tk.TclError:
+        return None
 
 
 def _pick_font(preferred: list[str], fallback: str = "TkDefaultFont") -> str:
@@ -78,14 +116,20 @@ def _show_startup_splash():
 
     font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
 
-    width, height = 420, 170
+    width, height = 420, 200
     screen_w = root.winfo_screenwidth()
     screen_h = root.winfo_screenheight()
     root.geometry(f"{width}x{height}+{(screen_w - width) // 2}+{(screen_h - height) // 2}")
 
-    tk.Label(
-        root, text="LB", bg=PALETTE["accent"], fg="white", font=(font_family, 16, "bold"), width=3
-    ).pack(pady=(24, 10))
+    logo = _load_image(LOGO_SPLASH_FILE, master=root)
+    if logo is not None:
+        logo_label = tk.Label(root, image=logo, bg=PALETTE["header_bg"])
+        logo_label.image = logo
+        logo_label.pack(pady=(20, 8))
+    else:
+        tk.Label(
+            root, text="LB", bg=PALETTE["accent"], fg="white", font=(font_family, 16, "bold"), width=3
+        ).pack(pady=(24, 10))
     tk.Label(
         root,
         text="Satellite Link Budget Tool",
@@ -152,12 +196,11 @@ from skyfield.api import load, EarthSatellite, wgs84
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import astropy.units as u
-import os
-import sys
 import json
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import calculations
+import licensing
 import static_report
 
 # Add path of the current script (works also in PyInstaller .exe)
@@ -376,6 +419,26 @@ def _format_checked(value: float, status: str | None, digits: int = 2) -> str:
     return text
 
 
+def _header_logo(parent, font_family: str) -> tk.Label:
+    """The company logo at the left of a navy window header ("LB" badge if missing)."""
+
+    logo = _load_image(LOGO_HEADER_FILE, master=parent)
+    if logo is not None:
+        label = tk.Label(parent, image=logo, bg=PALETTE["header_bg"], bd=0)
+        label.image = logo
+        return label
+    return tk.Label(
+        parent,
+        text="LB",
+        bg=PALETTE["accent"],
+        fg="white",
+        font=(font_family, 13, "bold"),
+        width=3,
+        padx=4,
+        pady=4,
+    )
+
+
 # Hover definitions for the rows of the fixed-elevation link budget results.
 _FIXED_LB_ROW_HELP = {
     "EIRP [dBW]": (
@@ -499,6 +562,22 @@ class _PlaceholderEntry(ttk.Entry):
                 self._show_placeholder()
 
 
+def _stop_for_invalid_license(status) -> None:
+    """Tell the user the licence is not valid, then exit."""
+
+    global _SPLASH_ROOT
+    root = _SPLASH_ROOT or tk.Tk()
+    _SPLASH_ROOT = None
+    root.withdraw()
+    messagebox.showerror(
+        f"{licensing.PRODUCT}: licence not valid",
+        f"{status.message}\n\nContact the supplier for a new licence file.",
+        parent=root,
+    )
+    root.destroy()
+    raise SystemExit(1)
+
+
 class LinkBudgetApp:
     """Tkinter application for the satellite link budget tool.
 
@@ -533,6 +612,11 @@ class LinkBudgetApp:
         # kept across popup openings and filled from parameters.json.
         self.static_lb_values: dict[str, dict] = {}
         self.current_param_file: str | None = None
+        # Packaged executable only (see licensing.py): stop here with an
+        # explanation if the licence is missing, invalid or expired.
+        self.license_status = licensing.check_license()
+        if not self.license_status.valid:
+            _stop_for_invalid_license(self.license_status)
 
         self._build_ui()
 
@@ -1563,9 +1647,12 @@ class LinkBudgetApp:
         # sidebar listing the input and result pages next to the page shown.
         header = ttk.Frame(win, style="Header.TFrame", padding=(20, 12))
         header.pack(fill=tk.X)
-        ttk.Label(header, text=title, style="Header.TLabel").pack(anchor="w")
+        _header_logo(header, recap_font_family).pack(side=tk.LEFT)
+        title_box = ttk.Frame(header, style="Header.TFrame")
+        title_box.pack(side=tk.LEFT, padx=(16, 0))
+        ttk.Label(title_box, text=title, style="Header.TLabel").pack(anchor="w")
         ttk.Label(
-            header,
+            title_box,
             text=(
                 f"{direction_text}  ·  preliminary worst-case check at a fixed elevation, independent of any TLE"
             ),
@@ -2829,6 +2916,13 @@ class LinkBudgetApp:
             bg=PALETTE["surface"], fg=PALETTE["accent"], font=(recap_font_family, 8),
             anchor="w", justify="left", wraplength=200,
         ).pack(fill=tk.X, pady=(10, 0))
+        license_text = self.license_status.summary()
+        if license_text:
+            tk.Label(
+                sidebar_footer, text=license_text, bg=PALETTE["surface"],
+                fg=PALETTE["warning"] if self.license_status.expiring_soon else PALETTE["text_muted"],
+                font=(recap_font_family, 8), anchor="w", justify="left", wraplength=200,
+            ).pack(fill=tk.X, pady=(8, 0))
 
         status_var = tk.StringVar(value="")
         stale_label = ttk.Label(
@@ -3181,6 +3275,7 @@ class LinkBudgetApp:
                     elevation_deg=elevation_deg,
                     link_availability_pct=link_availability,
                     input_groups=input_groups,
+                    logo_path=_asset_path(LOGO_FILE),
                 ),
             )
             pdf_button.state(["!disabled"])
@@ -3963,25 +4058,23 @@ class LinkBudgetApp:
         # --- Header bar ---
         header = ttk.Frame(self.root, style="Header.TFrame", padding=(20, 14))
         header.grid(row=0, column=0, sticky="ew")
-        badge = tk.Label(
-            header,
-            text="LB",
-            bg=PALETTE["accent"],
-            fg="white",
-            font=(base_font_family, 13, "bold"),
-            width=3,
-            padx=4,
-            pady=4,
-        )
-        badge.pack(side=tk.LEFT)
+        _header_logo(header, base_font_family).pack(side=tk.LEFT)
         title_box = ttk.Frame(header, style="Header.TFrame")
-        title_box.pack(side=tk.LEFT, padx=(12, 0))
+        title_box.pack(side=tk.LEFT, padx=(16, 0))
         ttk.Label(title_box, text="Satellite Link Budget Tool", style="Header.TLabel").pack(anchor="w")
         ttk.Label(
             title_box,
             text="Orbit prediction & downlink/uplink budget analysis",
             style="HeaderSub.TLabel",
         ).pack(anchor="w")
+        license_text = self.license_status.summary()
+        if license_text:
+            ttk.Label(
+                header,
+                text=license_text,
+                style="HeaderSub.TLabel",
+                foreground=PALETTE["warning_on_dark"] if self.license_status.expiring_soon else None,
+            ).pack(side=tk.RIGHT, anchor="s")
 
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
@@ -4426,12 +4519,17 @@ class LinkBudgetApp:
         self.uplink_table_frame = ttk.Frame(uplink_results_frame)
         self.uplink_table_frame.pack(fill=tk.BOTH, expand=True)
 
-        icon_path = os.path.join(base_path, "Satellite.ico")
-        if os.path.isfile(icon_path):
+        # Window icon, also inherited by every popup window.
+        icon_path = _asset_path(ICON_FILE)
+        if icon_path and sys.platform == "win32":
             try:
-                self.root.iconbitmap(icon_path)
+                self.root.iconbitmap(default=icon_path)
             except tk.TclError:
                 pass
+        icon_image = _load_image(ICON_PNG_FILE, master=self.root)
+        if icon_image is not None:
+            self._icon_image = icon_image
+            self.root.iconphoto(True, icon_image)
 
         self._load_startup_defaults()
 
