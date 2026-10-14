@@ -46,6 +46,7 @@
     "modulation_degradation_db": 0.5,
     "formatting_overhead": 1.00905,
     "pfd_limit": -154.0,
+    "pfd_limit_high": -144.0,
     "tolerances": {
       "tx_gain": {
         "favourable_db": 1.5,
