@@ -1579,7 +1579,6 @@ class LinkBudgetApp:
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax1.grid(True)
         ax1.set_title("Elevation Angle")
-        fig.autofmt_xdate(rotation=30)
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()
@@ -1612,6 +1611,10 @@ class LinkBudgetApp:
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax3.grid(True)
         ax3.set_title("Doppler Shift")
+        # Rotated time labels, set on the axes: fig.autofmt_xdate() would call
+        # subplots_adjust, which the constrained layout does not allow.
+        for ax in (ax1, ax2, ax3):
+            ax.tick_params(axis="x", labelrotation=30)
 
         canvas_plot_widget = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas_plot_widget.draw()
