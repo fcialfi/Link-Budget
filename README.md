@@ -70,6 +70,18 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
 ## Creare un eseguibile
+**Modo rapido:** fai doppio clic su `build.bat` nella cartella del progetto.
+- **Prima volta:** crea il `.venv` e ci installa i requirements e PyInstaller; le volte successive aggiunge solo quello che manca.
+- **Build:** cancella `build` e `dist`, compila e copia accanto all'eseguibile `ground_stations.txt`, `tle.txt`, `parameters.json` e `Antenna Pattern Default.txt`.
+- **Zip:** crea `dist\Link-Budget-Tool_<versione>.zip`, pronto da consegnare dopo averci aggiunto il `license.key` del cliente.
+
+I passi sotto descrivono lo stesso procedimento a mano, compresa la creazione delle chiavi di licenza (una volta sola, prima della prima build con licenza).
+
+**Versione:** il numero di versione sta solo in `version.py` (`APP_VERSION`). Compare nel titolo e nell'intestazione della finestra, nella schermata di avvio, nel piè di pagina del report PDF e nel nome dello zip. Per una nuova consegna:
+1. aggiorna `APP_VERSION`;
+2. fai commit;
+3. crea il tag con lo stesso numero (`git tag v1.0.0`, poi `git push --tags`).
+
 Procedura completa su Windows, dalla cartella del progetto aggiornata a `main`. L'ordine conta: la chiave pubblica della licenza deve esistere **prima** di compilare, altrimenti l'eseguibile nasce senza controllo della licenza (vedi [Licenza a scadenza dell'eseguibile](#licenza-a-scadenza-delleseguibile)).
 
 1. **Prepara l'ambiente** (inclusi PyInstaller e `pytest`, richiesto da `astropy.tests.runner` usato durante il packaging):
