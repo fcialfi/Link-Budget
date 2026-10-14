@@ -399,7 +399,8 @@ def content():
         "link budget, copy the parameters.json of a similar mission (e.g. AWS) into the folder and edit it.",
         "<b>antenna_pattern.txt</b> (optional): the satellite antenna pattern of the mission; otherwise "
         "Antenna Pattern Default.txt is used.",
-        "<b>tle.txt</b>: the last TLE downloaded. On selection the TLE is downloaded again when it is older "
+        "<b>tle.txt</b>: the last TLE downloaded (or, for a custom orbit, the last synthetic TLE generated). "
+        "On selection the TLE is downloaded again when it is older "
         "than one day; without internet the saved one is used.",
     ])
     story.append(P(
