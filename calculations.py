@@ -1013,6 +1013,92 @@ def power_flux_density(
     return result
 
 
+# Elevations (deg) of the ITU Radio Regulations Art. 21 PFD limit shape: the
+# low-elevation limit up to 5°, the high-elevation one from 25°, linear between.
+PFD_LIMIT_LOW_ELEVATION_DEG = 5.0
+PFD_LIMIT_HIGH_ELEVATION_DEG = 25.0
+
+
+def pfd_limit_at_elevation(
+    low_limit: float,
+    high_limit: Optional[float],
+    elevation_deg: float | np.ndarray,
+) -> float | np.ndarray:
+    """PFD limit (dBW/m² in the reference bandwidth) at ``elevation_deg``.
+
+    ITU RR Art. 21 shape: ``low_limit`` from 0 to 5°, ``high_limit`` from 25°
+    to 90°, linear in between. Without ``high_limit`` the limit is
+    ``low_limit`` at every elevation.
+    """
+    if high_limit is None:
+        result = np.full(np.shape(elevation_deg), float(low_limit))
+    else:
+        result = np.interp(
+            elevation_deg,
+            [PFD_LIMIT_LOW_ELEVATION_DEG, PFD_LIMIT_HIGH_ELEVATION_DEG],
+            [low_limit, high_limit],
+        )
+    return float(result) if np.ndim(result) == 0 else result
+
+
+HORIZON_MASKS_DIR = "horizon_masks"
+
+
+def horizon_mask_file(station: str) -> str | None:
+    """The horizon mask file of ``station`` (horizon_masks/<station>.txt or .csv), if any."""
+    for ext in (".txt", ".csv"):
+        path = resolve_optional_data_file(os.path.join(HORIZON_MASKS_DIR, f"{station}{ext}"))
+        if path:
+            return path
+    return None
+
+
+def load_horizon_mask(file_path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Read a horizon mask: azimuth (deg from North, clockwise) and minimum elevation (deg).
+
+    Two columns separated by a comma, a semicolon, tabs or spaces; header
+    lines and ``#`` comments are skipped. Returns the points sorted by
+    azimuth in 0–360°.
+    """
+    rows = []
+    with open(file_path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            text = line.strip()
+            if ";" in text:
+                fields = [field.replace(",", ".") for field in re.split(r"[;\s]+", text) if field]
+            else:
+                fields = [field for field in re.split(r"[,\s]+", text) if field]
+            try:
+                rows.append((float(fields[0]) % 360.0, float(fields[1])))
+            except (IndexError, ValueError):
+                continue
+    if not rows:
+        raise ValueError("The horizon mask file has no rows of azimuth and elevation")
+    data = np.array(sorted(rows))
+    return data[:, 0], data[:, 1]
+
+
+def topocentric_azimuth_deg(sat, gs, times) -> np.ndarray:
+    """Azimuth (deg from North, clockwise) of the satellite seen from the station."""
+    _, az, _ = (sat - gs).at(times).altaz()
+    return np.asarray(az.degrees, dtype=float)
+
+
+def mask_elevation_deg(
+    azimuth_deg: float | np.ndarray, mask: Optional[tuple[np.ndarray, np.ndarray]]
+) -> float | np.ndarray:
+    """Minimum elevation of the horizon mask at ``azimuth_deg`` (0 without a mask).
+
+    Linear between the points, wrapping around North.
+    """
+    if mask is None:
+        result = np.zeros(np.shape(azimuth_deg))
+    else:
+        azimuths, elevations = mask
+        result = np.interp(np.asarray(azimuth_deg) % 360.0, azimuths, elevations, period=360.0)
+    return float(result) if np.ndim(result) == 0 else result
+
+
 def static_link_losses(
     freq_ghz: float,
     d_gs: float,
@@ -1095,6 +1181,7 @@ def calculate_fixed_elevation_link_budget(
     modulation_degradation_db: float = 0.0,
     occupied_bandwidth_hz: Optional[float] = None,
     pfd_limit_dbw_m2_4khz: Optional[float] = None,
+    pfd_limit_high_dbw_m2_4khz: Optional[float] = None,
     tx_axial_ratio_db: Optional[float] = None,
     rx_axial_ratio_db: Optional[float] = None,
     rx_depointing_deg: Optional[float] = None,
@@ -1132,7 +1219,10 @@ def calculate_fixed_elevation_link_budget(
     that case. The EIRP actually used is returned as ``eirp_dbw``. When ``occupied_bandwidth_hz`` is given, the power
     flux density at the receiving site is also returned (see
     :func:`power_flux_density`), together with a margin against
-    ``pfd_limit_dbw_m2_4khz`` when that is provided too.
+    ``pfd_limit_dbw_m2_4khz`` when that is provided too. With
+    ``pfd_limit_high_dbw_m2_4khz`` the limit follows the elevation
+    (:func:`pfd_limit_at_elevation`): ``pfd_limit_dbw_m2_4khz`` up to 5°, the
+    high one from 25°.
 
     When ``ionospheric_s4_ref`` is given, the ionospheric loss is the
     scintillation fade derived from it (:func:`ionospheric_scintillation_fade_db`,
@@ -1346,6 +1436,13 @@ def calculate_fixed_elevation_link_budget(
     out["pfd_dbw_m2"] = pfd["pfd_dbw_m2"]
     out["pfd_dbm_m2"] = pfd["pfd_dbw_m2"] + 30.0
     if pfd_limit_dbw_m2_4khz is not None:
+        if pfd_limit_high_dbw_m2_4khz is not None:
+            out["pfd_limit_low_dbw_m2_4khz"] = pfd_limit_dbw_m2_4khz
+            out["pfd_limit_high_dbw_m2_4khz"] = pfd_limit_high_dbw_m2_4khz
+        # The limit at this elevation (ITU RR Art. 21 shape).
+        pfd_limit_dbw_m2_4khz = pfd_limit_at_elevation(
+            pfd_limit_dbw_m2_4khz, pfd_limit_high_dbw_m2_4khz, elevation_deg
+        )
         out["pfd_limit_dbw_m2_4khz"] = pfd_limit_dbw_m2_4khz
     if "pfd_dbw_m2_per_4khz" in pfd:
         out["pfd_dbw_m2_per_4khz"] = pfd["pfd_dbw_m2_per_4khz"]
