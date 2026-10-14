@@ -968,8 +968,10 @@ class LinkBudgetApp:
             self.orbit_phasing_var.set(_format_optional(orbit.get("phasing_deg"), "0"))
             planes = orbit.get("ltan") or ["22:20"]
             planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
-            self.orbit_ltan_combo.configure(values=planes)
+            self.orbit_planes_var.set(", ".join(planes))
             self.orbit_ltan_var.set(planes[0])
+            self.orbit_satnum_var.set("1")
+            self._refresh_orbit_choices()
             self.satellite_frame_rows["orbit"].grid()
             self.tle_download_button.state(["disabled"])
             self.generate_custom_tle(show_errors=False)
@@ -1056,6 +1058,42 @@ class LinkBudgetApp:
                 "Contact analysis only: the passes are listed with their duration and maximum elevation."
             )
 
+    def _orbit_planes(self) -> list[str]:
+        """The LTAN of each plane, as typed (validated)."""
+
+        planes = [p.strip() for p in self.orbit_planes_var.get().replace(";", ",").split(",") if p.strip()]
+        if not planes:
+            raise ValueError("enter the LTAN of at least one plane")
+        for plane in planes:
+            tle_source.ltan_hours(plane)
+        return planes
+
+    def _orbit_constellation(self) -> tuple[int, float]:
+        """(satellites per plane, phasing in degrees)."""
+
+        per_plane = int(float(self.orbit_spp_var.get().strip() or 1))
+        if per_plane < 1:
+            raise ValueError("Sats/plane must be at least 1")
+        return per_plane, float(self.orbit_phasing_var.get().strip() or 0.0)
+
+    def _refresh_orbit_choices(self) -> None:
+        """Update the plane and satellite menus after the planes or Sats/plane changed."""
+
+        try:
+            planes = self._orbit_planes()
+            per_plane, _phasing = self._orbit_constellation()
+        except ValueError:
+            return
+        self.orbit_ltan_combo.configure(values=planes)
+        if self.orbit_ltan_var.get() not in planes:
+            self.orbit_ltan_var.set(planes[0])
+        numbers = [str(k) for k in range(1, per_plane + 1)]
+        self.orbit_satnum_combo.configure(values=numbers)
+        if self.orbit_satnum_var.get() not in numbers:
+            self.orbit_satnum_var.set("1")
+        if self.current_sat is not None and self.current_sat.custom_orbit:
+            self.generate_custom_tle(show_errors=False)
+
     def _custom_orbit(self) -> dict:
         """The custom orbit inputs; raise ValueError when one is not valid."""
 
@@ -1065,9 +1103,15 @@ class LinkBudgetApp:
         inclination = float(inclination_text) if inclination_text else None
         eccentricity = float(self.orbit_ecc_var.get().strip() or 0.0)
         arg_perigee = float(self.orbit_argp_var.get().strip() or 0.0)
+        planes = self._orbit_planes()
+        per_plane, phasing = self._orbit_constellation()
+        plane_index = planes.index(self.orbit_ltan_var.get()) if self.orbit_ltan_var.get() in planes else 0
+        sat_index = min(max(int(self.orbit_satnum_var.get() or 1), 1), per_plane) - 1
         return {
             "altitude_km": altitude,
             "ltan_h": ltan,
+            "arg_latitude_deg": (sat_index * 360.0 / per_plane + plane_index * phasing) % 360.0,
+            "satellite_label": f"{self.orbit_ltan_var.get()} #{sat_index + 1}",
             "inclination_deg": inclination,
             "eccentricity": eccentricity,
             "arg_perigee_deg": arg_perigee,
@@ -1092,6 +1136,7 @@ class LinkBudgetApp:
                 name=name.upper(),
                 eccentricity=orbit["eccentricity"],
                 arg_perigee_deg=orbit["arg_perigee_deg"],
+                arg_latitude_deg=orbit["arg_latitude_deg"],
             )
         except ValueError as exc:
             if show_errors:
@@ -1101,7 +1146,7 @@ class LinkBudgetApp:
         inclination = float(tle.line2[8:16])
         kind = "sun-synchronous" if orbit["inclination_deg"] is None else "inclination given"
         # Kept in the mission folder, like the TLE downloaded for a launched satellite.
-        tle.name = f"{tle.name} (synthetic, LTAN {self.orbit_ltan_var.get().strip()})"
+        tle.name = f"{tle.name} {orbit['satellite_label']} (synthetic)"
         saved = ""
         if self.tle_file_path:
             error = self._save_tle(tle, self.tle_file_path)
@@ -1110,7 +1155,7 @@ class LinkBudgetApp:
             tle.line1,
             tle.line2,
             f"Synthetic TLE{saved}: mean altitude {orbit['altitude_km']:g} km, e = {orbit['eccentricity']:g}, "
-            f"i = {inclination:.3f}° ({kind}), LTAN {self.orbit_ltan_var.get().strip()}, "
+            f"i = {inclination:.3f}° ({kind}), satellite {orbit['satellite_label']} (LTAN, # in plane), "
             f"epoch {when:%Y-%m-%d}, nodal period {1440.0 / float(tle.line2[52:63]):.3f} min",
             show_age=False,
         )
@@ -1125,13 +1170,8 @@ class LinkBudgetApp:
             orbit = self._custom_orbit()
         except ValueError:
             return None
-        ltan = self.orbit_ltan_var.get().strip()
-        planes = [ltan] + [p for p in self.orbit_ltan_combo.cget("values") if p != ltan]
-        try:
-            per_plane = int(float(self.orbit_spp_var.get() or 1))
-            phasing = float(self.orbit_phasing_var.get() or 0)
-        except ValueError:
-            per_plane, phasing = 1, 0.0
+        planes = self._orbit_planes()
+        per_plane, phasing = self._orbit_constellation()
         return {
             "altitude_km": orbit["altitude_km"],
             "eccentricity": orbit["eccentricity"],
@@ -1647,6 +1687,90 @@ class LinkBudgetApp:
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         plt.close(fig)  # embedded in Tk: no pyplot figure left behind
 
+    def show_constellation(self) -> None:
+        """Table and ground tracks of every satellite of the custom-orbit constellation."""
+
+        if self.current_sat is None or not self.current_sat.custom_orbit:
+            messagebox.showinfo("Constellation", "Select a mission with a custom orbit (e.g. EPS-Sterna) first.")
+            return
+        try:
+            orbit = self._custom_orbit_for_file()
+            try:
+                day = datetime.strptime(self.date_entry.get().strip(), "%Y-%m-%d")
+            except ValueError:
+                day = datetime.now(timezone.utc)
+            epoch = link_core.utc_midnight(day.date())
+            satellites = link_core.constellation_tles(orbit, epoch, self.current_sat.name)
+        except ValueError as exc:
+            messagebox.showerror("Constellation", f"Invalid orbit: {exc}")
+            return
+
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Constellation – {self.current_sat.name}")
+        popup.geometry("1100x720")
+        ttk.Label(
+            popup,
+            text=(
+                f"{len(orbit['ltan'])} plane(s) × {orbit['satellites_per_plane']} satellite(s), phasing "
+                f"{orbit['phasing_deg']:g}°, altitude {orbit['altitude_km']:g} km, epoch {epoch:%Y-%m-%d} 00:00 UTC. "
+                "Change the planes, Sats/plane and Phasing in the Constellation row and press Save in "
+                "Static Link Budget to keep them; Statistics → Whole constellation uses all these satellites."
+            ),
+            wraplength=1060, justify="left",
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+        columns = ("Satellite", "LTAN", "RAAN (°)", "Arg. of latitude (°)", "Inclination (°)")
+        table = ttk.Treeview(popup, columns=columns, show="headings", height=min(len(satellites), 8))
+        for col in columns:
+            table.heading(col, text=col)
+            table.column(col, width=180 if col == "Satellite" else 120, anchor="center")
+        table.pack(fill=tk.X, padx=10)
+
+        ts = link_core.load.timescale()
+        times = ts.utc(epoch.year, epoch.month, epoch.day, 0, np.arange(0, 100, 0.5))
+        fig, (ax_map, ax_phase) = plt.subplots(1, 2, figsize=(11, 4.6), gridspec_kw={"width_ratios": [2.2, 1]})
+        colors = list(MATLAB_COLORS.values())
+        for k, (name, lines) in enumerate(satellites):
+            raan = float(lines[1][17:25])
+            arg_lat = (float(lines[1][34:42]) + float(lines[1][43:51])) % 360.0
+            plane = name.rsplit(" ", 2)[-2]
+            table.insert("", tk.END, values=(name, plane, f"{raan:.2f}", f"{arg_lat:.1f}", lines[1][8:16].strip()))
+            color = colors[orbit["ltan"].index(plane) % len(colors)]
+            sat = link_core.EarthSatellite(lines[0], lines[1], name, ts)
+            point = link_core.wgs84.subpoint_of(sat.at(times))
+            lon, lat = point.longitude.degrees, point.latitude.degrees
+            jumps = np.flatnonzero(np.abs(np.diff(lon)) > 180) + 1
+            for seg_lon, seg_lat in zip(np.split(lon, jumps), np.split(lat, jumps)):
+                ax_map.plot(seg_lon, seg_lat, color=color, linewidth=0.9)
+            ax_map.plot(lon[0], lat[0], "o", color=color, markersize=5)
+            ax_map.annotate(name.split(" ", 1)[-1], (lon[0], lat[0]), fontsize=6, xytext=(3, 3),
+                            textcoords="offset points")
+            ax_phase.plot(arg_lat, raan, "o", color=color, markersize=7)
+            ax_phase.annotate(f"#{name.rsplit('#', 1)[-1]}", (arg_lat, raan), fontsize=7, xytext=(4, 4),
+                              textcoords="offset points")
+        for gs, (lat_gs, lon_gs, _alt) in calculations.GROUND_STATIONS.items():
+            ax_map.plot(lon_gs, lat_gs, "^", color="black", markersize=5)
+            ax_map.annotate(gs, (lon_gs, lat_gs), fontsize=6, xytext=(3, -8), textcoords="offset points")
+        ax_map.set_xlim(-180, 180)
+        ax_map.set_ylim(-90, 90)
+        ax_map.set_xticks(range(-180, 181, 60))
+        ax_map.set_yticks(range(-90, 91, 30))
+        ax_map.set_xlabel("Longitude [deg]", fontsize=8)
+        ax_map.set_ylabel("Latitude [deg]", fontsize=8)
+        ax_map.set_title("Ground tracks, first 100 min of the day (dot: position at 00:00 UTC)", fontsize=8)
+        ax_phase.set_xlim(-15, 375)
+        ax_phase.set_xticks(range(0, 361, 90))
+        ax_phase.set_xlabel("Argument of latitude at epoch [deg]", fontsize=8)
+        ax_phase.set_ylabel("RAAN [deg]", fontsize=8)
+        ax_phase.set_title("Satellites in their planes", fontsize=8)
+        for ax in (ax_map, ax_phase):
+            ax.tick_params(axis="both", labelsize=8)
+            ax.grid(True)
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=popup)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 10))
+        plt.close(fig)
+
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""
 
@@ -1782,7 +1906,7 @@ class LinkBudgetApp:
             summary_frame, textvariable=self.stats_summary_var, justify="left", font=bold_font, wraplength=1100
         ).pack(anchor="w")
 
-        self.stats_plot_frame = ttk.Frame(parent, height=320)
+        self.stats_plot_frame = ttk.Frame(parent, height=640)
         self.stats_plot_frame.pack(fill=tk.X, pady=(10, 0))
         self.stats_plot_frame.pack_propagate(False)
 
@@ -2179,34 +2303,137 @@ class LinkBudgetApp:
             )
 
     def _draw_statistics_plot(self, result, budget) -> None:
+        """Four panels: time per day, data per day, gaps (or satellites) and latency (or passes)."""
+
         for widget in self.stats_plot_frame.winfo_children():
             widget.destroy()
-        fig, ax = plt.subplots(figsize=(12, 3.2), layout="constrained")
-        dates = [d.date for d in result.days]
-        if budget:
-            ax.bar(dates, [d.capacity_mb for d in result.days], color=MATLAB_COLORS["blue"], alpha=0.35,
-                   label="Capacity [MB]")
-            ax.bar(dates, [d.downloaded_mb for d in result.days], width=0.5, color=MATLAB_COLORS["blue"],
-                   label="Downloaded [MB]")
-            if result.days[0].on_board_mb is not None:
-                ax.plot(dates, [d.on_board_mb for d in result.days], "s--", color=MATLAB_COLORS["purple"],
-                        label="On board at end of day [MB]")
-            ax.set_ylabel("MB", fontsize=8)
-            ax.legend(fontsize=7, loc="upper left")
+        blue, orange, purple = MATLAB_COLORS["blue"], MATLAB_COLORS["orange"], MATLAB_COLORS["purple"]
+        light = "#9CC3E6"
+        fig, axes = plt.subplots(2, 2, figsize=(12, 6.6), layout="constrained")
+        (ax_time, ax_data), (ax_left, ax_right) = axes
+        days = result.days
+        x = np.arange(len(days))
+        labels = [f"{d.date:%d %b}" for d in days]
+        constellation = bool(getattr(result, "satellites", None))
+        width = 0.38
+        # Legends above each panel, right of its title: they never hide the data.
+        legend_kwargs = dict(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=4, frameon=False,
+                             borderaxespad=0.2)
+
+        def _style(ax, title, ylabel=None, xlabel=None):
+            ax.set_title(title, fontsize=9, loc="left", fontweight="bold")
+            if ylabel:
+                ax.set_ylabel(ylabel, fontsize=8)
+            if xlabel:
+                ax.set_xlabel(xlabel, fontsize=8)
+            ax.tick_params(axis="both", labelsize=7)
+            ax.grid(True, axis="y", alpha=0.4)
+            ax.set_axisbelow(True)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+
+        def _day_axis(ax):
+            step = max(1, int(np.ceil(len(days) / 12)))
+            ax.set_xticks(x[::step])
+            ax.set_xticklabels(labels[::step])
+            ax.set_xlim(-0.6, len(days) - 0.4)
+
+        # 1. Contact (served) and usable minutes per day.
+        contact = [d.contact_min for d in days]
+        if budget and days and days[0].usable_min is not None:
+            usable = [d.usable_min for d in days]
+            ax_time.bar(x - width / 2, contact, width, color=light,
+                        label="Served" if constellation else "Contact")
+            ax_time.bar(x + width / 2, usable, width, color=blue,
+                        label="Usable, any satellite" if constellation else "Usable (margin OK)")
+            ax_time.legend(**legend_kwargs)
         else:
-            ax.bar(dates, [d.contact_min for d in result.days], color=MATLAB_COLORS["blue"])
-            ax.set_ylabel("Contact [min/day]", fontsize=8, color=MATLAB_COLORS["blue"])
-        gap_ax = ax.twinx()
-        gap_ax.plot(dates, [d.max_gap_min if d.max_gap_min is not None else np.nan for d in result.days],
-                    "o-", color=MATLAB_COLORS["orange"])
-        gap_ax.set_ylabel("Max gap [min]", fontsize=8, color=MATLAB_COLORS["orange"])
-        gap_ax.set_ylim(bottom=0)
-        for axis in (ax, gap_ax):
-            axis.tick_params(axis="both", labelsize=8)
-        ax.tick_params(axis="x", labelrotation=30)
-        ax.grid(True, axis="y")
-        ax.set_title("Data per day and longest gap" if budget else "Contact time and longest gap per day",
-                     fontsize=9)
+            ax_time.bar(x, contact, 0.6, color=blue)
+        if contact:
+            ax_time.axhline(float(np.mean(contact)), color="black", linestyle=":", linewidth=1)
+        _style(ax_time, "Contact time per day", "min/day")
+        _day_axis(ax_time)
+
+        # 2. Data per day (or passes per day without a link budget).
+        if budget:
+            capacity = [d.capacity_mb or 0.0 for d in days]
+            downloaded = [d.downloaded_mb or 0.0 for d in days]
+            ax_data.bar(x - width / 2, capacity, width, color=light, label="Capacity")
+            ax_data.bar(x + width / 2, downloaded, width, color=blue, label="Downloaded")
+            generated = result.summary.get("generated_mb_per_day")
+            if generated:
+                ax_data.axhline(generated, color=orange, linestyle="--", linewidth=1.2, label="Generated")
+            if days and days[0].on_board_mb is not None:
+                ax_data.plot(x, [d.on_board_mb for d in days], "s-", color=purple, markersize=4,
+                             linewidth=1.2, label="On board, end of day")
+            ax_data.legend(**dict(legend_kwargs, ncol=2))
+            _style(ax_data, "Data per day", "MB")
+        else:
+            ax_data.bar(x, [d.contacts for d in days], 0.6, color=blue)
+            _style(ax_data, "Passes per day", "passes")
+        _day_axis(ax_data)
+
+        # 3. Constellation: time per satellite; one satellite: gaps between contacts.
+        if constellation:
+            sats = result.satellites
+            y = np.arange(len(sats))
+            served = [r["served_min_per_day"] for r in sats]
+            conflicts = [r["conflict_min_per_day"] for r in sats]
+            ax_left.barh(y, served, color=blue, label="Served")
+            ax_left.barh(y, conflicts, left=served, color=orange, label="Waiting (stations busy)")
+            ax_left.set_yticks(y)
+            ax_left.set_yticklabels([r["satellite"] for r in sats])
+            ax_left.invert_yaxis()
+            ax_left.legend(**legend_kwargs)
+            _style(ax_left, "Time per satellite", xlabel="min/day")
+            ax_left.grid(True, axis="x", alpha=0.4)
+            ax_left.grid(False, axis="y")
+        else:
+            passes = result.passes
+            gaps = [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(passes, passes[1:])]
+            if gaps:
+                ax_left.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=blue, edgecolor="white")
+                worst = max(gaps)
+                ax_left.axvline(worst, color=orange, linestyle="--", linewidth=1.2)
+                ax_left.annotate(f"max {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
+                                 xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
+                                 color=orange)
+            else:
+                ax_left.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
+                             transform=ax_left.transAxes, fontsize=8)
+            _style(ax_left, "Gaps between contacts", "count", "min")
+
+        # 4. Latency of the data, or the passes.
+        if result.latency_chunks:
+            top = max(hi for _bits, _lo, hi in result.latency_chunks) / 60.0
+            grid = np.linspace(0.0, top, 200)
+            share = [100.0 * (result.latency_fraction(m) or 0.0) for m in grid]
+            ax_right.plot(grid, share, color=blue, linewidth=1.8)
+            ax_right.fill_between(grid, share, color=blue, alpha=0.12)
+            required = result.summary.get("latency_requirement_min")
+            if required is not None:
+                percent = result.summary["latency_requirement_pct"]
+                ok = result.summary.get("latency_requirement_met")
+                color = MATLAB_COLORS["green"] if ok else MATLAB_COLORS["red"]
+                ax_right.axvline(required, color=color, linestyle="--", linewidth=1.2)
+                ax_right.axhline(percent, color=color, linestyle=":", linewidth=1)
+                ax_right.plot([required], [result.summary["latency_within_pct"]], "o", color=color)
+                ax_right.annotate(f"{result.summary['latency_within_pct']:.0f}% within {required:g} min",
+                                  (required, result.summary["latency_within_pct"]), xytext=(6, -12),
+                                  textcoords="offset points", fontsize=7, color=color)
+            ax_right.set_ylim(0, 102)
+            ax_right.set_xlim(0, top)
+            _style(ax_right, "Data latency", "% of data on ground", "latency [min]")
+            ax_right.grid(True, axis="x", alpha=0.4)
+        elif result.passes:
+            durations = [p.contact_min for p in result.passes]
+            elevations = [p.max_elevation_deg for p in result.passes]
+            ax_right.scatter(elevations, durations, s=14, color=blue, alpha=0.7, edgecolors="none")
+            _style(ax_right, "Passes: duration vs maximum elevation", "contact [min]", "max elevation [deg]")
+            ax_right.grid(True, axis="x", alpha=0.4)
+        else:
+            ax_right.axis("off")
+
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -5772,54 +5999,56 @@ class LinkBudgetApp:
         self.orbit_inc_var = tk.StringVar(value="")
         self.orbit_spp_var = tk.StringVar(value="1")
         self.orbit_phasing_var = tk.StringVar(value="0")
+        self.orbit_planes_var = tk.StringVar(value="22:20")
+        self.orbit_satnum_var = tk.StringVar(value="1")
         orbit_row = ttk.Frame(project_frame)
         orbit_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(orbit_row, text="Custom orbit", width=12).pack(side=tk.LEFT, padx=5)
-        for label, var, width, tip in (
-            (
-                "Altitude (km)",
-                self.orbit_alt_var,
-                7,
-                "Mean semi-major axis minus the equatorial radius (6378.137 km).",
-            ),
-            ("Ecc.", self.orbit_ecc_var, 9, "Mean eccentricity (0 for a circular orbit)."),
-            ("ω (°)", self.orbit_argp_var, 5, "Mean argument of perigee (90° for a frozen orbit)."),
-            (
-                "Inclination (°)",
-                self.orbit_inc_var,
-                7,
-                "Empty: sun-synchronous orbit, inclination computed from the altitude.",
-            ),
-            (
-                "LTAN (hh:mm)",
-                self.orbit_ltan_var,
-                6,
-                "Local time of the ascending node. For a constellation, choose the orbital plane.",
-            ),
-            (
-                "Sats/plane",
-                self.orbit_spp_var,
-                3,
-                "Satellites per orbital plane, evenly spaced (used by the constellation statistics).",
-            ),
-            (
-                "Phasing (°)",
-                self.orbit_phasing_var,
-                5,
-                "Shift of the argument of latitude from one plane to the next (constellation statistics).",
-            ),
-        ):
-            ttk.Label(orbit_row, text=label).pack(side=tk.LEFT, padx=(6, 4))
-            if var is self.orbit_ltan_var:
-                orbit_entry = ttk.Combobox(orbit_row, textvariable=var, width=width)
-                orbit_entry.bind("<<ComboboxSelected>>", lambda _e: self.generate_custom_tle(show_errors=False))
-                self.orbit_ltan_combo = orbit_entry
-            else:
-                orbit_entry = ttk.Entry(orbit_row, textvariable=var, width=width)
-            orbit_entry.pack(side=tk.LEFT)
-            orbit_entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
-            _add_tooltip(orbit_entry, tip)
-        ttk.Button(orbit_row, text="Generate TLE", command=self.generate_custom_tle).pack(side=tk.LEFT, padx=(12, 0))
+
+        def _orbit_field(row, label, var, width, tip):
+            ttk.Label(row, text=label).pack(side=tk.LEFT, padx=(6, 4))
+            entry = ttk.Entry(row, textvariable=var, width=width)
+            entry.pack(side=tk.LEFT)
+            entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
+            _add_tooltip(entry, tip)
+            return entry
+
+        line1 = ttk.Frame(orbit_row)
+        line1.pack(fill=tk.X)
+        ttk.Label(line1, text="Custom orbit", width=12).pack(side=tk.LEFT, padx=5)
+        _orbit_field(line1, "Altitude (km)", self.orbit_alt_var, 7,
+                     "Mean semi-major axis minus the equatorial radius (6378.137 km).")
+        _orbit_field(line1, "Ecc.", self.orbit_ecc_var, 9, "Mean eccentricity (0 for a circular orbit).")
+        _orbit_field(line1, "ω (°)", self.orbit_argp_var, 5, "Mean argument of perigee (90° for a frozen orbit).")
+        _orbit_field(line1, "Inclination (°)", self.orbit_inc_var, 7,
+                     "Empty: sun-synchronous orbit, inclination computed from the altitude.")
+        ttk.Button(line1, text="Generate TLE", command=self.generate_custom_tle).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Button(line1, text="Show Constellation", command=self.show_constellation).pack(side=tk.LEFT, padx=(6, 0))
+
+        line2 = ttk.Frame(orbit_row)
+        line2.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(line2, text="Constellation", width=12).pack(side=tk.LEFT, padx=5)
+        planes_entry = _orbit_field(
+            line2, "Planes, LTAN (hh:mm, …)", self.orbit_planes_var, 22,
+            "Local time of the ascending node of each orbital plane, separated by commas, e.g. "
+            "15:30, 19:30, 23:30. One value: a single plane.",
+        )
+        planes_entry.bind("<FocusOut>", lambda _e: self._refresh_orbit_choices(), add="+")
+        planes_entry.bind("<Return>", lambda _e: self._refresh_orbit_choices(), add="+")
+        spp_entry = _orbit_field(line2, "Sats/plane", self.orbit_spp_var, 3,
+                                 "Satellites per orbital plane, evenly spaced in the plane.")
+        spp_entry.bind("<FocusOut>", lambda _e: self._refresh_orbit_choices(), add="+")
+        _orbit_field(line2, "Phasing (°)", self.orbit_phasing_var, 5,
+                     "Shift of the argument of latitude from one plane to the next.")
+        ttk.Label(line2, text="Analyse: plane").pack(side=tk.LEFT, padx=(18, 4))
+        self.orbit_ltan_combo = ttk.Combobox(line2, textvariable=self.orbit_ltan_var, width=6, state="readonly")
+        self.orbit_ltan_combo.pack(side=tk.LEFT)
+        ttk.Label(line2, text="sat #").pack(side=tk.LEFT, padx=(6, 4))
+        self.orbit_satnum_combo = ttk.Combobox(line2, textvariable=self.orbit_satnum_var, width=3, state="readonly")
+        self.orbit_satnum_combo.pack(side=tk.LEFT)
+        for combo in (self.orbit_ltan_combo, self.orbit_satnum_combo):
+            combo.bind("<<ComboboxSelected>>", lambda _e: self.generate_custom_tle(show_errors=False))
+            _add_tooltip(combo, "The satellite of the constellation used by the pass analysis (Orbit & Passes, "
+                                "Downlink, Uplink). The Statistics tab can use all of them.")
         orbit_row.grid_remove()
         self.satellite_frame_rows["orbit"] = orbit_row
 
