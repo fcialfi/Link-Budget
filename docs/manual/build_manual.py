@@ -389,7 +389,12 @@ def content():
     story += H2("TLE and observation settings")
     story += BUL([
         "<b>TLE Line 1 / Line 2</b>: the satellite elements, filled from tle.txt at startup or with "
-        "<b>Load TLE from file</b>.",
+        "<b>Load TLE from file</b>. The line below shows the file, the TLE epoch and its age; an "
+        "epoch older than 7 days is shown in orange, because the pass times drift.",
+        "<b>NORAD ID</b> and <b>Download TLE</b>: download the latest TLE of the satellite from SatNOGS "
+        "(db.satnogs.org, elements from Space-Track) or, if that fails, from CelesTrak, and save it in tle.txt. "
+        "The NORAD ID is read from and saved to the parameters file (key norad_id; AWS is 60543). Without "
+        "internet access the TLE already loaded is kept: copy the TLE from a web page into tle.txt instead.",
         "<b>Date</b> (YYYY-MM-DD): the day analysed (00:00–24:00 UTC, 30 s step).",
         "<b>Ground Station</b>: the station of the pass analysis, from the catalogue; <b>Load Ground "
         "Stations…</b> reads another catalogue. The line below shows which file is in use.",

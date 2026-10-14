@@ -39,6 +39,7 @@ a = Analysis(
         'static_report',
         'licensing',
         'version',
+        'tle_source',
         'reportlab',
         'cryptography.exceptions',
         'cryptography.hazmat.primitives.serialization',

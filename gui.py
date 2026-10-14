@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sys
+import threading
 from typing import Callable
 
 from version import APP_AUTHOR, APP_VERSION
@@ -255,6 +256,7 @@ import json
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import calculations
+import tle_source
 import licensing
 import static_report
 
@@ -666,6 +668,8 @@ class LinkBudgetApp:
         self.gs_menu: ttk.Combobox | None = None
         self.gs_file_var: tk.StringVar | None = None
         self.tle_file_var: tk.StringVar | None = None
+        self.tle_file_path: str | None = None
+        self.tle_info_label: ttk.Label | None = None
         self.param_file_var: tk.StringVar | None = None
         self.uplink_bitrate_entry: ttk.Entry | None = None
         self.uplink_rolloff_entry: ttk.Entry | None = None
@@ -727,13 +731,92 @@ class LinkBudgetApp:
             if not (tle1.startswith("1 ") and tle2.startswith("2 ")):
                 raise ValueError("TLE lines must start with '1 ' and '2 '.")
 
+        self.tle_file_path = os.path.abspath(file_path)
+        self._set_tle_lines(tle1, tle2, f"TLE: {self.tle_file_path}")
+
+    def _set_tle_lines(self, tle1: str, tle2: str, origin: str) -> None:
+        """Fill the TLE entries and show where the TLE comes from and its age."""
+
         self.tle1_entry.delete(0, tk.END)
         self.tle1_entry.insert(0, tle1)
         self.tle2_entry.delete(0, tk.END)
         self.tle2_entry.insert(0, tle2)
         if self.tle_file_var is not None:
-            self.tle_file_var.set(f"TLE: {os.path.abspath(file_path)}")
+            text, old = origin, False
+            try:
+                age = tle_source.age_days(tle1)
+                text += f"  ·  epoch {tle_source.epoch(tle1):%Y-%m-%d %H:%M} UTC ({age:.1f} days old)"
+                old = age > tle_source.MAX_AGE_DAYS
+                if old:
+                    text += " – old TLE, download a new one: the pass times may be off"
+            except ValueError:
+                pass
+            self.tle_file_var.set(text)
+            if self.tle_info_label is not None:
+                self.tle_info_label.configure(
+                    foreground=PALETTE["warning"] if old else PALETTE["text_muted"]
+                )
         self.set_analysis_stale()
+
+    def download_tle(self):
+        """Download the TLE of the NORAD ID from the internet and save it in tle.txt.
+
+        The download runs in a thread so that the window does not freeze
+        while waiting for the server (up to a few tens of seconds).
+        """
+
+        text = self.norad_var.get().strip()
+        try:
+            norad_id = int(text)
+            if norad_id <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("TLE Download", "Enter the NORAD catalogue number of the satellite (e.g. 60543).")
+            return
+
+        self.tle_download_button.state(["disabled"])
+        self.tle_file_var.set(f"Downloading the TLE of NORAD {norad_id}...")
+        result: dict = {}
+
+        def _work():
+            try:
+                result["tle"] = tle_source.fetch_tle(norad_id)
+            except Exception as exc:
+                result["error"] = exc
+
+        worker = threading.Thread(target=_work, daemon=True)
+        worker.start()
+
+        def _poll():
+            if worker.is_alive():
+                self.root.after(150, _poll)
+                return
+            self.tle_download_button.state(["!disabled"])
+            if "error" in result:
+                if self.tle_file_path:
+                    self._apply_tle_file(self.tle_file_path)
+                else:
+                    self.tle_file_var.set("TLE: none loaded")
+                messagebox.showerror(
+                    "TLE Download",
+                    f"{result['error']}\n\nThe TLE already loaded is kept. Without internet access, "
+                    "copy the TLE from a web page (e.g. db.satnogs.org or n2yo.com) into tle.txt "
+                    "and load it with \"Load TLE from file\".",
+                )
+                return
+            tle = result["tle"]
+            path = self.tle_file_path or os.path.join(os.getcwd(), "tle.txt")
+            origin = f"TLE: downloaded from {tle.source}"
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(tle.text())
+                self.tle_file_path = os.path.abspath(path)
+                origin += f", saved in {self.tle_file_path}"
+            except OSError as exc:
+                origin += f" (not saved: {exc})"
+            self._set_tle_lines(tle.line1, tle.line2, origin)
+
+        self.root.after(150, _poll)
 
     def load_tle_from_file(self):
         """Let the user pick a TLE file and populate the GUI fields."""
@@ -776,6 +859,8 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        if "norad_id" in payload:
+            self.norad_var.set("" if payload["norad_id"] is None else str(payload["norad_id"]))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
             if isinstance(payload.get(section), dict):
@@ -3722,6 +3807,9 @@ class LinkBudgetApp:
             project = self.project_var.get().strip()
             if project:
                 panel_values["project_name"] = project
+            norad = self.norad_var.get().strip()
+            if norad.isdigit():
+                panel_values["norad_id"] = int(norad)
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values
@@ -4645,6 +4733,7 @@ class LinkBudgetApp:
         header_right = ttk.Frame(header, style="Header.TFrame")
         header_right.pack(side=tk.RIGHT, fill=tk.Y)
         self.project_var = tk.StringVar(value="")
+        self.norad_var = tk.StringVar(value="")
 
         def _show_project(*_args):
             project = self.project_var.get().strip()
@@ -4739,7 +4828,7 @@ class LinkBudgetApp:
         project_entry.pack(side=tk.LEFT, padx=(6, 12))
         ttk.Label(
             project_frame,
-            text="Shown in the window header and in the reports; saved in the parameters file.",
+            text="Shown in the window title and in the reports; saved in the parameters file.",
             foreground=PALETTE["text_muted"],
         ).pack(side=tk.LEFT)
 
@@ -4754,13 +4843,23 @@ class LinkBudgetApp:
         self.tle2_entry = ttk.Entry(tle_frame, width=80)
         self.tle2_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.tle2_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
-        ttk.Button(tle_frame, text="Load TLE from file", command=self.load_tle_from_file).grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+        tle_buttons = ttk.Frame(tle_frame)
+        tle_buttons.grid(row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+        ttk.Button(tle_buttons, text="Load TLE from file", command=self.load_tle_from_file).pack(side=tk.LEFT)
+        ttk.Label(tle_buttons, text="NORAD ID").pack(side=tk.LEFT, padx=(24, 6))
+        norad_entry = ttk.Entry(tle_buttons, textvariable=self.norad_var, width=8)
+        norad_entry.pack(side=tk.LEFT)
+        self.tle_download_button = ttk.Button(tle_buttons, text="Download TLE", command=self.download_tle)
+        self.tle_download_button.pack(side=tk.LEFT, padx=(6, 0))
+        _add_tooltip(
+            self.tle_download_button,
+            "Download the latest TLE of this NORAD ID from SatNOGS (or CelesTrak) and save it in tle.txt.",
         )
         self.tle_file_var = tk.StringVar(value="TLE: none loaded")
-        ttk.Label(tle_frame, textvariable=self.tle_file_var, foreground=PALETTE["text_muted"]).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(4, 0)
+        self.tle_info_label = ttk.Label(
+            tle_frame, textvariable=self.tle_file_var, foreground=PALETTE["text_muted"]
         )
+        self.tle_info_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(4, 0))
         tle_frame.grid_columnconfigure(1, weight=1)
 
         # --- Observation Settings Section ---
