@@ -3,7 +3,7 @@
   "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,
   "uplink_frequency_ghz": 2.0535,
-  "c_io_dbhz": 50.0,
+  "c_io_dbhz": null,
   "gt_gs_dbk": 7.0,
   "gt_sat_dbk": 0.5,
   "antenna_diameter_m": 3.0,
