@@ -2,6 +2,8 @@
 
 Questo repository contiene un semplice strumento in Python per l'analisi del link budget di collegamenti satellitari. L'applicazione offre un'interfaccia grafica basata su Tkinter che permette di inserire i TLE del satellite, configurare i parametri di trasmissione e visualizzare i risultati.
 
+**Manuale utente:** [docs/Link_Budget_Tool_User_Manual.pdf](docs/Link_Budget_Tool_User_Manual.pdf), in inglese come l'interfaccia. Spiega schede, ingressi, risultati, metodo di calcolo, file di dati e licenza. Per rigenerarlo dopo una modifica: `python docs/manual/take_screenshots.py`, che rifà gli screenshot e richiede uno schermo (su Linux senza schermo va lanciato con `xvfb-run`), poi `python docs/manual/build_manual.py`.
+
 ## Caratteristiche principali
 - Predizione delle orbite e delle finestre di contatto tramite Skyfield.
 - Calcolo delle perdite di percorso, dell'attenuazione atmosferica ITU e del margine Eb/No.

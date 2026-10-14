@@ -9,7 +9,7 @@ import re
 import sys
 from typing import Callable
 
-from version import APP_VERSION
+from version import APP_AUTHOR, APP_VERSION
 
 # ---------------------------------------------------------------------------
 # Visual theme
@@ -161,7 +161,14 @@ def _show_startup_splash():
         bg=PALETTE["header_bg"],
         fg=PALETTE["header_fg_muted"],
         font=(font_family, 9),
-    ).pack(pady=(4, 14))
+    ).pack(pady=(4, 2))
+    tk.Label(
+        root,
+        text=f"Author: {APP_AUTHOR}",
+        bg=PALETTE["header_bg"],
+        fg=PALETTE["header_fg_muted"],
+        font=(font_family, 8),
+    ).pack(pady=(0, 12))
 
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -1679,6 +1686,19 @@ class LinkBudgetApp:
     # ------------------------------------------------------------------
     # Miscellaneous actions
     # ------------------------------------------------------------------
+
+    def show_about(self):
+        """Show the version, the author and the licence of the program."""
+        lines = [
+            f"Satellite Link Budget Tool {APP_VERSION}",
+            "Orbit prediction & downlink/uplink budget analysis",
+            "",
+            f"Author: {APP_AUTHOR}",
+        ]
+        license_text = self.license_status.summary()
+        if license_text:
+            lines += ["", license_text]
+        messagebox.showinfo("About", "\n".join(lines), parent=self.root)
 
     def exit_app(self):
         """Close the program: the Exit button, Ctrl+Q and the window close button."""
@@ -4615,6 +4635,10 @@ class LinkBudgetApp:
         exit_button = ttk.Button(header, text="Exit", command=self.exit_app, style="Header.TButton")
         exit_button.pack(side=tk.RIGHT, padx=(18, 0))
         _add_tooltip(exit_button, "Close the program (Ctrl+Q).")
+        about_button = ttk.Button(header, text="About", command=self.show_about, style="Header.TButton")
+        about_button.pack(side=tk.RIGHT, padx=(18, 0))
+        _add_tooltip(about_button, "Version, author and licence of the program (F1).")
+        self.root.bind_all("<F1>", lambda _e: self.show_about())
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.root.bind_all("<Control-q>", lambda _e: self.exit_app())
         # Right of the header: the project name above the licence.
