@@ -129,11 +129,12 @@ SSO_NODE_RATE_RAD_S = 2 * math.pi / (365.2421897 * 86400.0)
 SYNTHETIC_NORAD_ID = 99999
 
 
-def sso_inclination_deg(altitude_km: float) -> float:
-    """Inclination of the circular sun-synchronous orbit at ``altitude_km`` (J2 only)."""
+def sso_inclination_deg(altitude_km: float, eccentricity: float = 0.0) -> float:
+    """Inclination of the sun-synchronous orbit with this mean altitude (J2 only)."""
     a = EARTH_RADIUS_KM + altitude_km
     n = math.sqrt(MU_KM3_S2 / a**3)
-    cos_i = -SSO_NODE_RATE_RAD_S / (1.5 * n * J2 * (EARTH_RADIUS_KM / a) ** 2)
+    p = a * (1 - eccentricity**2)
+    cos_i = -SSO_NODE_RATE_RAD_S / (1.5 * n * J2 * (EARTH_RADIUS_KM / p) ** 2)
     if not -1.0 <= cos_i <= 1.0:
         raise ValueError(f"no sun-synchronous orbit at {altitude_km:g} km")
     return math.degrees(math.acos(cos_i))
@@ -180,33 +181,18 @@ def _with_checksum(line: str) -> str:
     return line[:68] + str(total % 10)
 
 
-def synthetic_tle(
-    altitude_km: float,
-    ltan_h: float,
-    when: datetime.datetime,
-    inclination_deg: float | None = None,
-    name: str = "CUSTOM ORBIT",
-    norad_id: int = SYNTHETIC_NORAD_ID,
-) -> Tle:
-    """TLE of a circular orbit, for the passes of a mission not launched yet.
+def nodal_period_min(semi_major_axis_km: float, eccentricity: float, inclination_deg: float) -> float:
+    """Nodal period (ascending node to ascending node) with the J2 secular rates."""
+    a, e = semi_major_axis_km, eccentricity
+    i = math.radians(inclination_deg)
+    n = math.sqrt(MU_KM3_S2 / a**3)
+    k = 0.75 * J2 * (EARTH_RADIUS_KM / (a * (1 - e * e))) ** 2
+    mean_anomaly_rate = n * (1 + k * math.sqrt(1 - e * e) * (3 * math.cos(i) ** 2 - 1))
+    perigee_rate = n * k * (5 * math.cos(i) ** 2 - 1)
+    return 2 * math.pi / (mean_anomaly_rate + perigee_rate) / 60.0
 
-    ``altitude_km`` is above the equatorial radius; without
-    ``inclination_deg`` the orbit is sun-synchronous. The epoch is ``when``
-    (use the start of the analysed day) and the satellite is at the
-    ascending node at the epoch. No drag. The elements are taken as SGP4
-    mean elements, which is accurate enough for preliminary pass geometry.
-    """
-    if not 100.0 <= altitude_km <= 40000.0:
-        raise ValueError("altitude must be between 100 and 40000 km")
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=datetime.timezone.utc)
-    inclination = sso_inclination_deg(altitude_km) if inclination_deg is None else float(inclination_deg)
-    if not 0.0 <= inclination <= 180.0:
-        raise ValueError("inclination must be between 0 and 180°")
-    a = EARTH_RADIUS_KM + altitude_km
-    revs_per_day = math.sqrt(MU_KM3_S2 / a**3) * 86400.0 / (2 * math.pi)
-    raan = raan_for_ltan_deg(ltan_h, when)
 
+def _tle_lines(norad_id, when, inclination, raan, eccentricity, arg_perigee, mean_anomaly, revs_per_day):
     start = datetime.datetime(when.year, 1, 1, tzinfo=datetime.timezone.utc)
     day = (when - start).total_seconds() / 86400.0 + 1.0
     line1 = (
@@ -214,8 +200,66 @@ def synthetic_tle(
         f"  .00000000  00000-0  00000-0 0  999"
     )
     line2 = (
-        f"2 {norad_id:05d} {inclination:8.4f} {raan:8.4f} 0001000   0.0000   0.0000 "
-        f"{revs_per_day:11.8f}    1"
+        f"2 {norad_id:05d} {inclination:8.4f} {raan:8.4f} {round(eccentricity * 1e7):07d} "
+        f"{arg_perigee:8.4f} {mean_anomaly:8.4f} {revs_per_day:11.8f}    1"
     )
-    line1, line2 = _with_checksum(line1.ljust(68)), _with_checksum(line2.ljust(68))
+    return _with_checksum(line1.ljust(68)), _with_checksum(line2.ljust(68))
+
+
+def synthetic_tle(
+    altitude_km: float,
+    ltan_h: float,
+    when: datetime.datetime,
+    inclination_deg: float | None = None,
+    name: str = "CUSTOM ORBIT",
+    norad_id: int = SYNTHETIC_NORAD_ID,
+    eccentricity: float = 0.0,
+    arg_perigee_deg: float = 0.0,
+) -> Tle:
+    """TLE of a mission not launched yet, from its mean orbital elements.
+
+    ``altitude_km`` is the mean semi-major axis minus the equatorial radius;
+    without ``inclination_deg`` the orbit is sun-synchronous. The epoch is
+    ``when`` (use the start of the analysed day), with the satellite at the
+    ascending node. No drag. The mean motion of the TLE is set so that SGP4
+    flies the nodal period of the J2 theory: the pass times then stay right
+    over the day analysed (a plain Keplerian mean motion would drift by
+    about a minute per orbit).
+    """
+    if not 100.0 <= altitude_km <= 40000.0:
+        raise ValueError("altitude must be between 100 and 40000 km")
+    if not 0.0 <= eccentricity < 0.1:
+        raise ValueError("eccentricity must be between 0 and 0.1")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    a = EARTH_RADIUS_KM + altitude_km
+    if inclination_deg is None:
+        inclination = sso_inclination_deg(altitude_km, eccentricity)
+    else:
+        inclination = float(inclination_deg)
+    if not 0.0 <= inclination <= 180.0:
+        raise ValueError("inclination must be between 0 and 180°")
+    raan = raan_for_ltan_deg(ltan_h, when)
+    arg_perigee = arg_perigee_deg % 360.0
+    # At the ascending node: argument of latitude 0, so true (≈ mean) anomaly = -ω.
+    mean_anomaly = (-arg_perigee) % 360.0
+
+    target_rate = 2 * math.pi / nodal_period_min(a, eccentricity, inclination)  # rad/min
+    revs_per_day = 1440.0 / nodal_period_min(a, eccentricity, inclination)
+    try:
+        from sgp4.api import Satrec
+    except ImportError:  # pragma: no cover - sgp4 comes with skyfield
+        Satrec = None
+    for _ in range(5 if Satrec else 0):
+        line1, line2 = _tle_lines(
+            norad_id, when, inclination, raan, eccentricity, arg_perigee, mean_anomaly, revs_per_day
+        )
+        sat = Satrec.twoline2rv(line1, line2)
+        sgp4_rate = sat.mdot + sat.argpdot
+        if abs(sgp4_rate / target_rate - 1) < 1e-10:
+            break
+        revs_per_day *= target_rate / sgp4_rate
+    line1, line2 = _tle_lines(
+        norad_id, when, inclination, raan, eccentricity, arg_perigee, mean_anomaly, revs_per_day
+    )
     return Tle(name, line1, line2, "synthetic")

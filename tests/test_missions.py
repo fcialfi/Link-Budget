@@ -27,7 +27,8 @@ def test_mission_parameters():
         sterna = json.load(f)
     assert aws["norad_id"] == 60543
     assert aws["fixed_elevation_downlink"]["sat_altitude_km"] == 600.0
-    assert sterna["orbit"]["altitude_km"] == 628.0
+    assert sterna["orbit"]["altitude_km"] == 595.6
+    assert sterna["orbit"]["ltan"] == ["15:30", "19:30", "23:30"]
     assert sterna["fixed_elevation_downlink"]["sat_altitude_km"] == 628.0
 
 

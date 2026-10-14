@@ -1,9 +1,15 @@
 {
   "project_name": "EPS-Sterna",
   "orbit": {
-    "altitude_km": 628.0,
-    "ltan": "22:20",
-    "inclination_deg": null
+    "altitude_km": 595.6,
+    "eccentricity": 0.001214,
+    "arg_perigee_deg": 90.0,
+    "inclination_deg": 97.794,
+    "ltan": [
+      "15:30",
+      "19:30",
+      "23:30"
+    ]
   },
   "eirp_sat_dbw": 4.51,
   "eirp_gs_dbw": 30.0,

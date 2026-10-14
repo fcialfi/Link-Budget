@@ -83,20 +83,41 @@ def test_aws_ltan_from_its_tle():
 
 def test_synthetic_tle_is_valid_and_has_the_requested_orbit():
     when = datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc)
-    tle = tle_source.synthetic_tle(628, tle_source.ltan_hours("22:20"), when, name="EPS-STERNA")
+    tle = tle_source.synthetic_tle(628, tle_source.ltan_hours("22:20"), when, name="X")
     assert len(tle.line1) == len(tle.line2) == 69
     assert tle_source.checksum_ok(tle.line1) and tle_source.checksum_ok(tle.line2)
     assert tle_source.epoch(tle.line1) == when
     assert float(tle.line2[8:16]) == pytest.approx(97.8983, abs=1e-4)
     assert tle_source.ltan_of_tle(tle.line1, tle.line2) == pytest.approx(22 + 1 / 3, abs=1e-3)
-    revs_per_day = float(tle.line2[52:63])
-    assert revs_per_day == pytest.approx(14.804, abs=0.001)
 
+
+def test_nodal_period_of_the_eps_sterna_reference_orbit():
+    # EPS-Sterna reference orbit: a = 6973.702 km, e = 0.001214, i = 97.794°, nodal period 96.716 min.
+    assert tle_source.nodal_period_min(6973.702, 0.001214, 97.794) == pytest.approx(96.716, abs=0.002)
+
+
+def test_synthetic_tle_flies_the_eps_sterna_orbit():
     skyfield = pytest.importorskip("skyfield.api")
+    np = pytest.importorskip("numpy")
+    when = datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc)
+    tle = tle_source.synthetic_tle(
+        595.6, tle_source.ltan_hours("15:30"), when, 97.794, eccentricity=0.001214, arg_perigee_deg=90
+    )
+    assert tle.line2[26:33] == "0012140"
     ts = skyfield.load.timescale()
     sat = skyfield.EarthSatellite(tle.line1, tle.line2, "X", ts)
-    height = skyfield.wgs84.height_of(sat.at(ts.utc(2026, 10, 14, 0, 0))).km
-    assert height == pytest.approx(628, abs=5)
+    times = ts.utc(2026, 10, 14, 0, np.arange(0, 1440, 0.25))
+    position = sat.at(times)
+    # Mean altitude over the ellipsoid 610.5 km (table of the reference orbit).
+    assert skyfield.wgs84.height_of(position).km.mean() == pytest.approx(610.5, abs=1.0)
+    # Nodal period from the ascending node crossings: 96.716 min, i.e. the passes do not drift.
+    z = position.position.km[2]
+    minutes = np.arange(0, 1440, 0.25)
+    k = np.where((z[:-1] < 0) & (z[1:] >= 0))[0]
+    crossings = minutes[k] + 0.25 * (-z[k]) / (z[k + 1] - z[k])
+    assert np.diff(crossings).mean() == pytest.approx(96.716, abs=0.01)
+    # At the epoch the satellite is at the ascending node (mean elements: within ~0.5°).
+    assert abs(z[0]) < 60
 
 
 def test_synthetic_tle_with_inclination_and_bad_inputs():

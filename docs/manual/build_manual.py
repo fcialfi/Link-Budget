@@ -404,11 +404,18 @@ def content():
     ])
     story.append(P(
         "A mission not launched yet (e.g. EPS-Sterna, of which AWS is the protoflight) has "
-        "<b>custom orbit</b>: enter the <b>altitude</b> of the circular orbit, the <b>LTAN</b> (local time of "
-        "the ascending node) and, if it is not sun-synchronous, the <b>inclination</b> (empty: computed for a "
-        "sun-synchronous orbit). The program builds a synthetic TLE with its epoch at the analysed date "
-        "(also with <b>Generate TLE</b>), so that passes and link budgets are computed as for a launched "
-        "satellite. The orbit is saved in the orbit section of the mission's parameters.json."))
+        "<b>custom orbit</b>, given by its mean elements: <b>altitude</b> (mean semi-major axis minus the "
+        "equatorial radius), <b>eccentricity</b>, argument of perigee <b>ω</b> (90° for a frozen orbit), "
+        "<b>inclination</b> (empty: computed for a sun-synchronous orbit) and <b>LTAN</b> (local time of the "
+        "ascending node; for a constellation the menu lists the orbital planes). The program builds a "
+        "synthetic TLE with its epoch at the analysed date (also with <b>Generate TLE</b>), with the mean "
+        "motion set so that the nodal period is that of the J2 theory: the pass times do not drift over the "
+        "day. Passes and link budgets are then computed as for a launched satellite. EPS-Sterna uses its "
+        "reference orbit: 595.6 km, e = 0.001214, ω = 90°, i = 97.794°, planes at 15:30, 19:30 and 23:30 "
+        "(nodal period 96.716 min, altitude over the ellipsoid 600–628 km). SGP4 adds its short-period terms "
+        "to the mean elements, so the instantaneous altitude swings a few km more than in the reference "
+        "table; the mean altitude and the pass times are those of the reference orbit. The orbit is saved in "
+        "the orbit section of the mission's parameters.json."))
     story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit and synthetic TLE.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "

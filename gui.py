@@ -945,8 +945,13 @@ class LinkBudgetApp:
         self.tle_file_path = self.catalogue.mission_file(sat, missions.TLE_FILE)
         if sat.custom_orbit:
             self.orbit_alt_var.set(_format_optional(orbit.get("altitude_km"), "628"))
-            self.orbit_ltan_var.set(str(orbit.get("ltan") or "22:20"))
+            self.orbit_ecc_var.set(_format_optional(orbit.get("eccentricity"), "0"))
+            self.orbit_argp_var.set(_format_optional(orbit.get("arg_perigee_deg"), "0"))
             self.orbit_inc_var.set(_format_optional(orbit.get("inclination_deg"), ""))
+            planes = orbit.get("ltan") or ["22:20"]
+            planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
+            self.orbit_ltan_combo.configure(values=planes)
+            self.orbit_ltan_var.set(planes[0])
             self.satellite_frame_rows["orbit"].grid()
             self.tle_download_button.state(["disabled"])
             self.generate_custom_tle(show_errors=False)
@@ -988,7 +993,15 @@ class LinkBudgetApp:
         ltan = tle_source.ltan_hours(self.orbit_ltan_var.get())
         inclination_text = self.orbit_inc_var.get().strip()
         inclination = float(inclination_text) if inclination_text else None
-        return {"altitude_km": altitude, "ltan_h": ltan, "inclination_deg": inclination}
+        eccentricity = float(self.orbit_ecc_var.get().strip() or 0.0)
+        arg_perigee = float(self.orbit_argp_var.get().strip() or 0.0)
+        return {
+            "altitude_km": altitude,
+            "ltan_h": ltan,
+            "inclination_deg": inclination,
+            "eccentricity": eccentricity,
+            "arg_perigee_deg": arg_perigee,
+        }
 
     def generate_custom_tle(self, show_errors: bool = True) -> bool:
         """Build the synthetic TLE of the custom orbit, with epoch at the analysed date."""
@@ -1002,7 +1015,13 @@ class LinkBudgetApp:
             when = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
             name = self.current_sat.name if self.current_sat else "CUSTOM ORBIT"
             tle = tle_source.synthetic_tle(
-                orbit["altitude_km"], orbit["ltan_h"], when, orbit["inclination_deg"], name=name.upper()
+                orbit["altitude_km"],
+                orbit["ltan_h"],
+                when,
+                orbit["inclination_deg"],
+                name=name.upper(),
+                eccentricity=orbit["eccentricity"],
+                arg_perigee_deg=orbit["arg_perigee_deg"],
             )
         except ValueError as exc:
             if show_errors:
@@ -1014,8 +1033,9 @@ class LinkBudgetApp:
         self._set_tle_lines(
             tle.line1,
             tle.line2,
-            f"Synthetic TLE: circular orbit at {orbit['altitude_km']:g} km, i = {inclination:.2f}° ({kind}), "
-            f"LTAN {self.orbit_ltan_var.get().strip()}, epoch {when:%Y-%m-%d}",
+            f"Synthetic TLE: mean altitude {orbit['altitude_km']:g} km, e = {orbit['eccentricity']:g}, "
+            f"i = {inclination:.3f}° ({kind}), LTAN {self.orbit_ltan_var.get().strip()}, "
+            f"epoch {when:%Y-%m-%d}, nodal period {1440.0 / float(tle.line2[52:63]):.3f} min",
             show_age=False,
         )
         return True
@@ -1025,15 +1045,18 @@ class LinkBudgetApp:
 
         if not (self.current_sat and self.current_sat.custom_orbit):
             return None
-        inclination = self.orbit_inc_var.get().strip()
         try:
-            altitude = float(self.orbit_alt_var.get())
+            orbit = self._custom_orbit()
         except ValueError:
             return None
+        ltan = self.orbit_ltan_var.get().strip()
+        planes = [ltan] + [p for p in self.orbit_ltan_combo.cget("values") if p != ltan]
         return {
-            "altitude_km": altitude,
-            "ltan": self.orbit_ltan_var.get().strip(),
-            "inclination_deg": float(inclination) if inclination else None,
+            "altitude_km": orbit["altitude_km"],
+            "eccentricity": orbit["eccentricity"],
+            "arg_perigee_deg": orbit["arg_perigee_deg"],
+            "inclination_deg": orbit["inclination_deg"],
+            "ltan": planes,
         }
 
     def load_tle_from_file(self):
@@ -5140,23 +5163,42 @@ class LinkBudgetApp:
 
         # Custom orbit of a mission not launched yet.
         self.orbit_alt_var = tk.StringVar(value="628")
+        self.orbit_ecc_var = tk.StringVar(value="0")
+        self.orbit_argp_var = tk.StringVar(value="0")
         self.orbit_ltan_var = tk.StringVar(value="22:20")
         self.orbit_inc_var = tk.StringVar(value="")
         orbit_row = ttk.Frame(project_frame)
         orbit_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         ttk.Label(orbit_row, text="Custom orbit", width=12).pack(side=tk.LEFT, padx=5)
         for label, var, width, tip in (
-            ("Altitude (km)", self.orbit_alt_var, 8, "Altitude of the circular orbit above the equatorial radius."),
-            ("LTAN (hh:mm)", self.orbit_ltan_var, 7, "Local time of the ascending node."),
+            (
+                "Altitude (km)",
+                self.orbit_alt_var,
+                7,
+                "Mean semi-major axis minus the equatorial radius (6378.137 km).",
+            ),
+            ("Ecc.", self.orbit_ecc_var, 9, "Mean eccentricity (0 for a circular orbit)."),
+            ("ω (°)", self.orbit_argp_var, 5, "Mean argument of perigee (90° for a frozen orbit)."),
             (
                 "Inclination (°)",
                 self.orbit_inc_var,
-                8,
+                7,
                 "Empty: sun-synchronous orbit, inclination computed from the altitude.",
+            ),
+            (
+                "LTAN (hh:mm)",
+                self.orbit_ltan_var,
+                6,
+                "Local time of the ascending node. For a constellation, choose the orbital plane.",
             ),
         ):
             ttk.Label(orbit_row, text=label).pack(side=tk.LEFT, padx=(6, 4))
-            orbit_entry = ttk.Entry(orbit_row, textvariable=var, width=width)
+            if var is self.orbit_ltan_var:
+                orbit_entry = ttk.Combobox(orbit_row, textvariable=var, width=width)
+                orbit_entry.bind("<<ComboboxSelected>>", lambda _e: self.generate_custom_tle(show_errors=False))
+                self.orbit_ltan_combo = orbit_entry
+            else:
+                orbit_entry = ttk.Entry(orbit_row, textvariable=var, width=width)
             orbit_entry.pack(side=tk.LEFT)
             orbit_entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
             _add_tooltip(orbit_entry, tip)
