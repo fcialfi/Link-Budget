@@ -75,11 +75,11 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 **Modo rapido:** fai doppio clic su `build.bat` nella cartella del progetto.
 - **Prima volta:** crea il `.venv` e ci installa i requirements e PyInstaller; le volte successive aggiunge solo quello che manca.
 - **Build:** cancella `build` e `dist`, compila e copia accanto all'eseguibile `ground_stations.txt`, `tle.txt`, `parameters.json` e `Antenna Pattern Default.txt`.
-- **Zip:** crea `dist\Link-Budget-Tool_<versione>.zip`, pronto da consegnare dopo averci aggiunto il `license.key` del cliente.
+- **Zip (facoltativo):** di default non viene creato. Per consegnare il programma lancia `build.bat zip` dal prompt dei comandi: crea anche `dist\Link-Budget-Tool_<versione>.zip`, da consegnare dopo averci aggiunto il `license.key` del cliente.
 
 I passi sotto descrivono lo stesso procedimento a mano, compresa la creazione delle chiavi di licenza (una volta sola, prima della prima build con licenza).
 
-**Versione:** il numero di versione sta solo in `version.py` (`APP_VERSION`). Compare nel titolo e nell'intestazione della finestra, nella schermata di avvio, nel piè di pagina del report PDF e nel nome dello zip. Per una nuova consegna:
+**Versione:** il numero di versione sta solo in `version.py` (`APP_VERSION`). Compare nel titolo e nell'intestazione della finestra, nella schermata di avvio, nel piè di pagina del report PDF e nel nome dello zip (`build.bat zip`). Per una nuova consegna:
 1. aggiorna `APP_VERSION`;
 2. fai commit;
 3. crea il tag con lo stesso numero (`git tag v1.0.0`, poi `git push --tags`).
