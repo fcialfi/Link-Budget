@@ -95,9 +95,18 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
     """Load ground stations from a text file.
 
     Each non-empty line must contain four comma-separated values:
-    station name, latitude (deg), longitude (deg) and altitude (m).
+    station name, latitude (deg), longitude (deg) and altitude (m), plus an
+    optional fifth one, the antenna diameter (m), kept in
+    :data:`GROUND_STATION_DIAMETERS` by :func:`reload_ground_stations`.
     Lines starting with ``#`` are treated as comments and ignored.
     """
+    return _read_ground_stations(file_path)[0]
+
+
+def _read_ground_stations(
+    file_path: str | None = None,
+) -> tuple[dict[str, tuple[float, float, float]], dict[str, float]]:
+    """Stations and antenna diameters (when given) of a ground stations file."""
 
     # Default to the current GROUND_STATIONS_FILE, which the GUI may have
     # updated at runtime via reload_ground_stations().
@@ -105,6 +114,7 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
         file_path = GROUND_STATIONS_FILE
 
     stations: dict[str, tuple[float, float, float]] = {}
+    diameters: dict[str, float] = {}
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"Ground station file not found: {file_path}")
 
@@ -114,15 +124,17 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) != 4:
+            if len(parts) not in (4, 5):
                 raise ValueError(
-                    f"Line {line_no} in {file_path} must have 4 comma-separated fields"
+                    f"Line {line_no} in {file_path} must have 4 or 5 comma-separated fields"
                 )
-            name, lat_str, lon_str, alt_str = parts
+            name, lat_str, lon_str, alt_str = parts[:4]
             try:
                 lat = float(lat_str)
                 lon = float(lon_str)
                 alt = float(alt_str)
+                if len(parts) == 5 and parts[4]:
+                    diameters[name] = float(parts[4])
             except ValueError as exc:
                 raise ValueError(
                     f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
@@ -131,7 +143,7 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
 
     if not stations:
         raise ValueError(f"No ground stations found in file: {file_path}")
-    return stations
+    return stations, diameters
 
 
 def reload_ground_stations(file_path: str) -> dict[str, tuple[float, float, float]]:
@@ -142,17 +154,20 @@ def reload_ground_stations(file_path: str) -> dict[str, tuple[float, float, floa
     other modules (e.g. the GUI) immediately see the refreshed catalogue.
     """
 
-    global GROUND_STATIONS_FILE, GROUND_STATIONS
+    global GROUND_STATIONS_FILE, GROUND_STATIONS, GROUND_STATION_DIAMETERS
 
     file_path = os.path.abspath(file_path)
-    stations = load_ground_stations(file_path)
+    stations, diameters = _read_ground_stations(file_path)
     GROUND_STATIONS_FILE = file_path
     GROUND_STATIONS = stations
+    GROUND_STATION_DIAMETERS = diameters
     return stations
 
 
+# Antenna diameter (m) of the stations whose catalogue line gives it.
+GROUND_STATION_DIAMETERS: dict[str, float] = {}
 try:
-    GROUND_STATIONS = load_ground_stations()
+    GROUND_STATIONS, GROUND_STATION_DIAMETERS = _read_ground_stations()
 except Exception as exc:  # pragma: no cover - fallback for packaging/runtime errors
     print(f"Warning: using fallback ground stations: {exc}", file=sys.stderr)
     GROUND_STATIONS = {
@@ -364,6 +379,133 @@ def atmospheric_attenuation(
             file=sys.stderr,
         )
         return 0.0
+
+
+# Elevations (deg) at which the pass analysis evaluates the ITU-R atmospheric
+# model; the samples of a pass are interpolated between them.
+ATMOSPHERE_ELEVATION_GRID_DEG = np.array(
+    [0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 60.0, 75.0, 90.0]
+)
+# Mean radiating temperature of the atmosphere (ITU-R P.618 §3: 275 K) and
+# cosmic background (K), for the sky noise temperature.
+ATMOSPHERE_MEAN_TEMPERATURE_K = 275.0
+COSMIC_BACKGROUND_K = 2.7
+
+
+def atmospheric_attenuation_vs_elevation(
+    lat: float,
+    lon: float,
+    freq_ghz: float,
+    p: float,
+    d_gs: float,
+    alt_gs: float,
+    include_scintillation: bool = True,
+    elevations_deg: np.ndarray = ATMOSPHERE_ELEVATION_GRID_DEG,
+) -> tuple[np.ndarray, np.ndarray]:
+    """ITU-R slant path attenuation (dB) at each of ``elevations_deg``.
+
+    Returns ``(elevations_deg, attenuation_db)``; use
+    :func:`interpolate_vs_elevation` for the samples of a pass. On a model
+    error the attenuation at :data:`MIN_ELEVATION_DEG` is used everywhere.
+    """
+    elevations = np.asarray(elevations_deg, dtype=float)
+    try:
+        _, _, _, _, total = itu.atmospheric_attenuation_slant_path(
+            lat,
+            lon,
+            freq_ghz,
+            elevations,
+            p,
+            d_gs,
+            hs=alt_gs,
+            return_contributions=True,
+            include_gas=True,
+            include_rain=True,
+            include_clouds=True,
+            include_scintillation=include_scintillation,
+        )
+        values = np.asarray(getattr(total, "value", total), dtype=float) * np.ones_like(elevations)
+    except Exception as e:
+        print(f"Error calculating atmospheric attenuation vs elevation: {e}", file=sys.stderr)
+        values = np.full_like(
+            elevations,
+            atmospheric_attenuation(lat, lon, freq_ghz, p, d_gs, alt_gs, include_scintillation),
+        )
+    return elevations, values
+
+
+def interpolate_vs_elevation(
+    elevation_deg: float | np.ndarray, elevations_deg: np.ndarray, values: np.ndarray
+) -> float | np.ndarray:
+    """Value at ``elevation_deg``, interpolated in a table built at ``elevations_deg``.
+
+    Outside the table the end values are used (below the horizon the
+    satellite is not in contact anyway).
+    """
+    result = np.interp(elevation_deg, elevations_deg, values)
+    return float(result) if np.isscalar(elevation_deg) else result
+
+
+def gt_diameter_scaling_db(diameter_m: float, reference_diameter_m: Optional[float]) -> float:
+    """Change of G/T (dB) from an antenna of ``reference_diameter_m`` to one of ``diameter_m``.
+
+    Same feed and receiver: the gain, hence the G/T, scales as the antenna
+    area, 20 log10(D / D_ref). 0 without a reference diameter.
+    """
+    if not reference_diameter_m or diameter_m <= 0:
+        return 0.0
+    return float(20 * np.log10(diameter_m / reference_diameter_m))
+
+
+def sky_noise_temperature_k(attenuation_db: float | np.ndarray) -> float | np.ndarray:
+    """Sky noise temperature (K) seen through an atmosphere of ``attenuation_db``.
+
+    ITU-R P.618 §3: T = Tm (1 - 10^(-A/10)) + Tc 10^(-A/10), with the mean
+    radiating temperature Tm = 275 K and the cosmic background Tc = 2.7 K.
+    """
+    transmission = 10 ** (-np.asarray(attenuation_db, dtype=float) / 10.0)
+    result = ATMOSPHERE_MEAN_TEMPERATURE_K * (1 - transmission) + COSMIC_BACKGROUND_K * transmission
+    return float(result) if np.ndim(result) == 0 else result
+
+
+def ground_station_gt_dbk(
+    gt_ref_dbk: float,
+    tsys_ref_k: float,
+    sky_ref_k: float,
+    sky_k: float | np.ndarray,
+    radome_loss_db: float = 0.0,
+) -> float | np.ndarray:
+    """Ground station G/T with the sky noise of the actual elevation and weather.
+
+    ``gt_ref_dbk`` is the G/T for a system noise temperature ``tsys_ref_k``
+    that includes the sky noise ``sky_ref_k`` of the reference condition
+    (clear sky at the reference elevation). At another elevation, or in
+    rain, the sky noise ``sky_k`` replaces ``sky_ref_k``:
+    G/T = G/T_ref - 10 log10((Tsys_ref - T_sky,ref + T_sky) / Tsys_ref) - radome loss.
+    Ground spill-over of the antenna side lobes is not modelled.
+    """
+    tsys = tsys_ref_k - sky_ref_k + np.asarray(sky_k, dtype=float)
+    result = gt_ref_dbk - 10 * np.log10(tsys / tsys_ref_k) - radome_loss_db
+    return float(result) if np.ndim(result) == 0 else result
+
+
+def gt_reference_sky_noise_k(
+    lat: float, lon: float, freq_ghz: float, d_gs: float, alt_gs: float, ref_elevation_deg: float
+) -> float:
+    """Clear-sky (gas only) sky noise temperature at the G/T reference elevation."""
+    atm = atmospheric_attenuation_contributions(
+        lat,
+        lon,
+        freq_ghz,
+        ref_elevation_deg,
+        50.0,
+        d_gs,
+        alt_gs,
+        include_rain=False,
+        include_clouds=False,
+        include_scintillation=False,
+    )
+    return sky_noise_temperature_k(atm["total"])
 
 
 # Sections of ``parameters.json`` holding the inputs of the fixed-elevation
@@ -871,6 +1013,92 @@ def power_flux_density(
     return result
 
 
+# Elevations (deg) of the ITU Radio Regulations Art. 21 PFD limit shape: the
+# low-elevation limit up to 5°, the high-elevation one from 25°, linear between.
+PFD_LIMIT_LOW_ELEVATION_DEG = 5.0
+PFD_LIMIT_HIGH_ELEVATION_DEG = 25.0
+
+
+def pfd_limit_at_elevation(
+    low_limit: float,
+    high_limit: Optional[float],
+    elevation_deg: float | np.ndarray,
+) -> float | np.ndarray:
+    """PFD limit (dBW/m² in the reference bandwidth) at ``elevation_deg``.
+
+    ITU RR Art. 21 shape: ``low_limit`` from 0 to 5°, ``high_limit`` from 25°
+    to 90°, linear in between. Without ``high_limit`` the limit is
+    ``low_limit`` at every elevation.
+    """
+    if high_limit is None:
+        result = np.full(np.shape(elevation_deg), float(low_limit))
+    else:
+        result = np.interp(
+            elevation_deg,
+            [PFD_LIMIT_LOW_ELEVATION_DEG, PFD_LIMIT_HIGH_ELEVATION_DEG],
+            [low_limit, high_limit],
+        )
+    return float(result) if np.ndim(result) == 0 else result
+
+
+HORIZON_MASKS_DIR = "horizon_masks"
+
+
+def horizon_mask_file(station: str) -> str | None:
+    """The horizon mask file of ``station`` (horizon_masks/<station>.txt or .csv), if any."""
+    for ext in (".txt", ".csv"):
+        path = resolve_optional_data_file(os.path.join(HORIZON_MASKS_DIR, f"{station}{ext}"))
+        if path:
+            return path
+    return None
+
+
+def load_horizon_mask(file_path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Read a horizon mask: azimuth (deg from North, clockwise) and minimum elevation (deg).
+
+    Two columns separated by a comma, a semicolon, tabs or spaces; header
+    lines and ``#`` comments are skipped. Returns the points sorted by
+    azimuth in 0–360°.
+    """
+    rows = []
+    with open(file_path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            text = line.strip()
+            if ";" in text:
+                fields = [field.replace(",", ".") for field in re.split(r"[;\s]+", text) if field]
+            else:
+                fields = [field for field in re.split(r"[,\s]+", text) if field]
+            try:
+                rows.append((float(fields[0]) % 360.0, float(fields[1])))
+            except (IndexError, ValueError):
+                continue
+    if not rows:
+        raise ValueError("The horizon mask file has no rows of azimuth and elevation")
+    data = np.array(sorted(rows))
+    return data[:, 0], data[:, 1]
+
+
+def topocentric_azimuth_deg(sat, gs, times) -> np.ndarray:
+    """Azimuth (deg from North, clockwise) of the satellite seen from the station."""
+    _, az, _ = (sat - gs).at(times).altaz()
+    return np.asarray(az.degrees, dtype=float)
+
+
+def mask_elevation_deg(
+    azimuth_deg: float | np.ndarray, mask: Optional[tuple[np.ndarray, np.ndarray]]
+) -> float | np.ndarray:
+    """Minimum elevation of the horizon mask at ``azimuth_deg`` (0 without a mask).
+
+    Linear between the points, wrapping around North.
+    """
+    if mask is None:
+        result = np.zeros(np.shape(azimuth_deg))
+    else:
+        azimuths, elevations = mask
+        result = np.interp(np.asarray(azimuth_deg) % 360.0, azimuths, elevations, period=360.0)
+    return float(result) if np.ndim(result) == 0 else result
+
+
 def static_link_losses(
     freq_ghz: float,
     d_gs: float,
@@ -953,6 +1181,7 @@ def calculate_fixed_elevation_link_budget(
     modulation_degradation_db: float = 0.0,
     occupied_bandwidth_hz: Optional[float] = None,
     pfd_limit_dbw_m2_4khz: Optional[float] = None,
+    pfd_limit_high_dbw_m2_4khz: Optional[float] = None,
     tx_axial_ratio_db: Optional[float] = None,
     rx_axial_ratio_db: Optional[float] = None,
     rx_depointing_deg: Optional[float] = None,
@@ -961,6 +1190,8 @@ def calculate_fixed_elevation_link_budget(
     tolerances: Optional[list] = None,
     ionospheric_s4_ref: Optional[float] = None,
     ionospheric_s4_ref_freq_mhz: float = GPS_L1_MHZ,
+    gt_model: Optional[Dict[str, float]] = None,
+    gt_diameter_scaling_db: float = 0.0,
 ) -> Dict[str, Any]:
     """Preliminary link budget at a single, user-chosen fixed elevation angle.
 
@@ -988,7 +1219,10 @@ def calculate_fixed_elevation_link_budget(
     that case. The EIRP actually used is returned as ``eirp_dbw``. When ``occupied_bandwidth_hz`` is given, the power
     flux density at the receiving site is also returned (see
     :func:`power_flux_density`), together with a margin against
-    ``pfd_limit_dbw_m2_4khz`` when that is provided too.
+    ``pfd_limit_dbw_m2_4khz`` when that is provided too. With
+    ``pfd_limit_high_dbw_m2_4khz`` the limit follows the elevation
+    (:func:`pfd_limit_at_elevation`): ``pfd_limit_dbw_m2_4khz`` up to 5°, the
+    high one from 25°.
 
     When ``ionospheric_s4_ref`` is given, the ionospheric loss is the
     scintillation fade derived from it (:func:`ionospheric_scintillation_fade_db`,
@@ -996,6 +1230,16 @@ def calculate_fixed_elevation_link_budget(
     ``ionospheric_loss_db``. The ground station's geomagnetic latitude and
     ionospheric zone, and whether the tropospheric scintillation model is
     valid at this frequency and elevation, are always returned.
+
+    ``gt_model`` (ground station receiver only) makes ``gt`` the G/T at a
+    reference elevation: a dict with ``ref_elevation_deg``, ``tsys_ref_k``
+    and ``radome_loss_db``. The G/T of each condition is then corrected for
+    its sky noise (:func:`ground_station_gt_dbk`): the sky noise of the clear
+    or rain-faded atmosphere at ``elevation_deg`` instead of the clear-sky
+    one at the reference elevation. Without it ``gt`` is used as it is.
+
+    ``gt_diameter_scaling_db`` (see :func:`gt_diameter_scaling_db`) is added
+    to ``gt`` first: ``gt`` is then the G/T of the reference antenna.
 
     ``polarisation_loss_db=None`` derives the polarisation mismatch loss from
     ``tx_axial_ratio_db`` and ``rx_axial_ratio_db`` (worst-case orientation,
@@ -1091,7 +1335,18 @@ def calculate_fixed_elevation_link_budget(
             include_scintillation=include_scint,
         )
         rx_power = eirp - path_loss - atm["total"] - other_att - pointing_loss_db - extra_static_loss_db
-        received_cno_db = rx_power + gt + 228.6
+        condition_gt = gt
+        noise: Dict[str, float] = {}
+        if gt_model is not None:
+            sky = sky_noise_temperature_k(atm["total"])
+            condition_gt = ground_station_gt_dbk(
+                gt, gt_model["tsys_ref_k"], sky_ref_k, sky, gt_model.get("radome_loss_db", 0.0)
+            )
+            noise = {
+                "sky_noise_k": sky,
+                "system_noise_k": gt_model["tsys_ref_k"] - sky_ref_k + sky,
+            }
+        received_cno_db = rx_power + condition_gt + 228.6
         cno_db = received_cno_db - demod_loss_total
         ebno = cno_db - bitrate_dbhz
         result: Dict[str, float] = {
@@ -1110,6 +1365,8 @@ def calculate_fixed_elevation_link_budget(
                 + other_att
             ),
             "rx_power_dbw": rx_power,
+            "gt_dbk": condition_gt,
+            **noise,
             "received_cno_dbhz": received_cno_db,
             "cno_dbhz": cno_db,
             "ebno_db": ebno,
@@ -1120,6 +1377,15 @@ def calculate_fixed_elevation_link_budget(
                 result["margin_statistics"] = margin_statistics(result["margin_db"], tolerances)
         return result
 
+    gt_reference_dbk = gt
+    gt = gt + gt_diameter_scaling_db
+    sky_ref_k = 0.0
+    if gt_model is not None:
+        sky_ref_k = gt_reference_sky_noise_k(
+            lat_gs, lon_gs, freq_ghz, d_gs, alt_gs_km, gt_model["ref_elevation_deg"]
+        )
+        if gt_model["tsys_ref_k"] <= sky_ref_k:
+            raise ValueError("The system noise temperature must be higher than the sky noise.")
     rain_p = max(0.001, min(50.0, 100.0 - link_availability_pct))
     out: Dict[str, Any] = {
         "slant_range_km": slant_range_km,
@@ -1138,6 +1404,9 @@ def calculate_fixed_elevation_link_budget(
         "eirp_dbw": float(eirp),
         "eirp_source": eirp_source,
         "gt_dbk": gt,
+        "gt_reference_dbk": gt_reference_dbk,
+        "gt_diameter_scaling_db": gt_diameter_scaling_db,
+        "gt_model": dict(gt_model, sky_ref_k=sky_ref_k) if gt_model is not None else None,
         "frequency_mhz": freq_ghz * 1000.0,
         "bitrate_formatted_bps": ebno_bitrate,
         "bitrate_dbhz": bitrate_dbhz,
@@ -1167,6 +1436,13 @@ def calculate_fixed_elevation_link_budget(
     out["pfd_dbw_m2"] = pfd["pfd_dbw_m2"]
     out["pfd_dbm_m2"] = pfd["pfd_dbw_m2"] + 30.0
     if pfd_limit_dbw_m2_4khz is not None:
+        if pfd_limit_high_dbw_m2_4khz is not None:
+            out["pfd_limit_low_dbw_m2_4khz"] = pfd_limit_dbw_m2_4khz
+            out["pfd_limit_high_dbw_m2_4khz"] = pfd_limit_high_dbw_m2_4khz
+        # The limit at this elevation (ITU RR Art. 21 shape).
+        pfd_limit_dbw_m2_4khz = pfd_limit_at_elevation(
+            pfd_limit_dbw_m2_4khz, pfd_limit_high_dbw_m2_4khz, elevation_deg
+        )
         out["pfd_limit_dbw_m2_4khz"] = pfd_limit_dbw_m2_4khz
     if "pfd_dbw_m2_per_4khz" in pfd:
         out["pfd_dbw_m2_per_4khz"] = pfd["pfd_dbw_m2_per_4khz"]

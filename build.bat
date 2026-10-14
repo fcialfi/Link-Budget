@@ -51,6 +51,8 @@ for %%f in ("ground_stations.txt" "satellites.json") do (
 )
 rem The mission folders: parameters, antenna pattern and last TLE of each satellite.
 xcopy /e /i /y /q missions "dist\%APP%\missions" >nul || goto :error
+rem The horizon masks of the stations (optional).
+if exist horizon_masks xcopy /e /i /y /q horizon_masks "dist\%APP%\horizon_masks" >nul || goto :error
 
 echo.
 echo Done: dist\%APP%\%APP%.exe

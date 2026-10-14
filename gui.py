@@ -678,6 +678,7 @@ class LinkBudgetApp:
         self.tle_file_var: tk.StringVar | None = None
         self.tle_file_path: str | None = None
         self.tle_info_label: ttk.Label | None = None
+        self.pfd_note = ""
         self.pattern_info_label: ttk.Label | None = None
         # Satellite catalogue (satellites.json) and the satellite selected.
         self.catalogue: missions.Catalogue | None = None
@@ -992,6 +993,72 @@ class LinkBudgetApp:
         if self.pattern_info_label is not None:
             self.pattern_info_label.configure(foreground=PALETTE["warning"] if warning else PALETTE["text_muted"])
 
+    def _gt_model(self) -> dict | None:
+        """The G/T-versus-elevation inputs, or None for a constant G/T GS.
+
+        Raises ValueError when they are not valid numbers.
+        """
+
+        tsys_text = self.tsys_ref_entry.get().strip()
+        if not tsys_text:
+            return None
+        tsys = float(tsys_text)
+        ref_el = float(self.gt_ref_el_entry.get().strip() or MIN_ELEVATION_DEG)
+        radome = float(self.radome_loss_entry.get().strip() or 0.0)
+        if tsys <= 0 or not 0 < ref_el <= 90:
+            raise ValueError("System Noise Temperature must be > 0 K and the reference elevation 0–90°.")
+        return {"ref_elevation_deg": ref_el, "tsys_ref_k": tsys, "radome_loss_db": radome}
+
+    def _gt_scaling_db(self, d_gs: float) -> float:
+        """G/T change from the reference antenna (G/T Reference Diameter) to a ``d_gs`` antenna."""
+
+        text = self.gt_ref_diameter_entry.get().strip()
+        return calculations.gt_diameter_scaling_db(d_gs, float(text)) if text else 0.0
+
+    def _pass_atmosphere(self, lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, elevations, gt_gs):
+        """Atmospheric attenuation and G/T GS at each elevation of the pass.
+
+        The ITU-R model is evaluated on an elevation grid and interpolated.
+        Returns (attenuation_db, gt_dbk, summary text).
+        """
+
+        grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
+            lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, include_scintillation=self.scint_var.get()
+        )
+        atm = calculations.interpolate_vs_elevation(np.asarray(elevations, dtype=float), grid, attenuation)
+        scaling = self._gt_scaling_db(d_gs)
+        gt_gs = gt_gs + scaling
+        model = self._gt_model()
+        if model is None:
+            gt = np.full_like(atm, gt_gs)
+            gt_text = f"G/T GS {gt_gs:g} dB/K at all elevations"
+        else:
+            sky_ref = calculations.gt_reference_sky_noise_k(
+                lat_gs, lon_gs, freq_ghz, d_gs, alt_gs_km, model["ref_elevation_deg"]
+            )
+            sky = calculations.sky_noise_temperature_k(atm)
+            gt = calculations.ground_station_gt_dbk(
+                gt_gs, model["tsys_ref_k"], sky_ref, sky, model["radome_loss_db"]
+            )
+            grid_gt = calculations.ground_station_gt_dbk(
+                gt_gs,
+                model["tsys_ref_k"],
+                sky_ref,
+                calculations.sky_noise_temperature_k(attenuation),
+                model["radome_loss_db"],
+            )
+            gt_text = (
+                f"G/T GS {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, grid_gt):.2f} dB/K "
+                f"at {MIN_ELEVATION_DEG:g}°, {grid_gt[-1]:.2f} at 90°"
+            )
+        if scaling:
+            gt_text += f" ({d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
+        summary = (
+            f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, attenuation):.3f} "
+            f"at {MIN_ELEVATION_DEG:g}° El, {attenuation[-1]:.3f} at 90° (per sample)\n{gt_text}"
+        )
+        return atm, gt, summary
+
     def _set_link_budget_enabled(self, enabled: bool) -> None:
         """Enable the link budget tabs, or leave only the contact analysis."""
 
@@ -1155,6 +1222,11 @@ class LinkBudgetApp:
             "gt_gs_dbk": self.gt_gs_entry,
             "gt_sat_dbk": self.gt_sat_entry,
             "antenna_diameter_m": self.d_gs_entry,
+            "min_elevation_deg": self.min_el_entry,
+            "gt_ref_diameter_m": self.gt_ref_diameter_entry,
+            "gt_ref_elevation_deg": self.gt_ref_el_entry,
+            "tsys_ref_k": self.tsys_ref_entry,
+            "radome_loss_db": self.radome_loss_entry,
             "link_availability_pct": self.LA_entry,
             "other_attenuations_db": self.other_att_entry,
             "uplink_other_attenuations_db": self.other_att_ul_entry,
@@ -1240,6 +1312,7 @@ class LinkBudgetApp:
         "Load TLE from file" / "Import Link Budget Parameters" buttons.
         """
 
+        self._update_mask_label()
         # The ground station catalogue is read when calculations is imported.
         if self.gs_file_var is not None:
             gs_path = calculations.GROUND_STATIONS_FILE
@@ -1512,6 +1585,115 @@ class LinkBudgetApp:
             )
         return kwargs
 
+    def _min_elevation(self) -> float:
+        """Minimum elevation of a contact (Observation Settings), in degrees."""
+
+        text = self.min_el_entry.get().strip()
+        value = float(text) if text else MIN_ELEVATION_DEG
+        if not -5.0 <= value < 90.0:
+            raise ValueError("Min Elevation must be between -5° and 90°.")
+        return value
+
+    def _station_mask(self, gs_name: str):
+        """(file, mask) of the horizon mask of ``gs_name``; (None, None) without one."""
+
+        path = calculations.horizon_mask_file(gs_name)
+        if not path:
+            return None, None
+        return path, calculations.load_horizon_mask(path)
+
+    def _update_mask_label(self) -> None:
+        name = self.gs_var.get()
+        try:
+            path, mask = self._station_mask(name)
+        except Exception as exc:
+            self.mask_var.set(f"Horizon mask of {name} not read: {exc}")
+            return
+        self.mask_var.set(
+            f"Horizon mask: {path}" if path else
+            f"Horizon mask: none for {name} (put horizon_masks\\{name}.txt next to the program to add one)"
+        )
+
+    def _visibility(self, sat, gs, sky_times, altitudes, gs_name):
+        """Samples in contact: above the minimum elevation and the station's horizon mask.
+
+        Returns (visible, azimuth_deg, required_elevation_deg).
+        """
+
+        min_el = self._min_elevation()
+        _path, mask = self._station_mask(gs_name)
+        azimuth = calculations.topocentric_azimuth_deg(sat, gs, sky_times)
+        required = np.maximum(min_el, calculations.mask_elevation_deg(azimuth, mask))
+        return np.asarray(altitudes) >= required, azimuth, required
+
+    def show_horizon_mask(self) -> None:
+        """Plot the horizon mask of the selected station with the minimum elevation."""
+
+        name = self.gs_var.get()
+        try:
+            path, mask = self._station_mask(name)
+            min_el = self._min_elevation()
+        except Exception as exc:
+            messagebox.showerror("Horizon Mask", str(exc))
+            return
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Horizon Mask – {name}")
+        popup.geometry("640x440")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        azimuth = np.arange(0.0, 360.5, 0.5)
+        required = np.maximum(min_el, calculations.mask_elevation_deg(azimuth, mask))
+        ax.fill_between(azimuth, 0, required, color=MATLAB_COLORS["blue"], alpha=0.25, label="No contact")
+        ax.plot(azimuth, required, color=MATLAB_COLORS["blue"])
+        if mask is not None:
+            ax.plot(*mask, "o", color=MATLAB_COLORS["orange"], markersize=3, label="Mask points")
+        ax.set_xlim(0, 360)
+        ax.set_ylim(0, max(10.0, float(required.max()) + 2))
+        ax.set_xticks(range(0, 361, 45))
+        ax.set_xlabel("Azimuth [deg from North]", fontsize=8)
+        ax.set_ylabel("Elevation [deg]", fontsize=8)
+        ax.set_title(f"{name}: {os.path.basename(path) if path else 'no mask file'}, min elevation {min_el:g}°", fontsize=8)
+        ax.tick_params(axis="both", labelsize=8)
+        ax.grid(True)
+        ax.legend(fontsize=8)
+        canvas = FigureCanvasTkAgg(fig, master=popup)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+    def _add_pfd_columns(self) -> None:
+        """PFD in 4 kHz and its margin on the limit at every sample of the pass analysis.
+
+        The limits come from the Static LB · Downlink tab (0–5° and 25–90°,
+        linear between), the occupied bandwidth from the coded bit rate,
+        roll-off and spectral efficiency of the Downlink tab. Nothing is added
+        when one of them is missing.
+        """
+
+        self.pfd_note = ""
+        provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS["downlink"])
+        try:
+            limits = provider() if provider else None
+            rolloff = _get_optional_float(self.rolloff_entry)
+            spectral_eff = _get_optional_float(self.spectral_eff_entry)
+            bitrate_mbps = float(self.bitrate_entry.get())
+        except ValueError:
+            return
+        if self.df_all.empty or not limits or limits.get("pfd_limit") is None:
+            self.pfd_note = "PFD not checked: no PFD limit in the Static LB · Downlink tab."
+            return
+        if rolloff is None or not spectral_eff:
+            self.pfd_note = "PFD not checked: set Roll-off and Spectral Efficiency."
+            return
+        bandwidth_hz = bitrate_mbps * 1e6 * (1 + rolloff) / spectral_eff
+        slant_m = self.df_all["Slant Range (km)"].to_numpy(dtype=float) * 1000.0
+        eirp = self.df_all["EIRP (dBW)"].to_numpy(dtype=float)
+        pfd = eirp - 10 * np.log10(4 * np.pi) - 20 * np.log10(slant_m) - 10 * np.log10(bandwidth_hz / 4000.0)
+        limit = calculations.pfd_limit_at_elevation(
+            limits["pfd_limit"], limits.get("pfd_limit_high"), self.df_all["Elevation (°)"].to_numpy(dtype=float)
+        )
+        self.df_all["PFD (dBW/m²/4kHz)"] = np.round(pfd, 2)
+        self.df_all["PFD Limit (dBW/m²/4kHz)"] = np.round(limit, 2)
+        self.df_all["PFD Margin (dB)"] = np.round(limit - pfd, 2)
+
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""
 
@@ -1563,7 +1745,7 @@ class LinkBudgetApp:
             freq = float(self.freq_entry.get()) * u.GHz
             link_availability = float(self.LA_entry.get())
             p = 100.0 - link_availability
-            d_gs = float(self.d_gs_entry.get())
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
             other_att = float(self.other_att_entry.get() or 0.0)
             eirp_sat = float(self.eirp_sat_entry.get())
             gt_gs = float(self.gt_gs_entry.get())
@@ -1614,18 +1796,16 @@ class LinkBudgetApp:
         altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
             sat, gs, sky_times, freq
         )
-        atm_att = atmospheric_attenuation(
-            lat_gs,
-            lon_gs,
-            freq.to(u.GHz).value,
-            p,
-            d_gs,
-            alt_gs_km,
-            include_scintillation=self.scint_var.get(),
-        )
-        uplink_atm_att = None
+        try:
+            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
+                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
+            )
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
+            return
+        uplink_atm_by_sample = None
         if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            uplink_atm_att = atmospheric_attenuation(
+            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
                 lat_gs,
                 lon_gs,
                 uplink_freq.to(u.GHz).value,
@@ -1634,9 +1814,15 @@ class LinkBudgetApp:
                 alt_gs_km,
                 include_scintillation=self.scint_var.get(),
             )
-        self.atm_label_var.set(
-            f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
-        )
+            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
+                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
+            )
+        self.atm_label_var.set(atm_summary)
+        try:
+            visible, azimuth, required_el = self._visibility(sat, gs, sky_times, altitudes, gs_name)
+        except Exception as exc:
+            messagebox.showerror("Input Error", f"Min Elevation / horizon mask: {exc}")
+            return
         results_list = []
         self.contact_windows.clear()
         in_contact = False
@@ -1654,13 +1840,13 @@ class LinkBudgetApp:
                 d_gs,
                 alt_gs_km,
                 eirp_sat,
-                gt_gs,
+                float(gt_by_sample[i]),
                 demod_loss,
                 bitrate,
                 overhead,
                 cisat_lin,
                 other_att,
-                atm_att,
+                float(atm_by_sample[i]),
                 elev,
                 slant_ranges[i],
                 dopplers[i],
@@ -1670,17 +1856,19 @@ class LinkBudgetApp:
                 gt_sat,
                 demod_loss_ul,
                 other_att_ul,
-                uplink_atm_att,
+                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
                 **loss_kwargs,
             )
+            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
                 "Elevation (°)",
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "G/T GS (dB/K)",
                 "S/C Antenna Gain (dBi)",
                 "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
@@ -1703,7 +1891,7 @@ class LinkBudgetApp:
                     params[key] = round(params[key], decimals)
             results_list.append(params)
 
-            is_visible_now = elev >= MIN_ELEVATION_DEG
+            is_visible_now = bool(visible[i])
             if is_visible_now and not in_contact:
                 contact_start_time = t_utc_dt
                 in_contact = True
@@ -1717,6 +1905,9 @@ class LinkBudgetApp:
             self.contact_windows.append((contact_start_time, times[-1], pass_direction))
 
         self.df_all = pd.DataFrame(results_list)
+        self.df_all["Azimuth (°)"] = np.round(azimuth, 2)
+        self.df_all["Min Elevation (°)"] = np.round(required_el, 2)
+        self._add_pfd_columns()
         self.display_contacts(self.contact_windows)
         if self.contact_windows:
             self.contact_listbox.selection_set(0)
@@ -1752,7 +1943,13 @@ class LinkBudgetApp:
             }
         )
         self.contact_windows.clear()
-        visible = altitudes >= MIN_ELEVATION_DEG
+        try:
+            visible, azimuth, required = self._visibility(sat, gs, sky_times, altitudes, gs_name)
+        except Exception as exc:
+            messagebox.showerror("Input Error", f"Min Elevation / horizon mask: {exc}")
+            return
+        self.df_all["Azimuth (°)"] = np.round(azimuth, 2)
+        self.df_all["Min Elevation (°)"] = np.round(required, 2)
         start = None
         for i, now_visible in enumerate(visible):
             if now_visible and start is None:
@@ -1765,7 +1962,8 @@ class LinkBudgetApp:
         self.atm_label_var.set("")
         self.display_contacts(self.contact_windows)
         self.selected_pass_var.set(
-            f"{len(self.contact_windows)} passes above {MIN_ELEVATION_DEG:g}° (contact analysis only)"
+            f"{len(self.contact_windows)} passes above the minimum elevation and the horizon mask "
+            "(contact analysis only)"
             if self.contact_windows
             else "no pass above the minimum elevation on this date"
         )
@@ -1800,7 +1998,7 @@ class LinkBudgetApp:
             freq = float(self.freq_entry.get()) * u.GHz
             link_availability = float(self.LA_entry.get())
             p = 100.0 - link_availability
-            d_gs = float(self.d_gs_entry.get())
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
             other_att = float(self.other_att_entry.get() or 0.0)
             eirp_sat = float(self.eirp_sat_entry.get())
             gt_gs = float(self.gt_gs_entry.get())
@@ -1839,29 +2037,6 @@ class LinkBudgetApp:
             messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
             return
         gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-        atm_att = atmospheric_attenuation(
-            lat_gs,
-            lon_gs,
-            freq.to(u.GHz).value,
-            p,
-            d_gs,
-            alt_gs_km,
-            include_scintillation=self.scint_var.get(),
-        )
-        uplink_atm_att = None
-        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            uplink_atm_att = atmospheric_attenuation(
-                lat_gs,
-                lon_gs,
-                uplink_freq.to(u.GHz).value,
-                p,
-                d_gs,
-                alt_gs_km,
-                include_scintillation=self.scint_var.get(),
-            )
-        self.atm_label_var.set(
-            f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
-        )
         updated_results = []
         times_dt = self.df_all["Time (UTC)"].tolist()
         sky_times = ts.utc(
@@ -1875,6 +2050,28 @@ class LinkBudgetApp:
         altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
             sat, gs, sky_times, freq
         )
+        try:
+            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
+                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
+            )
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
+            return
+        uplink_atm_by_sample = None
+        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
+                lat_gs,
+                lon_gs,
+                uplink_freq.to(u.GHz).value,
+                p,
+                d_gs,
+                alt_gs_km,
+                include_scintillation=self.scint_var.get(),
+            )
+            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
+                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
+            )
+        self.atm_label_var.set(atm_summary)
         for i, t_utc_dt in enumerate(times_dt):
             t_sky = sky_times[i]
             params = calculate_link_budget_parameters(
@@ -1886,13 +2083,13 @@ class LinkBudgetApp:
                 d_gs,
                 alt_gs_km,
                 eirp_sat,
-                gt_gs,
+                float(gt_by_sample[i]),
                 demod_loss,
                 bitrate,
                 overhead,
                 cisat_lin,
                 other_att,
-                atm_att,
+                float(atm_by_sample[i]),
                 altitudes[i],
                 slant_ranges[i],
                 dopplers[i],
@@ -1902,18 +2099,20 @@ class LinkBudgetApp:
                 gt_sat,
                 demod_loss_ul,
                 other_att_ul,
-                uplink_atm_att,
+                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
                 **loss_kwargs,
             )
 
+            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
                 "Elevation (°)",
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "G/T GS (dB/K)",
                 "S/C Antenna Gain (dBi)",
                 "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
@@ -1936,7 +2135,12 @@ class LinkBudgetApp:
                     params[key] = round(params[key], decimals)
             updated_results.append(params)
 
+        previous = self.df_all
         self.df_all = pd.DataFrame(updated_results)
+        for column in ("Azimuth (°)", "Min Elevation (°)"):
+            if column in previous:
+                self.df_all[column] = previous[column].to_numpy()
+        self._add_pfd_columns()
         selection = self.contact_listbox.curselection()
         if not selection and len(self.contact_windows) > 0:
             self.contact_listbox.selection_set(0)
@@ -1971,7 +2175,10 @@ class LinkBudgetApp:
                 df_segment = self.df_all[mask]
                 if (
                     not df_segment.empty
-                    and df_segment["Elevation (°)"].max() >= MIN_ELEVATION_DEG
+                    and (
+                        "Min Elevation (°)" not in df_segment
+                        or (df_segment["Elevation (°)"] >= df_segment["Min Elevation (°)"]).any()
+                    )
                 ):
                     filtered_contacts.append((start, end, pass_direction))
         self.contact_windows = filtered_contacts
@@ -1979,11 +2186,14 @@ class LinkBudgetApp:
             mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
             max_elevation = self.df_all.loc[mask, "Elevation (°)"].max()
             minutes = (end - start).total_seconds() / 60.0
-            self.contact_listbox.insert(
-                tk.END,
+            text = (
                 f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})"
-                f"  ·  {minutes:.1f} min  ·  max El {max_elevation:.1f}°",
+                f"  ·  {minutes:.1f} min  ·  max El {max_elevation:.1f}°"
             )
+            if "PFD Margin (dB)" in self.df_all.columns:
+                pfd_margin = self.df_all.loc[mask, "PFD Margin (dB)"].min()
+                text += f"  ·  min PFD margin {pfd_margin:+.1f} dB" + ("  ✗ PFD EXCEEDED" if pfd_margin < 0 else "")
+            self.contact_listbox.insert(tk.END, text)
 
     def on_contact_select(self, event):
         selection = self.contact_listbox.curselection()
@@ -2075,9 +2285,11 @@ class LinkBudgetApp:
         display_columns = [
             "Time (UTC)",
             "Elevation (°)",
+            "Azimuth (°)",
             "Slant Range (km)",
             "Path Loss (dB)",
             "Atmospheric Att (dB)",
+            "G/T GS (dB/K)",
             "Off Boresight Angle (°)",
             "S/C Antenna Gain (dBi)",
             "EIRP (dBW)",
@@ -2086,7 +2298,11 @@ class LinkBudgetApp:
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
             "Doppler Shift (kHz)",
+            "PFD (dBW/m²/4kHz)",
+            "PFD Limit (dBW/m²/4kHz)",
+            "PFD Margin (dB)",
         ]
+        display_columns = [c for c in display_columns if c == "Time (UTC)" or c in df_pass.columns]
         table = ttk.Treeview(self.table_frame, columns=display_columns, show="headings")
         table.tag_configure("evenrow", background=PALETTE["row_even"])
         table.tag_configure("oddrow", background=PALETTE["row_odd"])
@@ -2465,7 +2681,8 @@ class LinkBudgetApp:
                     ),
                     L(
                         "Antenna Diameter GS [m]", self.d_gs_entry,
-                        "Used by the ITU-R atmospheric model"
+                        "Used for a station without diameter in ground_stations.txt (5th column): "
+                        "by the ITU-R atmospheric model, for the G/T scaling"
                         + (" and for the default Rx beamwidth." if rx_is_ground_station else "."),
                     ),
                     L(
@@ -2663,11 +2880,17 @@ class LinkBudgetApp:
                 + (
                     [
                         F(
-                            "pfd_limit", "PFD Limit [dBW/m²/4kHz]", "", "e.g. -154",
+                            "pfd_limit", "PFD Limit 0–5° El [dBW/m²/4kHz]", "", "e.g. -154",
                             "Regulatory power flux density limit in a 4 kHz reference bandwidth "
-                            "(ITU Radio Regulations Art. 21, ECSS-E-ST-50-05C). It depends on the "
-                            "frequency band and on the elevation angle. When set, the PFD Margin "
-                            "is computed.",
+                            "(ITU Radio Regulations Art. 21, ECSS-E-ST-50-05C) for elevations up to 5°. "
+                            "It depends on the frequency band. When set, the PFD Margin is computed, "
+                            "here and along the passes.",
+                        ),
+                        F(
+                            "pfd_limit_high", "PFD Limit 25–90° El [dBW/m²/4kHz]", "", "e.g. -144",
+                            "Limit for elevations from 25° (ITU RR Art. 21); between 5° and 25° the "
+                            "limit goes linearly from the 0–5° value to this one. Empty: the 0–5° "
+                            "limit applies at every elevation.",
                         ),
                     ]
                     # PFD limits apply to space stations (downlink) only.
@@ -2682,13 +2905,39 @@ class LinkBudgetApp:
                         gt_label, gt_entry,
                         "Receiving figure of merit: antenna gain over system noise temperature."
                         + (
-                            ""
+                            " With a System Noise Temperature it is the value at the G/T reference "
+                            "elevation, in clear sky."
                             if rx_is_ground_station
                             else " With the option below it is the value at the satellite antenna "
                             "boresight (pattern peak)."
                         ),
                     ),
                 ]
+                + (
+                    [
+                        L(
+                            "G/T Reference Diameter [m]", self.gt_ref_diameter_entry,
+                            "Antenna diameter the G/T GS refers to; another station diameter scales it by "
+                            "20 log10(D/Dref). Empty: no scaling.",
+                        ),
+                        L(
+                            "G/T Reference Elevation [deg]", self.gt_ref_el_entry,
+                            "Elevation at which the G/T GS is specified (clear sky).",
+                        ),
+                        L(
+                            "System Noise Temperature [K]", self.tsys_ref_entry,
+                            "System noise temperature at the G/T reference elevation, clear sky. With it the "
+                            "G/T follows the sky noise: lower at low elevation and in rain (ITU-R P.618 sky "
+                            "noise, Tm = 275 K). Empty: the G/T GS is used as it is at every elevation.",
+                        ),
+                        L(
+                            "Radome Loss [dB]", self.radome_loss_entry,
+                            "G/T degradation of the radome, subtracted from the G/T (e.g. 0.25 dB).",
+                        ),
+                    ]
+                    if rx_is_ground_station
+                    else []
+                )
                 # The satellite antenna pattern gives the Rx gain on the uplink only.
                 + ([] if rx_is_ground_station else [("gain_source",)])
                 + [
@@ -3842,6 +4091,7 @@ class LinkBudgetApp:
                 other_att = _parse_optional(other_att_entry, other_att_label)
                 link_availability = _parse_required(self.LA_entry, "Link Availability [%]")
                 d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+                d_gs = calculations.GROUND_STATION_DIAMETERS.get(station_var.get(), d_gs)
 
                 if eirp_mode_var.get() == "tx_chain":
                     tx_power_w = _field("tx_power_w", _parse_optional_or_none)
@@ -3887,6 +4137,9 @@ class LinkBudgetApp:
                 multipath_loss_db = _field("multipath_loss_db", _parse_optional)
                 modulation_degradation_db = _field("modulation_degradation_db", _parse_optional)
                 pfd_limit = _field("pfd_limit", _parse_optional_or_none) if "pfd_limit" in entries else None
+                pfd_limit_high = (
+                    _field("pfd_limit_high", _parse_optional_or_none) if "pfd_limit_high" in entries else None
+                )
                 ccsds_framing = None
                 if rx_is_ground_station and framing_mode_var.get() == "ccsds":
                     # Validates the CCSDS inputs; the fields below were filled from them.
@@ -3965,6 +4218,8 @@ class LinkBudgetApp:
                     required_ebno=required_ebno,
                     ionospheric_s4_ref=iono_s4_ref,
                     ionospheric_s4_ref_freq_mhz=iono_s4_ref_freq,
+                    gt_model=self._gt_model() if rx_is_ground_station else None,
+                    gt_diameter_scaling_db=self._gt_scaling_db(d_gs) if rx_is_ground_station else 0.0,
                     tx_power_w=tx_power_w,
                     antenna_circuit_loss_db=ant_circuit_loss_db,
                     vswr=vswr,
@@ -3975,6 +4230,7 @@ class LinkBudgetApp:
                     modulation_degradation_db=modulation_degradation_db,
                     occupied_bandwidth_hz=occupied_bandwidth_hz,
                     pfd_limit_dbw_m2_4khz=pfd_limit,
+                    pfd_limit_high_dbw_m2_4khz=pfd_limit_high,
                     tx_axial_ratio_db=ant_axial_ratio_db,
                     rx_axial_ratio_db=rx_axial_ratio_db,
                     rx_depointing_deg=rx_depointing_deg,
@@ -4311,6 +4567,7 @@ class LinkBudgetApp:
 
             freq_ghz = _parse_required(freq_entry, freq_label)
             d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(station_var.get(), d_gs)
             if iono_mode_var.get() == "s4":
                 iono_kwargs = dict(
                     ionospheric_s4_ref=_field("iono_s4_ref", _parse_required),
@@ -4352,6 +4609,8 @@ class LinkBudgetApp:
                 "tx_pointing_loss_db": opt("tx_pointing_loss_db", _parse_optional, default=0.0),
                 "modulation_degradation_db": opt("modulation_degradation_db", _parse_optional, default=0.0),
                 "formatting_overhead": formatting,
+                "pfd_limit": opt("pfd_limit", _parse_optional_or_none),
+                "pfd_limit_high": opt("pfd_limit_high", _parse_optional_or_none),
             }
 
         self._static_lb_loss_providers[section] = _pass_link_losses
@@ -5299,12 +5558,30 @@ class LinkBudgetApp:
             pass_row, textvariable=self.gs_var, values=initial_stations, state="readonly", width=15
         )
         self.gs_menu.pack(side=tk.LEFT, padx=(6, 12))
-        self.gs_menu.bind("<<ComboboxSelected>>", lambda event: self.set_analysis_stale())
+        self.gs_menu.bind(
+            "<<ComboboxSelected>>", lambda event: (self.set_analysis_stale(), self._update_mask_label())
+        )
 
         load_gs_btn = ttk.Button(
             pass_row, text="Load Ground Stations...", command=self.load_ground_stations_from_file
         )
         load_gs_btn.pack(side=tk.LEFT)
+        ttk.Label(pass_row, text="Min Elevation [deg]").pack(side=tk.LEFT, padx=(24, 6))
+        self.min_el_entry = ttk.Entry(pass_row, width=6)
+        self.min_el_entry.insert(0, f"{MIN_ELEVATION_DEG:g}")
+        self.min_el_entry.pack(side=tk.LEFT)
+        self.min_el_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
+        _add_tooltip(
+            self.min_el_entry,
+            "A pass counts as a contact above this elevation and above the station's horizon mask.",
+        )
+        mask_btn = ttk.Button(pass_row, text="Horizon Mask", command=self.show_horizon_mask)
+        mask_btn.pack(side=tk.LEFT, padx=(12, 0))
+        _add_tooltip(
+            mask_btn,
+            "Plot the horizon mask of the station: horizon_masks\\<station>.txt next to the program, two "
+            "columns, azimuth [deg from North] and minimum elevation [deg]. No contact below it.",
+        )
         _add_tooltip(
             load_gs_btn,
             "Load a custom ground station catalogue (name, latitude, longitude, altitude) from a "
@@ -5313,7 +5590,11 @@ class LinkBudgetApp:
 
         self.gs_file_var = tk.StringVar(value="Ground stations: none loaded")
         ttk.Label(obs_frame, textvariable=self.gs_file_var, foreground=PALETTE["text_muted"]).grid(
-            row=1, column=0, sticky="w", padx=5, pady=(4, 10)
+            row=1, column=0, sticky="w", padx=5, pady=(4, 0)
+        )
+        self.mask_var = tk.StringVar(value="")
+        ttk.Label(obs_frame, textvariable=self.mask_var, foreground=PALETTE["text_muted"]).grid(
+            row=1, column=0, sticky="sw", padx=5, pady=(24, 10)
         )
 
         ttk.Separator(obs_frame, orient="horizontal").grid(row=2, column=0, sticky="ew", pady=(0, 10))
@@ -5464,6 +5745,32 @@ class LinkBudgetApp:
         ttk.Label(gs_frame, text="Antenna Diameter GS [m]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.d_gs_entry = ttk.Entry(gs_frame, width=15)
         self.d_gs_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        for row, (label, attr, tip) in enumerate(
+            (
+                (
+                    "G/T Reference Diameter [m]",
+                    "gt_ref_diameter_entry",
+                    "Antenna diameter the G/T GS refers to. For a station with another diameter (5th column "
+                    "of ground_stations.txt, or Antenna Diameter GS) the G/T is scaled by 20 log10(D/Dref): "
+                    "same feed and receiver. Empty: no scaling.",
+                ),
+                ("G/T Reference Elevation [deg]", "gt_ref_el_entry", "Elevation at which the G/T GS is specified."),
+                (
+                    "System Noise Temperature [K]",
+                    "tsys_ref_entry",
+                    "At the G/T reference elevation, clear sky. With it the G/T GS follows the sky noise "
+                    "along the pass (lower at low elevation and in rain). Empty: constant G/T GS.",
+                ),
+                ("Radome Loss [dB]", "radome_loss_entry", "G/T degradation of the radome."),
+            ),
+            start=2,
+        ):
+            ttk.Label(gs_frame, text=label).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+            entry = ttk.Entry(gs_frame, width=15)
+            entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+            entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
+            _add_tooltip(entry, tip)
+            setattr(self, attr, entry)
         gs_frame.grid_columnconfigure(1, weight=1)
 
         # Atmospheric Attenuations frame
