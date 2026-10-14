@@ -2112,8 +2112,9 @@ class LinkBudgetApp:
 
     def show_antenna_pattern(self):
         popup = tk.Toplevel(self.root)
-        popup.title("Satellite Antenna Pattern")
-        popup.geometry("600x400")
+        source = self.pattern_file_var.get().removeprefix("Pattern: ")
+        popup.title(f"Satellite Antenna Pattern – {os.path.basename(source) or source}")
+        popup.geometry("640x440")
         popup.configure(bg=PALETTE["bg"])
 
         from calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
@@ -2122,7 +2123,7 @@ class LinkBudgetApp:
         ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
         ax.set_xlabel("Angle from nadir (boresight) [deg]", fontsize=8)
         ax.set_ylabel("Gain [dBi]", fontsize=8)
-        ax.set_title("Satellite Antenna Gain Pattern")
+        ax.set_title(f"Satellite Antenna Gain Pattern\n{source}", fontsize=8)
         ax.tick_params(axis="both", labelsize=8)
         ax.grid(True)
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
@@ -5355,8 +5356,9 @@ class LinkBudgetApp:
             "step in both directions. Downlink: EIRP = Tx chain of the Static LB · Downlink tab + "
             "the pattern gain towards the station (or EIRP SAT at the pattern peak when that tab "
             "uses an EIRP value). Uplink: G/T SAT at the pattern peak minus the roll-off. The "
-            "ground station antenna tracks the satellite: no pointing loss. At startup the pattern "
-            f"is read from '{ANTENNA_PATTERN_FILE}' (next to the program), if present.",
+            "ground station antenna tracks the satellite: no pointing loss. The pattern is read from "
+            f"the mission's antenna_pattern.txt or, when it has none, from '{ANTENNA_PATTERN_FILE}' "
+            "(next to the program). Show Antenna Gain plots the pattern in use.",
         ).pack(side=tk.LEFT, padx=(4, 0))
         load_antenna_btn = ttk.Button(
             antenna_row, text="Load Antenna Pattern...", command=self.load_antenna_pattern_file
@@ -5364,8 +5366,10 @@ class LinkBudgetApp:
         load_antenna_btn.pack(side=tk.LEFT, padx=(12, 6))
         _add_tooltip(
             load_antenna_btn,
-            "Load the satellite antenna gain pattern from a .csv/.txt file: two columns, angle "
-            "from the antenna boresight (nadir) in degrees and gain in dBi.",
+            "Load a satellite antenna gain pattern from a .csv/.txt file for this session: two columns, "
+            "angle from the antenna boresight (nadir) in degrees and gain in dBi, separated by commas, "
+            "semicolons, tabs or spaces. To keep it for a mission, save it as antenna_pattern.txt in the "
+            "mission folder.",
         )
         ttk.Button(antenna_row, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(side=tk.LEFT)
         self.pattern_file_var = tk.StringVar(value="Pattern: built-in example (no file loaded)")
