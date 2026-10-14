@@ -35,7 +35,7 @@ from version import APP_AUTHOR, APP_VERSION  # noqa: E402
 
 TITLE = "Satellite Link Budget Tool"
 SUBTITLE = "User Manual"
-ISSUE = "Issue 1.0"
+ISSUE = "Issue 1.1"
 
 # Colours of the application (MATLAB-like theme).
 HEADER = colors.HexColor("#1f2a36")
@@ -732,6 +732,25 @@ def content():
                                 "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "
                                 "used (66° from nadir at 3° and 628 km)."],
     ], [5, 11.5], mono_cols=(0,), bold_cols=())
+
+    story += H1("Command line")
+    story.append(P(
+        "<b>lbtool.py</b> runs the pass analysis and the statistics without the window, from the sources "
+        "(Python environment of the project), for the missions of satellites.json and with the same "
+        "calculations as the window. Examples:"))
+    story += BUL([
+        "<font face='Courier'>python lbtool.py missions</font>: lists the missions.",
+        "<font face='Courier'>python lbtool.py passes --mission AWS --station Svalbard --date 2026-10-14 "
+        "-o passes.csv</font>: contacts of the day with maximum elevation, minimum Eb/No and PFD margin; the "
+        "samples above the horizon go to the CSV file.",
+        "<font face='Courier'>python lbtool.py statistics --mission AWS --stations Svalbard,Kangerlussuaq "
+        "--start 2026-10-14 --days 30 --instruments 100 --hktm 4 -o stats.csv</font>: the statistics of the "
+        "Statistics tab over a station network, with the on-board data rates in kbps.",
+        "Options: <font face='Courier'>--download</font> (download the TLE first), "
+        "<font face='Courier'>--plane hh:mm</font> (orbital plane of a custom-orbit mission), "
+        "<font face='Courier'>--min-elevation</font>, <font face='Courier'>--required-ebno</font>, "
+        "<font face='Courier'>--required-margin</font>; <font face='Courier'>-h</font> lists them all.",
+    ])
 
     # 10 ------------------------------------------------------------------
     story += H1("Troubleshooting")
