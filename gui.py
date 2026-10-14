@@ -1670,6 +1670,8 @@ class LinkBudgetApp:
     # ------------------------------------------------------------------
 
     def exit_app(self):
+        """Close the program: the Exit button, Ctrl+Q and the window close button."""
+
         plt.close("all")
         self.root.quit()
         self.root.destroy()
@@ -4327,6 +4329,25 @@ class LinkBudgetApp:
             darkcolor=[("active", PALETTE["accent_light"])],
         )
 
+        # Button on the dark header (Exit).
+        style.configure(
+            "Header.TButton",
+            background=PALETTE["header_hover"],
+            foreground=PALETTE["header_fg"],
+            bordercolor=PALETTE["header_fg_muted"],
+            lightcolor=PALETTE["header_hover"],
+            darkcolor=PALETTE["header_hover"],
+            padding=(14, 5),
+            font=bold_font,
+        )
+        style.map(
+            "Header.TButton",
+            background=[("active", PALETTE["danger"])],
+            bordercolor=[("active", PALETTE["danger"])],
+            lightcolor=[("active", PALETTE["danger"])],
+            darkcolor=[("active", PALETTE["danger"])],
+        )
+
         # The action that needs running (no results yet, or inputs changed).
         style.configure(
             "Accent.TButton",
@@ -4484,6 +4505,12 @@ class LinkBudgetApp:
             text="Orbit prediction & downlink/uplink budget analysis",
             style="HeaderSub.TLabel",
         ).pack(anchor="w")
+        # Far right of the header: Exit (also Ctrl+Q and the window close button).
+        exit_button = ttk.Button(header, text="Exit", command=self.exit_app, style="Header.TButton")
+        exit_button.pack(side=tk.RIGHT, padx=(18, 0))
+        _add_tooltip(exit_button, "Close the program (Ctrl+Q).")
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
+        self.root.bind_all("<Control-q>", lambda _e: self.exit_app())
         # Right of the header: the project name above the licence.
         header_right = ttk.Frame(header, style="Header.TFrame")
         header_right.pack(side=tk.RIGHT, fill=tk.Y)
