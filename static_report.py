@@ -225,7 +225,11 @@ def pfd_rows(budget: Dict[str, Any], extra_info: Dict[str, Any]) -> List[PfdRow]
         rows.append(PfdRow("Occupied Bandwidth [kHz]", extra_info["occupied_bandwidth_khz"], digits=1))
     if "pfd_dbw_m2_per_4khz" in budget:
         rows.append(PfdRow("Power Flux Density in 4 kHz [dBW/m²/4kHz]", budget["pfd_dbw_m2_per_4khz"]))
-    if "pfd_limit_dbw_m2_4khz" in budget:
+    if "pfd_limit_high_dbw_m2_4khz" in budget:
+        rows.append(PfdRow("PFD Limit 0–5° El [dBW/m²/4kHz]", budget["pfd_limit_low_dbw_m2_4khz"]))
+        rows.append(PfdRow("PFD Limit 25–90° El [dBW/m²/4kHz]", budget["pfd_limit_high_dbw_m2_4khz"]))
+        rows.append(PfdRow("PFD Limit at this Elevation [dBW/m²/4kHz]", budget["pfd_limit_dbw_m2_4khz"]))
+    elif "pfd_limit_dbw_m2_4khz" in budget:
         rows.append(PfdRow("PFD Limit [dBW/m²/4kHz]", budget["pfd_limit_dbw_m2_4khz"]))
     if "pfd_margin_db" in budget:
         rows.append(PfdRow("PFD Margin [dB]", budget["pfd_margin_db"], threshold=0.0))

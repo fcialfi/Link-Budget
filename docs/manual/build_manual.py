@@ -441,6 +441,11 @@ def content():
         "<b>Date</b> (YYYY-MM-DD): the day analysed (00:00–24:00 UTC, 30 s step).",
         "<b>Ground Station</b>: the station of the pass analysis, from the catalogue; <b>Load Ground "
         "Stations…</b> reads another catalogue. The line below shows which file is in use.",
+        "<b>Min Elevation [deg]</b> (default 5°) and the station's <b>horizon mask</b>: a sample is in "
+        "contact only above both. The mask is the file horizon_masks\\&lt;station&gt;.txt next to the program "
+        "(two columns: azimuth from North and minimum elevation, linear between the points; see "
+        "horizon_masks\\README.txt); <b>Horizon Mask</b> plots it, and the line under the station gives the "
+        "file in use. Without a file only the minimum elevation applies.",
         "<b>Import Link Budget Parameters (.json)…</b>: fills all the parameters, the project name and the "
         "static tabs from a parameters file.",
     ])
@@ -576,7 +581,10 @@ def content():
         "8.3); the page shows the station's geomagnetic latitude and ionospheric zone as guidance for S4. Then "
         "other attenuations (shared; values ≥ 1 dB are flagged, as they may count the atmospheric losses "
         "twice), polarisation mismatch loss (entered, or computed from the Tx and Rx axial ratios when empty), "
-        "multipath losses and, on the downlink, the PFD limit."))
+        "multipath losses and, on the downlink, the PFD limits: <b>PFD Limit 0–5° El</b> and, optionally, "
+        "<b>PFD Limit 25–90° El</b>, linear in between as in the ITU Radio Regulations Art. 21 (without the "
+        "second one the first applies at every elevation). The static check uses the limit at its elevation; "
+        "the pass analysis checks the PFD at every sample against the same limits."))
     story += FIG("static_ul_rx", "Static LB · Uplink, Receiver page: G/T SAT from the pattern.")
     story.append(H3("Receiver"))
     story.append(P(
@@ -651,7 +659,10 @@ def content():
     story.append(P(
         "PFD = EIRP − 10·log10(4π·d²) [dBW/m²], without atmospheric loss (conservative). Referred to the 4 kHz "
         "bandwidth of the ITU limits: PFD(4 kHz) = PFD − 10·log10(B / 4 kHz), with the occupied bandwidth B. "
-        "PFD margin = limit − PFD(4 kHz) ≥ 0 dB (ITU Radio Regulations Art. 21)."))
+        "PFD margin = limit − PFD(4 kHz) ≥ 0 dB (ITU Radio Regulations Art. 21). The limit is the 0–5° value up "
+        "to 5° of elevation, the 25–90° value from 25°, linear in between. Along the passes the PFD is "
+        "computed at every sample with the EIRP of the pattern towards the station; the contact list gives the "
+        "minimum PFD margin of each pass and flags a pass that exceeds the limit."))
     story += H2("Statistical margins")
     story.append(P(
         "Each tolerance with adverse limit a = −adverse and favourable limit b = +favourable contributes a mean "

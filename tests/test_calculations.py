@@ -1144,3 +1144,40 @@ def test_ground_station_file_with_diameter(tmp_path):
     stations, diameters = calculations._read_ground_stations(str(gs_file))
     assert stations["B"] == (4.0, 5.0, 6.0)
     assert diameters == {"B": 2.4}
+
+
+# --------------------------------------------------------------------------
+# PFD limit versus elevation and horizon masks
+# --------------------------------------------------------------------------
+
+
+def test_pfd_limit_at_elevation():
+    assert calculations.pfd_limit_at_elevation(-154.0, -144.0, 3.0) == -154.0
+    assert calculations.pfd_limit_at_elevation(-154.0, -144.0, 15.0) == pytest.approx(-149.0)
+    assert calculations.pfd_limit_at_elevation(-154.0, -144.0, 60.0) == -144.0
+    assert calculations.pfd_limit_at_elevation(-154.0, None, 60.0) == -154.0
+    assert list(calculations.pfd_limit_at_elevation(-154.0, -144.0, np.array([5.0, 25.0]))) == [-154.0, -144.0]
+
+
+def test_static_budget_uses_the_pfd_limit_at_its_elevation():
+    kwargs = dict(
+        freq=1.707 * u.GHz, sat_altitude_km=600.0, lat_gs=78.2, lon_gs=15.6, alt_gs_km=0.0, d_gs=3.0,
+        eirp=10.0, gt=9.9, demod_loss=1.0, bitrate=3.57e6, overhead=2.3, other_att=0.0, pointing_loss_db=0.0,
+        link_availability_pct=99.9, include_scintillation=False, occupied_bandwidth_hz=3.57e6,
+        pfd_limit_dbw_m2_4khz=-154.0, pfd_limit_high_dbw_m2_4khz=-144.0,
+    )
+    low = calculations.calculate_fixed_elevation_link_budget(elevation_deg=3.0, **kwargs)
+    mid = calculations.calculate_fixed_elevation_link_budget(elevation_deg=15.0, **kwargs)
+    assert low["pfd_limit_dbw_m2_4khz"] == -154.0
+    assert mid["pfd_limit_dbw_m2_4khz"] == pytest.approx(-149.0)
+    assert mid["pfd_margin_db"] == pytest.approx(-149.0 - mid["pfd_dbw_m2_per_4khz"])
+
+
+def test_horizon_mask(tmp_path):
+    mask_file = tmp_path / "Station.txt"
+    mask_file.write_text("# az el\nAzimuth;Elevation\n350;4,0\n10;2,0\n180;8,0\n")
+    mask = calculations.load_horizon_mask(str(mask_file))
+    assert list(mask[0]) == [10.0, 180.0, 350.0]
+    assert calculations.mask_elevation_deg(0.0, mask) == pytest.approx(3.0)  # wraps around North
+    assert calculations.mask_elevation_deg(95.0, mask) == pytest.approx(5.0)
+    assert calculations.mask_elevation_deg(95.0, None) == 0.0
