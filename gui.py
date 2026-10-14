@@ -5244,7 +5244,7 @@ class LinkBudgetApp:
         self.tle_download_button.pack(side=tk.LEFT, padx=(6, 0))
         _add_tooltip(
             self.tle_download_button,
-            "Download the latest TLE of this NORAD ID (SatNOGS, CelesTrak, N2YO or TLE API, the first that answers) and save it in the tle.txt of the mission.",
+            "Download the latest TLE of this NORAD ID (from SatNOGS, or N2YO when SatNOGS does not have it) and save it in the tle.txt of the mission.",
         )
         self.tle_file_var = tk.StringVar(value="TLE: none loaded")
         self.tle_info_label = ttk.Label(
