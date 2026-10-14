@@ -712,7 +712,9 @@ class LinkBudgetApp:
         for key, entry in field_map.items():
             if key in payload and entry is not None:
                 entry.delete(0, tk.END)
-                entry.insert(0, str(payload[key]))
+                # null leaves the field empty (e.g. C/Io: no interferer).
+                if payload[key] is not None:
+                    entry.insert(0, str(payload[key]))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
             if isinstance(payload.get(section), dict):
@@ -4331,6 +4333,11 @@ class LinkBudgetApp:
         ttk.Label(sat_frame, text="C/Io [dBHz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
         self.CIo_entry = ttk.Entry(sat_frame, width=15)
         self.CIo_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        _add_tooltip(
+            self.CIo_entry,
+            "Carrier to interference density ratio C/Io, combined with C/No into C/(No+Io). "
+            "Leave empty when there is no interferer: the link budget then uses C/No alone.",
+        )
         sat_frame.grid_columnconfigure(1, weight=1)
 
         # Ground Station Parameters frame
