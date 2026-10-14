@@ -249,7 +249,7 @@ import pandas as pd
 import numpy as np
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
-from skyfield.api import load, EarthSatellite, wgs84
+import skyfield.api  # noqa: F401  (slow import, done behind the splash)
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import astropy.units as u
@@ -260,6 +260,7 @@ import calculations
 import tle_source
 import missions
 import pass_statistics
+import link_core
 import licensing
 import static_report
 
@@ -276,10 +277,7 @@ if os.environ.get("GUI_DEBUG"):
 
 
 from calculations import (
-    calculate_link_budget_parameters,
     calculate_fixed_elevation_link_budget,
-    atmospheric_attenuation,
-    prepare_topocentric_data,
     load_antenna_pattern,
     reload_ground_stations,
     MIN_ELEVATION_DEG,
@@ -299,30 +297,6 @@ def _get_optional_float(entry: ttk.Entry) -> float | None:
 
     text = entry.get().strip()
     return float(text) if text else None
-
-
-def _classify_pass_direction(sat, ts, start_time: datetime, end_time: datetime) -> str:
-    """Return ``A`` for ascending passes and ``D`` for descending passes."""
-
-    t_start = ts.utc(
-        start_time.year,
-        start_time.month,
-        start_time.day,
-        start_time.hour,
-        start_time.minute,
-        start_time.second,
-    )
-    t_end = ts.utc(
-        end_time.year,
-        end_time.month,
-        end_time.day,
-        end_time.hour,
-        end_time.minute,
-        end_time.second,
-    )
-    lat_start = sat.at(t_start).subpoint().latitude.degrees
-    lat_end = sat.at(t_end).subpoint().latitude.degrees
-    return "A" if lat_end >= lat_start else "D"
 
 
 class _Tooltip:
@@ -1040,50 +1014,6 @@ class LinkBudgetApp:
         text = self.gt_ref_diameter_entry.get().strip()
         return calculations.gt_diameter_scaling_db(d_gs, float(text)) if text else 0.0
 
-    def _pass_atmosphere(self, lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, elevations, gt_gs):
-        """Atmospheric attenuation and G/T GS at each elevation of the pass.
-
-        The ITU-R model is evaluated on an elevation grid and interpolated.
-        Returns (attenuation_db, gt_dbk, summary text).
-        """
-
-        grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
-            lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, include_scintillation=self.scint_var.get()
-        )
-        atm = calculations.interpolate_vs_elevation(np.asarray(elevations, dtype=float), grid, attenuation)
-        scaling = self._gt_scaling_db(d_gs)
-        gt_gs = gt_gs + scaling
-        model = self._gt_model()
-        if model is None:
-            gt = np.full_like(atm, gt_gs)
-            gt_text = f"G/T GS {gt_gs:g} dB/K at all elevations"
-        else:
-            sky_ref = calculations.gt_reference_sky_noise_k(
-                lat_gs, lon_gs, freq_ghz, d_gs, alt_gs_km, model["ref_elevation_deg"]
-            )
-            sky = calculations.sky_noise_temperature_k(atm)
-            gt = calculations.ground_station_gt_dbk(
-                gt_gs, model["tsys_ref_k"], sky_ref, sky, model["radome_loss_db"]
-            )
-            grid_gt = calculations.ground_station_gt_dbk(
-                gt_gs,
-                model["tsys_ref_k"],
-                sky_ref,
-                calculations.sky_noise_temperature_k(attenuation),
-                model["radome_loss_db"],
-            )
-            gt_text = (
-                f"G/T GS {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, grid_gt):.2f} dB/K "
-                f"at {MIN_ELEVATION_DEG:g}°, {grid_gt[-1]:.2f} at 90°"
-            )
-        if scaling:
-            gt_text += f" ({d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
-        summary = (
-            f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, attenuation):.3f} "
-            f"at {MIN_ELEVATION_DEG:g}° El, {attenuation[-1]:.3f} at 90° (per sample)\n{gt_text}"
-        )
-        return atm, gt, summary
-
     def _set_link_budget_enabled(self, enabled: bool) -> None:
         """Enable the link budget tabs, or leave only the contact analysis."""
 
@@ -1563,7 +1493,7 @@ class LinkBudgetApp:
         Downlink and Uplink tabs.
         """
 
-        kwargs: dict = {"apply_antenna_pattern": True}
+        used: dict = {"downlink": None, "uplink": None}
         directions = (
             ("Downlink", "downlink", self.include_static_dl_var, self.dl_losses_var, ""),
             ("Uplink", "uplink", self.include_static_ul_var, self.ul_losses_var, "ul_"),
@@ -1595,7 +1525,6 @@ class LinkBudgetApp:
             if values is None:
                 continue
             if title == "Downlink" and values["tx_chain_dbw"] is not None:
-                kwargs["tx_chain_dbw"] = values["tx_chain_dbw"]
                 antenna = (
                     f"EIRP: Tx chain of the Static LB · Downlink tab ({values['tx_chain_dbw']:.2f} dBW: "
                     "power − circuit − VSWR losses) + satellite antenna gain from the pattern at each "
@@ -1607,9 +1536,7 @@ class LinkBudgetApp:
                 ("multipath", values["multipath_loss_db"]),
             ]
             total = sum(value for _name, value in parts)
-            kwargs[f"{prefix}link_losses_db"] = total
-            kwargs[f"{prefix}modulation_degradation_db"] = values["modulation_degradation_db"]
-            kwargs[f"{prefix}formatting_overhead"] = values["formatting_overhead"]
+            used[key] = values
             text_var.set(
                 f"{antenna}\n"
                 + "Link losses: "
@@ -1619,7 +1546,7 @@ class LinkBudgetApp:
                 + "Eb/No referred to the transfer frame bit rate (formatting factor "
                 + f"{values['formatting_overhead']:.6g})."
             )
-        return kwargs
+        return link_core.pass_loss_kwargs(used["downlink"], used["uplink"])
 
     def _min_elevation(self) -> float:
         """Minimum elevation of a contact (Observation Settings), in degrees."""
@@ -1649,18 +1576,6 @@ class LinkBudgetApp:
             f"Horizon mask: {path}" if path else
             f"Horizon mask: none for {name} (put horizon_masks\\{name}.txt next to the program to add one)"
         )
-
-    def _visibility(self, sat, gs, sky_times, altitudes, gs_name):
-        """Samples in contact: above the minimum elevation and the station's horizon mask.
-
-        Returns (visible, azimuth_deg, required_elevation_deg).
-        """
-
-        min_el = self._min_elevation()
-        _path, mask = self._station_mask(gs_name)
-        azimuth = calculations.topocentric_azimuth_deg(sat, gs, sky_times)
-        required = np.maximum(min_el, calculations.mask_elevation_deg(azimuth, mask))
-        return np.asarray(altitudes) >= required, azimuth, required
 
     def show_horizon_mask(self) -> None:
         """Plot the horizon mask of the selected station with the minimum elevation."""
@@ -1694,41 +1609,6 @@ class LinkBudgetApp:
         canvas = FigureCanvasTkAgg(fig, master=popup)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def _add_pfd_columns(self) -> None:
-        """PFD in 4 kHz and its margin on the limit at every sample of the pass analysis.
-
-        The limits come from the Static LB · Downlink tab (0–5° and 25–90°,
-        linear between), the occupied bandwidth from the coded bit rate,
-        roll-off and spectral efficiency of the Downlink tab. Nothing is added
-        when one of them is missing.
-        """
-
-        self.pfd_note = ""
-        provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS["downlink"])
-        try:
-            limits = provider() if provider else None
-            rolloff = _get_optional_float(self.rolloff_entry)
-            spectral_eff = _get_optional_float(self.spectral_eff_entry)
-            bitrate_mbps = float(self.bitrate_entry.get())
-        except ValueError:
-            return
-        if self.df_all.empty or not limits or limits.get("pfd_limit") is None:
-            self.pfd_note = "PFD not checked: no PFD limit in the Static LB · Downlink tab."
-            return
-        if rolloff is None or not spectral_eff:
-            self.pfd_note = "PFD not checked: set Roll-off and Spectral Efficiency."
-            return
-        bandwidth_hz = bitrate_mbps * 1e6 * (1 + rolloff) / spectral_eff
-        slant_m = self.df_all["Slant Range (km)"].to_numpy(dtype=float) * 1000.0
-        eirp = self.df_all["EIRP (dBW)"].to_numpy(dtype=float)
-        pfd = eirp - 10 * np.log10(4 * np.pi) - 20 * np.log10(slant_m) - 10 * np.log10(bandwidth_hz / 4000.0)
-        limit = calculations.pfd_limit_at_elevation(
-            limits["pfd_limit"], limits.get("pfd_limit_high"), self.df_all["Elevation (°)"].to_numpy(dtype=float)
-        )
-        self.df_all["PFD (dBW/m²/4kHz)"] = np.round(pfd, 2)
-        self.df_all["PFD Limit (dBW/m²/4kHz)"] = np.round(limit, 2)
-        self.df_all["PFD Margin (dB)"] = np.round(limit - pfd, 2)
 
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""
@@ -1915,11 +1795,10 @@ class LinkBudgetApp:
             raise ValueError("Select at least one ground station.")
         if self.current_sat is not None and self.current_sat.custom_orbit:
             orbit = self._custom_orbit()
-            when = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
             tle = tle_source.synthetic_tle(
                 orbit["altitude_km"],
                 orbit["ltan_h"],
-                when,
+                link_core.utc_midnight(start),
                 orbit["inclination_deg"],
                 eccentricity=orbit["eccentricity"],
                 arg_perigee_deg=orbit["arg_perigee_deg"],
@@ -1930,72 +1809,52 @@ class LinkBudgetApp:
         if not (tle1 and tle2):
             raise ValueError("No TLE: load or download one in the Orbit & Passes tab.")
 
-        def _number(entry_or_var, label, optional=False):
-            text = entry_or_var.get().strip()
+        def _number(var, label):
+            text = var.get().strip()
             if not text:
-                if optional:
-                    return None
-                raise ValueError(f"'{label}' is empty.")
+                return None
             try:
                 return float(text)
             except ValueError:
                 raise ValueError(f"'{label}' is not a number.") from None
 
-        stations = []
-        for name in names:
-            lat, lon, alt_m = calculations.GROUND_STATIONS[name]
-            _path, mask = self._station_mask(name)
-            stations.append({"name": name, "lat": lat, "lon": lon, "alt_m": alt_m, "mask": mask})
         inputs = {
             "start": start,
             "days": days,
-            "stations": stations,
+            "stations": [self._station(name) for name in names],
             "tle": (tle1, tle2),
             "min_el": self._min_elevation(),
+            "link": None,
             "budget": None,
         }
         if not self.link_budget_enabled:
             return inputs
 
+        link = self._link_inputs()
         provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS["downlink"])
         static_values = provider() if provider else {}
-        required_ebno = self.stats_ebno_var.get().strip() or static_values.get("required_ebno_db")
-        required_margin = self.stats_margin_var.get().strip() or static_values.get("required_margin_db")
-        if required_ebno in (None, ""):
+        required_ebno = _number(self.stats_ebno_var, "Required Eb/No [dB]")
+        if required_ebno is None:
+            required_ebno = static_values.get("required_ebno_db")
+        required_margin = _number(self.stats_margin_var, "Required Margin [dB]")
+        if required_margin is None:
+            required_margin = static_values.get("required_margin_db")
+        if required_ebno is None:
             raise ValueError("Enter the Required Eb/No (here or in the Static LB · Downlink tab).")
-        default_d_gs = _number(self.d_gs_entry, "Antenna Diameter GS (Downlink tab)")
-        gt_gs = _number(self.gt_gs_entry, "G/T GS (Downlink tab)")
-        for station in stations:
-            station["d_gs"] = calculations.GROUND_STATION_DIAMETERS.get(station["name"]) or default_d_gs
-            station["gt_gs"] = gt_gs + self._gt_scaling_db(station["d_gs"])
-        cio = _number(self.CIo_entry, "C/Io (Downlink tab)", optional=True)
-        bitrate = _number(self.bitrate_entry, "Coded Bit Rate (Downlink tab)") * 1e6
-        overhead = _number(self.overhead_entry, "Overhead (Downlink tab)")
         flows = {
-            "instruments": _number(self.stats_instrument_var, "Instrument Data [kbps]", optional=True),
-            "HKTM": _number(self.stats_hktm_var, "HKTM Rate [kbps]", optional=True),
-            "other": _number(self.stats_other_var, "Other Data [kbps]", optional=True),
+            "instruments": _number(self.stats_instrument_var, "Instrument Data [kbps]"),
+            "HKTM": _number(self.stats_hktm_var, "HKTM Rate [kbps]"),
+            "other": _number(self.stats_other_var, "Other Data [kbps]"),
         }
         if any(v is not None and v < 0 for v in flows.values()):
             raise ValueError("The on-board data rates must be positive.")
         given = {name: value for name, value in flows.items() if value}
-        generated_bps = sum(given.values()) * 1e3 if given else None
+        inputs["link"] = link
         inputs["budget"] = {
-            "freq_ghz": _number(self.freq_entry, "Frequency (Downlink tab)"),
-            "p": 100.0 - _number(self.LA_entry, "Link Availability (Downlink tab)"),
-            "other_att": _number(self.other_att_entry, "Other Attenuations", optional=True) or 0.0,
-            "eirp_sat": _number(self.eirp_sat_entry, "EIRP SAT (Downlink tab)"),
-            "gt_model": self._gt_model(),
-            "demod_loss": _number(self.demod_loss_entry, "Demodulator Loss (Downlink tab)"),
-            "bitrate": bitrate,
-            "overhead": overhead,
-            "cisat_lin": 10 ** (cio / 10.0) if cio is not None else None,
-            "scintillation": self.scint_var.get(),
-            "loss_kwargs": self._pass_loss_settings(),
             "required_ebno": float(required_ebno),
-            "required_margin": float(required_margin) if required_margin not in (None, "") else 0.0,
-            "info_bitrate_bps": bitrate / overhead,
-            "generated_bps": generated_bps,
+            "required_margin": float(required_margin) if required_margin is not None else 0.0,
+            "info_bitrate_bps": link.info_bitrate_bps,
+            "generated_bps": sum(given.values()) * 1e3 if given else None,
             "flows_kbps": given,
         }
         return inputs
@@ -2004,64 +1863,28 @@ class LinkBudgetApp:
     def _statistics_day_function(inputs: dict):
         """The per-day sample function of the statistics (pure: runs in a worker thread)."""
 
-        ts = load.timescale()
-        sat = EarthSatellite(*inputs["tle"], "SAT", ts)
+        analyses = [
+            link_core.PassAnalysis(inputs["tle"], station, inputs["link"], inputs["min_el"])
+            for station in inputs["stations"]
+        ]
         budget = inputs["budget"]
-        step_s = 30
-        freq = (budget["freq_ghz"] if budget else 1.0) * u.GHz
-        stations = []
-        for st in inputs["stations"]:
-            gs = wgs84.latlon(st["lat"], st["lon"], elevation_m=st["alt_m"])
-            entry = {"name": st["name"], "gs": gs, "mask": st["mask"], "alt_km": st["alt_m"] / 1000.0}
-            if budget:
-                grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
-                    st["lat"], st["lon"], budget["freq_ghz"], budget["p"], st["d_gs"], entry["alt_km"],
-                    include_scintillation=budget["scintillation"],
-                )
-                model = budget["gt_model"]
-                if model is None:
-                    gt_grid = np.full_like(attenuation, st["gt_gs"])
-                else:
-                    sky_ref = calculations.gt_reference_sky_noise_k(
-                        st["lat"], st["lon"], budget["freq_ghz"], st["d_gs"], entry["alt_km"],
-                        model["ref_elevation_deg"],
-                    )
-                    gt_grid = calculations.ground_station_gt_dbk(
-                        st["gt_gs"], model["tsys_ref_k"], sky_ref,
-                        calculations.sky_noise_temperature_k(attenuation), model["radome_loss_db"],
-                    )
-                entry.update(grid=grid, attenuation=attenuation, gt_grid=gt_grid, d_gs=st["d_gs"])
-            stations.append(entry)
-
-        def station_samples(st, day_start, times, sky_times):
-            gs = st["gs"]
-            altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(sat, gs, sky_times, freq)
-            azimuth = calculations.topocentric_azimuth_deg(sat, gs, sky_times)
-            required = np.maximum(inputs["min_el"], calculations.mask_elevation_deg(azimuth, st["mask"]))
-            visible = altitudes >= required
-            margin = None
-            if budget:
-                margin = np.full(len(times), np.nan)
-                atm = calculations.interpolate_vs_elevation(altitudes, st["grid"], st["attenuation"])
-                gt = calculations.interpolate_vs_elevation(altitudes, st["grid"], st["gt_grid"])
-                for i in np.flatnonzero(visible):
-                    params = calculate_link_budget_parameters(
-                        sky_times[i], sat, gs, freq, budget["p"], st["d_gs"], st["alt_km"],
-                        budget["eirp_sat"], float(gt[i]), budget["demod_loss"], budget["bitrate"],
-                        budget["overhead"], budget["cisat_lin"], budget["other_att"], float(atm[i]),
-                        altitudes[i], slant_ranges[i], dopplers[i], off_boresight[i],
-                        **budget["loss_kwargs"],
-                    )
-                    margin[i] = params["Eb/No (dB)"] - budget["required_ebno"]
-            return pass_statistics.DaySamples(day_start, np.asarray(altitudes), visible, margin)
 
         def day_samples(day_start):
-            times = [day_start + timedelta(seconds=step_s * i) for i in range(86400 // step_s)]
-            sky_times = ts.from_datetimes(times)
-            per_station = {st["name"]: station_samples(st, day_start, times, sky_times) for st in stations}
+            per_station = {}
+            for analysis in analyses:
+                frame = analysis.day(day_start, budget="visible")
+                margin = None
+                if budget:
+                    margin = frame["Eb/No (dB)"].to_numpy(dtype=float) - budget["required_ebno"]
+                per_station[analysis.station.name] = pass_statistics.DaySamples(
+                    day_start,
+                    frame["Elevation (°)"].to_numpy(dtype=float),
+                    frame["Visible"].to_numpy(dtype=bool),
+                    margin,
+                )
             return pass_statistics.combine_stations(per_station)
 
-        return day_samples, step_s
+        return day_samples, link_core.STEP_S
 
     def compute_statistics(self) -> None:
         """Run the statistics in a worker thread, with a progress bar."""
@@ -2074,7 +1897,7 @@ class LinkBudgetApp:
         self.stats_button.state(["disabled"])
         self.stats_export_button.state(["disabled"])
         state = {"done": 0, "total": inputs["days"]}
-        names = ", ".join(st["name"] for st in inputs["stations"])
+        names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
         def _progress(done, total):
@@ -2122,8 +1945,8 @@ class LinkBudgetApp:
         budget = inputs["budget"]
         sat_name = self.current_sat.name if self.current_sat else "satellite"
         end = inputs["start"] + timedelta(days=inputs["days"] - 1)
-        names = " + ".join(st["name"] for st in inputs["stations"])
-        masks = [st["name"] for st in inputs["stations"] if st["mask"] is not None]
+        names = " + ".join(st.name for st in inputs["stations"])
+        masks = [st.name for st in inputs["stations"] if st.mask is not None]
         self.stats_status_var.set(
             f"{sat_name} over {names}, {inputs['start']} to {end}, min elevation {inputs['min_el']:g}°"
             + (f", horizon mask of {', '.join(masks)}" if masks else "")
@@ -2263,18 +2086,14 @@ class LinkBudgetApp:
     # Main Analysis Function
     # ------------------------------------------------------------------
 
-    def run_analysis(self):
-        """Run a full orbital and link budget analysis using GUI inputs.
+    def run_analysis(self, keep_selection: bool = False):
+        """Run the pass analysis of the date with the inputs of the window.
 
-        The function reads TLE data, ground station parameters and link
-        budget settings from the GUI fields. It then propagates the orbit
-        for a 24 hour period with a 30 second step, computes the link
-        budget for each step using :func:`calculate_link_budget_parameters`
-        and stores the results in :attr:`df_all`. Detected contact windows
-        are populated in :attr:`contact_windows` and displayed in the GUI.
-
-        No parameters are accepted; all values are taken from the GUI
-        widgets. The method updates instance state and returns ``None``.
+        Propagates the orbit over the day (30 s step), finds the contacts
+        (above the minimum elevation and the station's horizon mask) and,
+        for a satellite with link budget parameters, computes the link
+        budget along the passes (:mod:`link_core`). The results go to
+        :attr:`df_all` and :attr:`contact_windows` and are shown.
         """
 
         if self.current_sat is not None and self.current_sat.custom_orbit:
@@ -2285,191 +2104,44 @@ class LinkBudgetApp:
         tle2 = self.tle2_entry.get().strip()
         gs_name = self.gs_var.get()
         date_str = self.date_entry.get().strip()
-
         if not all([tle1, tle2, gs_name, date_str]):
             messagebox.showerror("Error", "All TLE, Ground Station, and Date fields must be filled.")
             return
-
         try:
             obs_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         except ValueError:
             messagebox.showerror("Error", "Invalid date format. Please use YYYY-MM-DD.")
             return
-
-        if not self.link_budget_enabled:
-            self._run_contact_analysis(tle1, tle2, gs_name, obs_date)
-            return
-
         try:
-            freq = float(self.freq_entry.get()) * u.GHz
-            link_availability = float(self.LA_entry.get())
-            p = 100.0 - link_availability
-            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
-            other_att = float(self.other_att_entry.get() or 0.0)
-            eirp_sat = float(self.eirp_sat_entry.get())
-            gt_gs = float(self.gt_gs_entry.get())
-            cisat_db = float(self.CIo_entry.get()) if self.CIo_entry.get().strip() else None
-            cisat_lin = 10 ** (cisat_db / 10.0) if cisat_db is not None else None
-            bitrate = float(self.bitrate_entry.get()) * 1e6
-            demod_loss = float(self.demod_loss_entry.get())
-            overhead = float(self.overhead_entry.get())
-            uplink_freq_val = _get_optional_float(self.uplink_freq_entry)
-            uplink_freq = uplink_freq_val * u.GHz if uplink_freq_val is not None else None
-            eirp_gs = _get_optional_float(self.eirp_gs_entry)
-            gt_sat = _get_optional_float(self.gt_sat_entry)
-            demod_loss_ul = _get_optional_float(self.demod_loss_ul_entry)
-            other_att_ul = _get_optional_float(self.other_att_ul_entry)
-            uplink_bitrate_val = (
-                _get_optional_float(self.uplink_bitrate_entry) if self.uplink_bitrate_entry else None
-            )
-            uplink_overhead = (
-                _get_optional_float(self.uplink_overhead_entry) if self.uplink_overhead_entry else None
-            )
-        except ValueError as e:
-            messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
+            station = self._station(gs_name)
+            link = self._link_inputs() if self.link_budget_enabled else None
+            analysis = link_core.PassAnalysis((tle1, tle2), station, link, self._min_elevation())
+        except ValueError as exc:
+            messagebox.showerror("Input Error", str(exc))
             return
-
-        lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
-        loss_kwargs = self._pass_loss_settings()
-        alt_gs_km = alt_gs_m / 1000.0
-
-        ts = load.timescale()
-        try:
-            sat = EarthSatellite(tle1, tle2, "SAT", ts)
-        except Exception as e:
-            messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
-            return
-        gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-
-        start_time = datetime(obs_date.year, obs_date.month, obs_date.day, 0, 0, 0, tzinfo=timezone.utc)
-        times = [start_time + timedelta(seconds=30 * i) for i in range(2880)]
-        sky_times = ts.utc(
-            [t.year for t in times],
-            [t.month for t in times],
-            [t.day for t in times],
-            [t.hour for t in times],
-            [t.minute for t in times],
-            [t.second for t in times],
-        )
-
-        altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
-            sat, gs, sky_times, freq
-        )
-        try:
-            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
-                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
-            )
-        except ValueError as e:
-            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
-            return
-        uplink_atm_by_sample = None
-        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
-                lat_gs,
-                lon_gs,
-                uplink_freq.to(u.GHz).value,
-                p,
-                d_gs,
-                alt_gs_km,
-                include_scintillation=self.scint_var.get(),
-            )
-            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
-                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
-            )
-        self.atm_label_var.set(atm_summary)
-        try:
-            visible, azimuth, required_el = self._visibility(sat, gs, sky_times, altitudes, gs_name)
         except Exception as exc:
-            messagebox.showerror("Input Error", f"Min Elevation / horizon mask: {exc}")
+            messagebox.showerror("TLE Error", f"Invalid TLE data: {exc}.")
             return
-        results_list = []
-        self.contact_windows.clear()
-        in_contact = False
-        contact_start_time = None
 
-        for i, t_utc_dt in enumerate(times):
-            elev = altitudes[i]
-            t_sky = sky_times[i]
-            params = calculate_link_budget_parameters(
-                t_sky,
-                sat,
-                gs,
-                freq,
-                p,
-                d_gs,
-                alt_gs_km,
-                eirp_sat,
-                float(gt_by_sample[i]),
-                demod_loss,
-                bitrate,
-                overhead,
-                cisat_lin,
-                other_att,
-                float(atm_by_sample[i]),
-                elev,
-                slant_ranges[i],
-                dopplers[i],
-                off_boresight[i],
-                uplink_freq,
-                eirp_gs,
-                gt_sat,
-                demod_loss_ul,
-                other_att_ul,
-                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
-                uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
-                uplink_overhead,
-                **loss_kwargs,
-            )
-            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
-            rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
-            for key in [
-                "Elevation (°)",
-                "Slant Range (km)",
-                "Path Loss (dB)",
-                "Atmospheric Att (dB)",
-                "G/T GS (dB/K)",
-                "S/C Antenna Gain (dBi)",
-                "EIRP (dBW)",
-                "S/C Antenna Loss (dB)",
-                "Off Boresight Angle (°)",
-                "Link Losses (dB)",
-                "UL Link Losses (dB)",
-                "Rx Power (dBW)",
-                "C/(No+Io) (dBHz)",
-                "Eb/No (dB)",
-                "Doppler Shift (kHz)",
-                "UL Path Loss (dB)",
-                "UL Atmospheric Att (dB)",
-                "UL S/C Antenna Loss (dB)",
-                "UL Rx Power (dBW)",
-                "UL C/No (dBHz)",
-                "UL Eb/No (dB)",
-            ]:
-                if params.get(key) is not None:
-                    decimals = rounding_rules.get(key, 2)
-                    params[key] = round(params[key], decimals)
-            results_list.append(params)
-
-            is_visible_now = bool(visible[i])
-            if is_visible_now and not in_contact:
-                contact_start_time = t_utc_dt
-                in_contact = True
-            elif not is_visible_now and in_contact:
-                contact_end_time = t_utc_dt
-                pass_direction = _classify_pass_direction(sat, ts, contact_start_time, contact_end_time)
-                self.contact_windows.append((contact_start_time, contact_end_time, pass_direction))
-                in_contact = False
-        if in_contact:
-            pass_direction = _classify_pass_direction(sat, ts, contact_start_time, times[-1])
-            self.contact_windows.append((contact_start_time, times[-1], pass_direction))
-
-        self.df_all = pd.DataFrame(results_list)
-        self.df_all["Azimuth (°)"] = np.round(azimuth, 2)
-        self.df_all["Min Elevation (°)"] = np.round(required_el, 2)
-        self._add_pfd_columns()
+        previous = self.contact_listbox.curselection() if keep_selection else ()
+        try:
+            self.df_all = analysis.day(obs_date)
+            self.contact_windows = analysis.contacts(self.df_all)
+            self.atm_label_var.set(analysis.atmosphere_summary() if link else "")
+        except ValueError as exc:
+            messagebox.showerror("Input Error", str(exc))
+            return
         self.display_contacts(self.contact_windows)
-        if self.contact_windows:
-            self.contact_listbox.selection_set(0)
+        if not self.link_budget_enabled:
+            self.selected_pass_var.set(
+                f"{len(self.contact_windows)} passes above the minimum elevation and the horizon mask "
+                "(contact analysis only)"
+                if self.contact_windows
+                else "no pass above the minimum elevation on this date"
+            )
+        elif self.contact_windows:
+            index = previous[0] if previous and previous[0] < len(self.contact_windows) else 0
+            self.contact_listbox.selection_set(index)
             self.on_contact_select(None)
         else:
             self.clear_plot_and_table()
@@ -2477,74 +2149,97 @@ class LinkBudgetApp:
 
         self.analysis_needs_refresh = False
         self.start_refresh_button.config(style="TButton")
-        self.recalc_button.config(state="!disabled")
+        if self.link_budget_enabled:
+            self.recalc_button.config(state="!disabled")
 
-    def _run_contact_analysis(self, tle1: str, tle2: str, gs_name: str, obs_date) -> None:
-        """Passes of a satellite without link budget parameters: geometry only."""
+    def _station(self, gs_name: str) -> "link_core.Station":
+        """The ground station of the analysis: catalogue position, diameter and horizon mask."""
 
-        lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
-        ts = load.timescale()
+        if gs_name not in calculations.GROUND_STATIONS:
+            raise ValueError("Select a valid ground station.")
+        lat, lon, alt_m = calculations.GROUND_STATIONS[gs_name]
+        d_text = self.d_gs_entry.get().strip()
+        d_gs = calculations.GROUND_STATION_DIAMETERS.get(gs_name) or (float(d_text) if d_text else 3.0)
+        _path, mask = self._station_mask(gs_name)
+        return link_core.Station(gs_name, lat, lon, alt_m, d_gs=d_gs, mask=mask)
+
+    def _link_inputs(self) -> "link_core.LinkInputs":
+        """The link budget inputs of the Downlink and Uplink tabs (and of the static tabs they use).
+
+        Raises ValueError naming the field that is not valid.
+        """
+
+        def _required(entry, label):
+            text = entry.get().strip()
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' is {'empty' if not text else 'not a number'}.") from None
+
+        def _optional(entry, label):
+            return _required(entry, label) if entry is not None and entry.get().strip() else None
+
+        bitrate = _required(self.bitrate_entry, "Coded Bit Rate [Mbps]") * 1e6
+        uplink = None
+        ul_freq = _optional(self.uplink_freq_entry, "Uplink Frequency [GHz]")
+        eirp_gs = _optional(self.eirp_gs_entry, "EIRP GS [dBW]")
+        gt_sat = _optional(self.gt_sat_entry, "G/T SAT [dB/K]")
+        if ul_freq is not None and eirp_gs is not None and gt_sat is not None:
+            ul_bitrate = _optional(self.uplink_bitrate_entry, "Uplink Bit Rate [Mbps]")
+            uplink = link_core.UplinkInputs(
+                freq_ghz=ul_freq,
+                eirp_gs=eirp_gs,
+                gt_sat=gt_sat,
+                demod_loss=_optional(self.demod_loss_ul_entry, "Demodulator Loss SAT [dB]"),
+                other_att=_optional(self.other_att_ul_entry, "Uplink Other Attenuations [dB]"),
+                bitrate_bps=ul_bitrate * 1e6 if ul_bitrate is not None else None,
+                overhead=_optional(self.uplink_overhead_entry, "Uplink Overhead"),
+            )
+        pfd_low = pfd_high = bandwidth = None
+        self.pfd_note = ""
+        provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS["downlink"])
         try:
-            sat = EarthSatellite(tle1, tle2, "SAT", ts)
-        except Exception as e:
-            messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
-            return
-        gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-        start_time = datetime(obs_date.year, obs_date.month, obs_date.day, tzinfo=timezone.utc)
-        times = [start_time + timedelta(seconds=30 * i) for i in range(2880)]
-        sky_times = ts.from_datetimes(times)
-        altitudes, slant_ranges, _, _ = prepare_topocentric_data(sat, gs, sky_times, 1.0 * u.GHz)
-        self.df_all = pd.DataFrame(
-            {
-                "Time (UTC)": times,
-                "Elevation (°)": np.round(altitudes, 2),
-                "Slant Range (km)": np.round(slant_ranges, 2),
-            }
+            static_values = provider() if provider else None
+        except ValueError:
+            static_values = None
+        rolloff = _optional(self.rolloff_entry, "Roll-off Factor")
+        spectral_eff = _optional(self.spectral_eff_entry, "Spectral Efficiency [bps/Hz]")
+        if static_values and static_values.get("pfd_limit") is not None:
+            if rolloff is not None and spectral_eff:
+                pfd_low, pfd_high = static_values["pfd_limit"], static_values.get("pfd_limit_high")
+                bandwidth = bitrate * (1 + rolloff) / spectral_eff
+            else:
+                self.pfd_note = "PFD not checked: set Roll-off and Spectral Efficiency."
+        else:
+            self.pfd_note = "PFD not checked: no PFD limit in the Static LB · Downlink tab."
+        ref_diameter = self.gt_ref_diameter_entry.get().strip()
+        return link_core.LinkInputs(
+            freq_ghz=_required(self.freq_entry, "Frequency [GHz]"),
+            link_availability_pct=_required(self.LA_entry, "Link Availability [%]"),
+            eirp_sat=_required(self.eirp_sat_entry, "EIRP SAT [dBW]"),
+            gt_gs=_required(self.gt_gs_entry, "G/T GS [dB/K]"),
+            demod_loss=_required(self.demod_loss_entry, "Demodulator Loss [dB]"),
+            bitrate_bps=bitrate,
+            overhead=_required(self.overhead_entry, "Overhead (coded / info)"),
+            other_att=_optional(self.other_att_entry, "Other Attenuations [dB]") or 0.0,
+            cio_db=_optional(self.CIo_entry, "C/Io [dBHz]"),
+            scintillation=self.scint_var.get(),
+            gt_ref_diameter_m=float(ref_diameter) if ref_diameter else None,
+            gt_model=self._gt_model(),
+            loss_kwargs=self._pass_loss_settings(),
+            uplink=uplink,
+            pfd_limit_low=pfd_low,
+            pfd_limit_high=pfd_high,
+            occupied_bandwidth_hz=bandwidth,
         )
-        self.contact_windows.clear()
-        try:
-            visible, azimuth, required = self._visibility(sat, gs, sky_times, altitudes, gs_name)
-        except Exception as exc:
-            messagebox.showerror("Input Error", f"Min Elevation / horizon mask: {exc}")
-            return
-        self.df_all["Azimuth (°)"] = np.round(azimuth, 2)
-        self.df_all["Min Elevation (°)"] = np.round(required, 2)
-        start = None
-        for i, now_visible in enumerate(visible):
-            if now_visible and start is None:
-                start = times[i]
-            elif not now_visible and start is not None:
-                self.contact_windows.append((start, times[i], _classify_pass_direction(sat, ts, start, times[i])))
-                start = None
-        if start is not None:
-            self.contact_windows.append((start, times[-1], _classify_pass_direction(sat, ts, start, times[-1])))
-        self.atm_label_var.set("")
-        self.display_contacts(self.contact_windows)
-        self.selected_pass_var.set(
-            f"{len(self.contact_windows)} passes above the minimum elevation and the horizon mask "
-            "(contact analysis only)"
-            if self.contact_windows
-            else "no pass above the minimum elevation on this date"
-        )
-        self.analysis_needs_refresh = False
-        self.start_refresh_button.config(style="TButton")
 
     # ------------------------------------------------------------------
     # Recalculate Link Budget Function
     # ------------------------------------------------------------------
 
     def recalculate_link_budget(self):
-        """Recompute the link budget for previously generated contact times.
+        """Recompute the link budget of the day with the current parameters, keeping the selected pass."""
 
-        This method does not re-run the orbital propagation. Instead it
-        uses the existing time stamps stored in :attr:`df_all` and
-        recalculates the link budget with the current parameters from the
-        GUI. The updated results replace the contents of :attr:`df_all` and
-        the plots/tables shown in the interface are refreshed accordingly.
-
-        All configuration values are taken from the GUI widgets and no
-        value is returned.
-        """
         if not self.link_budget_enabled:
             return
         if self.df_all.empty:
@@ -2553,162 +2248,7 @@ class LinkBudgetApp:
         if self.analysis_needs_refresh:
             messagebox.showwarning("Warning", "Please refresh the analysis first.")
             return
-        try:
-            freq = float(self.freq_entry.get()) * u.GHz
-            link_availability = float(self.LA_entry.get())
-            p = 100.0 - link_availability
-            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
-            other_att = float(self.other_att_entry.get() or 0.0)
-            eirp_sat = float(self.eirp_sat_entry.get())
-            gt_gs = float(self.gt_gs_entry.get())
-            cisat_db = float(self.CIo_entry.get()) if self.CIo_entry.get().strip() else None
-            cisat_lin = 10 ** (cisat_db / 10.0) if cisat_db is not None else None
-            bitrate = float(self.bitrate_entry.get()) * 1e6
-            demod_loss = float(self.demod_loss_entry.get())
-            overhead = float(self.overhead_entry.get())
-            uplink_freq_val = _get_optional_float(self.uplink_freq_entry)
-            uplink_freq = uplink_freq_val * u.GHz if uplink_freq_val is not None else None
-            eirp_gs = _get_optional_float(self.eirp_gs_entry)
-            gt_sat = _get_optional_float(self.gt_sat_entry)
-            demod_loss_ul = _get_optional_float(self.demod_loss_ul_entry)
-            other_att_ul = _get_optional_float(self.other_att_ul_entry)
-            uplink_bitrate_val = (
-                _get_optional_float(self.uplink_bitrate_entry) if self.uplink_bitrate_entry else None
-            )
-            uplink_overhead = (
-                _get_optional_float(self.uplink_overhead_entry) if self.uplink_overhead_entry else None
-            )
-        except ValueError as e:
-            messagebox.showerror("Input Error", f"Invalid numerical input: {e}.")
-            return
-
-        gs_name = self.gs_var.get()
-        lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
-        loss_kwargs = self._pass_loss_settings()
-        alt_gs_km = alt_gs_m / 1000.0
-
-        ts = load.timescale()
-        tle1 = self.tle1_entry.get().strip()
-        tle2 = self.tle2_entry.get().strip()
-        try:
-            sat = EarthSatellite(tle1, tle2, "SAT", ts)
-        except Exception as e:
-            messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
-            return
-        gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-        updated_results = []
-        times_dt = self.df_all["Time (UTC)"].tolist()
-        sky_times = ts.utc(
-            [t.year for t in times_dt],
-            [t.month for t in times_dt],
-            [t.day for t in times_dt],
-            [t.hour for t in times_dt],
-            [t.minute for t in times_dt],
-            [t.second for t in times_dt],
-        )
-        altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
-            sat, gs, sky_times, freq
-        )
-        try:
-            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
-                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
-            )
-        except ValueError as e:
-            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
-            return
-        uplink_atm_by_sample = None
-        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
-                lat_gs,
-                lon_gs,
-                uplink_freq.to(u.GHz).value,
-                p,
-                d_gs,
-                alt_gs_km,
-                include_scintillation=self.scint_var.get(),
-            )
-            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
-                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
-            )
-        self.atm_label_var.set(atm_summary)
-        for i, t_utc_dt in enumerate(times_dt):
-            t_sky = sky_times[i]
-            params = calculate_link_budget_parameters(
-                t_sky,
-                sat,
-                gs,
-                freq,
-                p,
-                d_gs,
-                alt_gs_km,
-                eirp_sat,
-                float(gt_by_sample[i]),
-                demod_loss,
-                bitrate,
-                overhead,
-                cisat_lin,
-                other_att,
-                float(atm_by_sample[i]),
-                altitudes[i],
-                slant_ranges[i],
-                dopplers[i],
-                off_boresight[i],
-                uplink_freq,
-                eirp_gs,
-                gt_sat,
-                demod_loss_ul,
-                other_att_ul,
-                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
-                uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
-                uplink_overhead,
-                **loss_kwargs,
-            )
-
-            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
-            rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
-            for key in [
-                "Elevation (°)",
-                "Slant Range (km)",
-                "Path Loss (dB)",
-                "Atmospheric Att (dB)",
-                "G/T GS (dB/K)",
-                "S/C Antenna Gain (dBi)",
-                "EIRP (dBW)",
-                "S/C Antenna Loss (dB)",
-                "Off Boresight Angle (°)",
-                "Link Losses (dB)",
-                "UL Link Losses (dB)",
-                "Rx Power (dBW)",
-                "C/(No+Io) (dBHz)",
-                "Eb/No (dB)",
-                "Doppler Shift (kHz)",
-                "UL Path Loss (dB)",
-                "UL Atmospheric Att (dB)",
-                "UL S/C Antenna Loss (dB)",
-                "UL Rx Power (dBW)",
-                "UL C/No (dBHz)",
-                "UL Eb/No (dB)",
-            ]:
-                if params.get(key) is not None:
-                    decimals = rounding_rules.get(key, 2)
-                    params[key] = round(params[key], decimals)
-            updated_results.append(params)
-
-        previous = self.df_all
-        self.df_all = pd.DataFrame(updated_results)
-        for column in ("Azimuth (°)", "Min Elevation (°)"):
-            if column in previous:
-                self.df_all[column] = previous[column].to_numpy()
-        self._add_pfd_columns()
-        selection = self.contact_listbox.curselection()
-        if not selection and len(self.contact_windows) > 0:
-            self.contact_listbox.selection_set(0)
-            selection = (0,)
-
-        if selection:
-            self.on_contact_select(None)
-        else:
-            self.clear_plot_and_table()
+        self.run_analysis(keep_selection=True)
 
     # ------------------------------------------------------------------
     # Plot / table rendering
@@ -5183,52 +4723,29 @@ class LinkBudgetApp:
             freq_ghz = _parse_required(freq_entry, freq_label)
             d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
             d_gs = calculations.GROUND_STATION_DIAMETERS.get(station_var.get(), d_gs)
-            if iono_mode_var.get() == "s4":
-                iono_kwargs = dict(
-                    ionospheric_s4_ref=_field("iono_s4_ref", _parse_required),
-                    ionospheric_s4_ref_freq_mhz=_field("iono_s4_ref_freq_mhz", _parse_required),
-                )
-            else:
-                iono_kwargs = dict(ionospheric_loss_db=opt("ionospheric_loss_db", _parse_optional, default=0.0))
-            losses = calculations.static_link_losses(
-                freq_ghz,
-                d_gs,
-                polarisation_loss_db=opt("polarisation_loss_db", _parse_optional_or_none),
-                tx_axial_ratio_db=opt("ant_axial_ratio_db", _parse_optional_or_none),
-                rx_axial_ratio_db=opt("rx_axial_ratio_db", _parse_optional_or_none),
-                multipath_loss_db=opt("multipath_loss_db", _parse_optional, default=0.0),
-                rx_depointing_deg=opt("rx_depointing_deg", _parse_optional_or_none),
-                rx_beamwidth_3db_deg=opt("rx_beamwidth_deg", _parse_optional_or_none),
-                **iono_kwargs,
-            )
-            formatting = opt("formatting_overhead", _parse_optional, default=1.0)
-            if formatting <= 0:
-                raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
-            tx_chain_dbw = None
-            if eirp_mode_var.get() == "tx_chain":
-                power_w = _field("tx_power_w", _parse_required)
-                if power_w <= 0:
-                    raise ValueError("'Transmitter Power [W]' must be greater than 0.")
-                vswr = _field("vswr", _parse_optional_or_none)
-                tx_chain_dbw = (
-                    10 * math.log10(power_w)
-                    - _field("ant_circuit_loss_db", _parse_optional)
-                    - (calculations.vswr_mismatch_loss_db(vswr) if vswr else 0.0)
-                )
-            return {
-                "tx_chain_dbw": tx_chain_dbw,
-                "ionospheric_loss_db": losses["ionospheric_loss_db"],
-                "polarisation_loss_db": losses["polarisation_loss_db"],
-                "multipath_loss_db": losses["multipath_loss_db"],
-                "rx_pointing_loss_db": losses["rx_pointing_loss_db"],
-                "tx_pointing_loss_db": opt("tx_pointing_loss_db", _parse_optional, default=0.0),
-                "modulation_degradation_db": opt("modulation_degradation_db", _parse_optional, default=0.0),
-                "formatting_overhead": formatting,
-                "pfd_limit": opt("pfd_limit", _parse_optional_or_none),
-                "pfd_limit_high": opt("pfd_limit_high", _parse_optional_or_none),
-                "required_ebno_db": opt("required_ebno_db", _parse_optional_or_none),
-                "required_margin_db": opt("required_margin_db", _parse_optional_or_none),
+            # The fields, parsed here (errors name the field), in the parameters.json form.
+            values = {
+                "ionospheric_mode": iono_mode_var.get(),
+                "eirp_mode": eirp_mode_var.get(),
+                "formatting_overhead": opt("formatting_overhead", _parse_optional, default=1.0),
             }
+            if iono_mode_var.get() == "s4":
+                values["iono_s4_ref"] = _field("iono_s4_ref", _parse_required)
+                values["iono_s4_ref_freq_mhz"] = _field("iono_s4_ref_freq_mhz", _parse_required)
+            else:
+                values["ionospheric_loss_db"] = opt("ionospheric_loss_db", _parse_optional, default=0.0)
+            for key in (
+                "polarisation_loss_db", "ant_axial_ratio_db", "rx_axial_ratio_db", "rx_depointing_deg",
+                "rx_beamwidth_deg", "pfd_limit", "pfd_limit_high", "required_ebno_db", "required_margin_db",
+            ):
+                values[key] = opt(key, _parse_optional_or_none)
+            for key in ("multipath_loss_db", "tx_pointing_loss_db", "modulation_degradation_db"):
+                values[key] = opt(key, _parse_optional, default=0.0)
+            if eirp_mode_var.get() == "tx_chain":
+                values["tx_power_w"] = _field("tx_power_w", _parse_required)
+                values["ant_circuit_loss_db"] = _field("ant_circuit_loss_db", _parse_optional)
+                values["vswr"] = _field("vswr", _parse_optional_or_none)
+            return link_core.static_link_values(values, freq_ghz, d_gs)
 
         self._static_lb_loss_providers[section] = _pass_link_losses
         self._static_lb_refreshers.append(_refresh_states)
@@ -5328,7 +4845,7 @@ class LinkBudgetApp:
                 ).pack(fill=tk.X, pady=(4, 0))
                 tk.Label(
                     tile,
-                    text=("" if same else f"clear sky / rain faded  ·  ") + f"required {check.requirement}",
+                    text=("" if same else "clear sky / rain faded  ·  ") + f"required {check.requirement}",
                     bg=PALETTE["surface"], fg=PALETTE["text_muted"], font=(font_family, 8), anchor="w",
                 ).pack(fill=tk.X)
 

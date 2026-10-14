@@ -41,6 +41,7 @@ a = Analysis(
         'version',
         'tle_source',
         'pass_statistics',
+        'link_core',
         'missions',
         'reportlab',
         'cryptography.exceptions',

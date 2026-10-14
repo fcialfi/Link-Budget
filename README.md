@@ -77,6 +77,24 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 - Adatta il diagramma d'antenna del satellite predefinito (`ANTENNA_PATTERN_ANGLES` in gradi dal nadir e `ANTENNA_PATTERN_GAINS` in dBi) al tuo, oppure caricalo da file con **Load Antenna Pattern...**.
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
+## Riga di comando (`lbtool.py`)
+Gli stessi calcoli della finestra, senza finestra, per le missioni di `satellites.json` (dai sorgenti, con il `.venv` attivo):
+```cmd
+python lbtool.py missions
+python lbtool.py passes --mission AWS --station Svalbard --date 2026-10-14 -o passaggi.csv
+python lbtool.py statistics --mission AWS --stations Svalbard,Kangerlussuaq --start 2026-10-14 --days 30 --instruments 100 --hktm 4 -o statistiche.csv
+python lbtool.py passes --mission EPS-Sterna --plane 19:30 --station Svalbard
+```
+`--download` scarica prima il TLE aggiornato, `--min-elevation` cambia l'elevazione minima, `--required-ebno` / `--required-margin` sostituiscono i valori della missione. `python lbtool.py statistics -h` elenca tutte le opzioni.
+
+## Struttura del codice e test
+- `calculations.py`: modelli (geometria, ITU-R, link budget, G/T, PFD, pattern d'antenna).
+- `link_core.py`: analisi dei passaggi di una giornata (visibilità con maschera, link budget, PFD, contatti) e lettura dei parametri di una missione; usata da finestra, statistiche e riga di comando.
+- `pass_statistics.py`: statistiche su più giorni e stazioni, memoria di bordo e latenza.
+- `tle_source.py` (download e TLE sintetici), `missions.py` (catalogo e cartelle), `static_report.py` (righe e PDF del link budget statico), `gui.py` (finestra).
+- Test: `pytest` (unitari, più `tests/test_link_core.py` che confronta un caso AWS congelato in `tests/data/aws_reference`). Girano automaticamente su GitHub a ogni modifica (`.github/workflows/tests.yml`). La validazione con StatPro è in `validation/`.
+- Le modifiche di ogni versione sono in `CHANGELOG.md`.
+
 ## Creare un eseguibile
 **Modo rapido:** fai doppio clic su `build.bat` nella cartella del progetto.
 - **Prima volta:** crea il `.venv` e ci installa i requirements e PyInstaller; le volte successive aggiunge solo quello che manca.
