@@ -57,13 +57,16 @@
     "ccsds_interleaving": 5.0,
     "ccsds_ocf": true,
     "ccsds_fecf": false,
-    "ccsds_packet_error_control": true
+    "ccsds_packet_error_control": true,
+    "eirp_mode": "tx_chain",
+    "ant_gain_from_pattern": true
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,
     "sat_altitude_km": 628.0,
     "required_ebno_db": 9.6,
     "required_margin_db": 3.0,
-    "scintillation": false
+    "scintillation": false,
+    "gt_from_pattern": true
   }
 }
