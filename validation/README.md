@@ -34,7 +34,7 @@ Altitudine 600 km. Colonne *Clear Sky* (solo gas) e *Rain Faded* (pioggia, nubi 
 | Perdita del demodulatore | 1,0 dB; degrado di modulazione 0,5 dB |
 | Bit rate per Eb/No | riga *Transfer Frame Bit Rate [dBHz]* (61,92 dBHz: CCSDS, interleaving 5) |
 | Eb/No richiesto | 2,6 dB; margine richiesto 3 dB |
-| PFD | banda occupata 3570 kHz (3,57 Mbps, roll-off 1, 2 b/s/Hz), limite −154 dB(W/m²) in 4 kHz |
+| PFD | banda occupata 3570 kHz (3,57 Mbps, roll-off 1, 2 b/s/Hz), limite −154 dB(W/m²) in 4 kHz fino a 5°, −154 + 0,5·(δ−5) tra 5° e 25°, −144 da 25° (RR art. 21, Tabella 21-4, 1700–1710 MHz) |
 
 ## Procedura
 
