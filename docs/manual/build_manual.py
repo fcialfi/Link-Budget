@@ -330,11 +330,10 @@ def content():
     story += TABLE([
         ["File", "Content"],
         ["license.key", "Licence of the installation (see 2.2). Required when the build checks licences."],
-        ["parameters.json", "Project name, link budget parameters of the main tabs and the inputs of the two "
-                            "static link budget tabs (chapter 9)."],
-        ["tle.txt", "Two-line elements of the satellite."],
         ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m)."],
-        ["Antenna Pattern Default.txt", "Satellite antenna pattern: angle from nadir (deg), gain (dBi)."],
+        ["satellites.json", "The satellites of the Satellite menu (chapter 4.1)."],
+        ["missions\\<name>\\", "Per mission: parameters.json (project name, link budget parameters, static inputs; chapter "
+                                 "9), antenna_pattern.txt and tle.txt (chapter 4.1)."],
     ], [5, 11.5], mono_cols=(0,), bold_cols=())
     story.append(P(
         "A missing data file is not an error: the related fields stay empty (or the built-in station list and "
@@ -400,8 +399,8 @@ def content():
         "<b>antenna_pattern.txt</b> (optional; or any .txt/.csv file with \"pattern\" in its name): the "
         "satellite antenna pattern of the mission (two columns, angle from nadir in degrees and gain in dBi, "
         "separated by commas, tabs, spaces or semicolons, then also with a decimal comma as Excel writes it with "
-        "Italian settings; header lines and # comments are skipped); otherwise Antenna Pattern Default.txt is "
-        "used. A mission pattern that cannot be read is reported in orange and the default is used. The line under the "
+        "Italian settings; header lines and # comments are skipped). There is no common default: a mission "
+        "without a readable pattern gets an isotropic 0 dBi antenna, reported in orange. The line under the "
         "pattern buttons and the title of Show Antenna Gain give the file in use; Load Antenna Pattern… only "
         "replaces it for the session.",
         "<b>tle.txt</b>: the last TLE downloaded (or, for a custom orbit, the last synthetic TLE generated). "
@@ -454,8 +453,8 @@ def content():
         "when the TLE, date or station change."))
     story.append(P(
         "<b>Satellite antenna pattern</b>: the gain of the satellite antenna versus the angle from nadir, used "
-        "at every time step (chapter 8.4). It is read from <b>Antenna Pattern Default.txt</b> at startup; "
-        "<b>Load Antenna Pattern…</b> loads another file and <b>Show Antenna Gain</b> plots it. The line below "
+        "at every time step (chapter 8.4). It is read from the folder of the selected mission; "
+        "<b>Load Antenna Pattern…</b> loads another file for the session and <b>Show Antenna Gain</b> plots it. The line below "
         "the buttons shows which pattern is in use."))
 
     # 5 -------------------------------------------------------------------
@@ -664,10 +663,9 @@ def content():
         ["tle.txt", "The two TLE lines (an optional name line before them is accepted)."],
         ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m]; "
                                 "lines starting with # are comments."],
-        ["Antenna Pattern Default.txt", "One point per line: angle from nadir [deg], gain [dBi], comma "
-                                        "separated, from the most negative to the most positive angle. It "
-                                        "should cover the lowest elevation used (66° from nadir at 3° and "
-                                        "628 km)."],
+        ["antenna_pattern.txt", "One point per line: angle from nadir [deg], gain [dBi], separated by a "
+                                "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "
+                                "used (66° from nadir at 3° and 628 km)."],
     ], [5, 11.5], mono_cols=(0,), bold_cols=())
 
     # 10 ------------------------------------------------------------------
@@ -679,8 +677,8 @@ def content():
                                     "copy them there, or load them from the Orbit &amp; Passes tab."],
         ["'Ground stations: built-in list'", "ground_stations.txt was not found: the built-in stations are "
                                               "used."],
-        ["'Pattern: built-in example'", "Antenna Pattern Default.txt was not found: a generic example pattern "
-                                         "is used."],
+        ["'Pattern: isotropic 0 dBi' (orange)", "The mission folder has no readable antenna pattern: put "
+                                                 "an antenna_pattern.txt there."],
         ["Input Error message", "A field is empty or not a number: the static tabs open its page and select "
                                 "it."],
         ["Static results marked OUTDATED", "An input changed after Calculate: press Calculate again (exports "

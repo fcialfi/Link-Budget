@@ -166,7 +166,8 @@ except Exception as exc:  # pragma: no cover - fallback for packaging/runtime er
 
 
 # Antenna pattern data as constants
-# Fallback when "Antenna Pattern Default.txt" is missing: the same values.
+# Built-in example pattern (the one of missions/AWS/antenna_pattern.txt), used
+# until a mission pattern is loaded.
 ANTENNA_PATTERN_ANGLES = np.array([
     -66, -65, -55, -45, -35, -25, -15, -5, 0, 5, 15, 25, 35, 45, 55, 65, 66
 ])
@@ -208,9 +209,22 @@ def load_antenna_pattern(file_path: str) -> None:
     if len(rows) < 2:
         raise ValueError("Antenna pattern file must have at least two rows of angle and gain")
     data = np.array(sorted(rows))
+    set_antenna_pattern(data[:, 0], data[:, 1])
 
-    ANTENNA_PATTERN_ANGLES = data[:, 0]
-    ANTENNA_PATTERN_GAINS = data[:, 1]
+
+def set_isotropic_antenna_pattern() -> None:
+    """Use a 0 dBi pattern at every angle (a mission without antenna pattern)."""
+
+    set_antenna_pattern(np.array([-180.0, 180.0]), np.array([0.0, 0.0]))
+
+
+def set_antenna_pattern(angles: np.ndarray, gains: np.ndarray) -> None:
+    """Make ``gains`` (dBi) versus ``angles`` (deg from nadir) the satellite antenna pattern."""
+
+    global ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, PATTERN_INTERP, MAX_ANTENNA_GAIN
+
+    ANTENNA_PATTERN_ANGLES = np.asarray(angles, dtype=float)
+    ANTENNA_PATTERN_GAINS = np.asarray(gains, dtype=float)
     PATTERN_INTERP = interp1d(
         ANTENNA_PATTERN_ANGLES,
         ANTENNA_PATTERN_GAINS,
