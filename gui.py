@@ -678,6 +678,7 @@ class LinkBudgetApp:
         self.tle_file_var: tk.StringVar | None = None
         self.tle_file_path: str | None = None
         self.tle_info_label: ttk.Label | None = None
+        self.pattern_info_label: ttk.Label | None = None
         # Satellite catalogue (satellites.json) and the satellite selected.
         self.catalogue: missions.Catalogue | None = None
         self.current_sat: missions.Satellite | None = None
@@ -932,15 +933,7 @@ class LinkBudgetApp:
         # Sat-norad from the catalogue wins over the one in the parameters.
         self.norad_var.set("" if sat.norad_id is None else str(sat.norad_id))
 
-        pattern_path = self.catalogue.mission_file(sat, missions.PATTERN_FILE)
-        if not os.path.isfile(pattern_path):
-            pattern_path = calculations.resolve_optional_data_file(ANTENNA_PATTERN_FILE)
-        if pattern_path:
-            try:
-                load_antenna_pattern(pattern_path)
-                self.pattern_file_var.set(f"Pattern: {os.path.abspath(pattern_path)}")
-            except Exception as exc:
-                self.pattern_file_var.set(f"Pattern not loaded: {exc}")
+        self._load_mission_pattern(sat)
 
         self.tle_file_path = self.catalogue.mission_file(sat, missions.TLE_FILE)
         if sat.custom_orbit:
@@ -970,6 +963,34 @@ class LinkBudgetApp:
             if age is None or age > 1.0:
                 self.download_tle(auto=True)
         self.set_analysis_stale()
+
+    def _load_mission_pattern(self, sat) -> None:
+        """Load the antenna pattern from the mission folder.
+
+        There is no fallback to a pattern of another mission: a mission
+        without a readable pattern gets an isotropic 0 dBi antenna, reported
+        in orange next to the pattern buttons.
+        """
+
+        folder = self.catalogue.mission_dir(sat)
+        mission_pattern = self.catalogue.pattern_path(sat)
+        if mission_pattern:
+            try:
+                load_antenna_pattern(mission_pattern)
+                self._show_pattern_source(f"Pattern: {mission_pattern}")
+                return
+            except Exception as exc:
+                problem = f"{os.path.basename(mission_pattern)} not loaded ({exc})"
+        else:
+            problem = f"no antenna pattern in {folder} (put an antenna_pattern.txt there)"
+        calculations.set_isotropic_antenna_pattern()
+        warning = self.link_budget_enabled
+        self._show_pattern_source(f"Pattern: isotropic 0 dBi  ·  {problem}", warning)
+
+    def _show_pattern_source(self, text: str, warning: bool = False) -> None:
+        self.pattern_file_var.set(text)
+        if self.pattern_info_label is not None:
+            self.pattern_info_label.configure(foreground=PALETTE["warning"] if warning else PALETTE["text_muted"])
 
     def _set_link_budget_enabled(self, enabled: bool) -> None:
         """Enable the link budget tabs, or leave only the contact analysis."""
@@ -1239,13 +1260,14 @@ class LinkBudgetApp:
             except Exception as exc:
                 print(f"Warning: could not auto-load default TLE '{tle_path}': {exc}", file=sys.stderr)
 
+        # Without satellites.json: a single pattern file, as before.
         pattern_path = calculations.resolve_optional_data_file(
             ANTENNA_PATTERN_FILE, env_var="ANTENNA_PATTERN_FILE"
         )
-        if pattern_path:
+        if pattern_path and not catalogue_path:
             try:
                 load_antenna_pattern(pattern_path)
-                self.pattern_file_var.set(f"Pattern: {os.path.abspath(pattern_path)}")
+                self._show_pattern_source(f"Pattern: {os.path.abspath(pattern_path)}")
             except Exception as exc:
                 print(
                     f"Warning: could not auto-load the antenna pattern '{pattern_path}': {exc}",
@@ -2112,8 +2134,10 @@ class LinkBudgetApp:
 
     def show_antenna_pattern(self):
         popup = tk.Toplevel(self.root)
-        popup.title("Satellite Antenna Pattern")
-        popup.geometry("600x400")
+        source = self.pattern_file_var.get().removeprefix("Pattern: ").split("  ·  ")[0]
+        mission = f"{self.current_sat.name}: " if self.current_sat else ""
+        popup.title(f"Satellite Antenna Pattern – {mission}{os.path.basename(source) or source}")
+        popup.geometry("640x440")
         popup.configure(bg=PALETTE["bg"])
 
         from calculations import ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS
@@ -2122,7 +2146,7 @@ class LinkBudgetApp:
         ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
         ax.set_xlabel("Angle from nadir (boresight) [deg]", fontsize=8)
         ax.set_ylabel("Gain [dBi]", fontsize=8)
-        ax.set_title("Satellite Antenna Gain Pattern")
+        ax.set_title(f"Satellite Antenna Gain Pattern\n{source}", fontsize=8)
         ax.tick_params(axis="both", labelsize=8)
         ax.grid(True)
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
@@ -2139,7 +2163,7 @@ class LinkBudgetApp:
             return
         try:
             load_antenna_pattern(file_path)
-            self.pattern_file_var.set(f"Pattern: {os.path.abspath(file_path)}")
+            self._show_pattern_source(f"Pattern: {os.path.abspath(file_path)} (this session only)")
             messagebox.showinfo("Success", "Satellite antenna pattern loaded successfully.")
             self.set_analysis_stale()
             # The static tabs read the Tx antenna gain from the pattern.
@@ -5355,8 +5379,9 @@ class LinkBudgetApp:
             "step in both directions. Downlink: EIRP = Tx chain of the Static LB · Downlink tab + "
             "the pattern gain towards the station (or EIRP SAT at the pattern peak when that tab "
             "uses an EIRP value). Uplink: G/T SAT at the pattern peak minus the roll-off. The "
-            "ground station antenna tracks the satellite: no pointing loss. At startup the pattern "
-            f"is read from '{ANTENNA_PATTERN_FILE}' (next to the program), if present.",
+            "ground station antenna tracks the satellite: no pointing loss. The pattern is read from "
+            "the mission folder (antenna_pattern.txt, or a .txt/.csv file with 'pattern' in its name); a "
+            "mission without one gets an isotropic 0 dBi antenna. Show Antenna Gain plots the pattern in use.",
         ).pack(side=tk.LEFT, padx=(4, 0))
         load_antenna_btn = ttk.Button(
             antenna_row, text="Load Antenna Pattern...", command=self.load_antenna_pattern_file
@@ -5364,14 +5389,17 @@ class LinkBudgetApp:
         load_antenna_btn.pack(side=tk.LEFT, padx=(12, 6))
         _add_tooltip(
             load_antenna_btn,
-            "Load the satellite antenna gain pattern from a .csv/.txt file: two columns, angle "
-            "from the antenna boresight (nadir) in degrees and gain in dBi.",
+            "Load a satellite antenna gain pattern from a .csv/.txt file for this session: two columns, "
+            "angle from the antenna boresight (nadir) in degrees and gain in dBi, separated by commas, "
+            "semicolons, tabs or spaces. To keep it for a mission, save it as antenna_pattern.txt in the "
+            "mission folder.",
         )
         ttk.Button(antenna_row, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(side=tk.LEFT)
         self.pattern_file_var = tk.StringVar(value="Pattern: built-in example (no file loaded)")
-        ttk.Label(passes_frame, textvariable=self.pattern_file_var, foreground=PALETTE["text_muted"]).pack(
-            anchor="w", padx=5, pady=(4, 0)
+        self.pattern_info_label = ttk.Label(
+            passes_frame, textvariable=self.pattern_file_var, foreground=PALETTE["text_muted"], wraplength=1100
         )
+        self.pattern_info_label.pack(anchor="w", padx=5, pady=(4, 0))
 
         contact_frame = ttk.Frame(passes_frame)
         contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))

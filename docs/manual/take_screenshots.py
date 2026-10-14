@@ -4,7 +4,7 @@
     python docs/manual/take_screenshots.py
 
 Opens the GUI with the repository's data files (tle.txt, parameters.json,
-ground_stations.txt, Antenna Pattern Default.txt), runs a pass analysis
+ground_stations.txt, satellites.json, missions), runs a pass analysis
 and the static link budgets, and grabs each tab. Needs a display (on
 Linux without one: xvfb-run -s "-screen 0 1400x1000x24" python ...).
 Run it again whenever the GUI layout changes, then rebuild the manual.

@@ -5,6 +5,7 @@ attenuation calculations, and functions to compute detailed link budget
 parameters.
 """
 import math
+import re
 import numpy as np
 import itur as itu
 import sys
@@ -165,7 +166,8 @@ except Exception as exc:  # pragma: no cover - fallback for packaging/runtime er
 
 
 # Antenna pattern data as constants
-# Fallback when "Antenna Pattern Default.txt" is missing: the same values.
+# Built-in example pattern (the one of missions/AWS/antenna_pattern.txt), used
+# until a mission pattern is loaded.
 ANTENNA_PATTERN_ANGLES = np.array([
     -66, -65, -55, -45, -35, -25, -15, -5, 0, 5, 15, 25, 35, 45, 55, 65, 66
 ])
@@ -181,19 +183,48 @@ def load_antenna_pattern(file_path: str) -> None:
     """Load the satellite antenna pattern from a CSV or text file.
 
     The file must contain two numeric columns: angle from the antenna
-    boresight (nadir) in degrees and gain in dBi.
+    boresight (nadir) in degrees and gain in dBi, separated by a comma, a
+    semicolon (then a decimal comma is accepted, as Excel writes with
+    Italian settings), tabs or spaces. Lines that do not start with two numbers
+    (a header, ``#`` comments) are skipped.
     Existing global pattern arrays are replaced and the interpolation function
     is updated accordingly.
     """
 
     global ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, PATTERN_INTERP, MAX_ANTENNA_GAIN
 
-    data = np.loadtxt(file_path, delimiter=",")
-    if data.ndim != 2 or data.shape[1] < 2:
-        raise ValueError("Antenna pattern file must have at least two columns")
+    rows = []
+    with open(file_path, "r", encoding="utf-8-sig") as f:
+        for line in f:
+            text = line.strip()
+            if ";" in text:
+                # Semicolon-separated (e.g. Excel with Italian settings): the comma is the decimal mark.
+                fields = [field.replace(",", ".") for field in re.split(r"[;\s]+", text) if field]
+            else:
+                fields = [field for field in re.split(r"[,\s]+", text) if field]
+            try:
+                rows.append((float(fields[0]), float(fields[1])))
+            except (IndexError, ValueError):
+                continue
+    if len(rows) < 2:
+        raise ValueError("Antenna pattern file must have at least two rows of angle and gain")
+    data = np.array(sorted(rows))
+    set_antenna_pattern(data[:, 0], data[:, 1])
 
-    ANTENNA_PATTERN_ANGLES = data[:, 0]
-    ANTENNA_PATTERN_GAINS = data[:, 1]
+
+def set_isotropic_antenna_pattern() -> None:
+    """Use a 0 dBi pattern at every angle (a mission without antenna pattern)."""
+
+    set_antenna_pattern(np.array([-180.0, 180.0]), np.array([0.0, 0.0]))
+
+
+def set_antenna_pattern(angles: np.ndarray, gains: np.ndarray) -> None:
+    """Make ``gains`` (dBi) versus ``angles`` (deg from nadir) the satellite antenna pattern."""
+
+    global ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, PATTERN_INTERP, MAX_ANTENNA_GAIN
+
+    ANTENNA_PATTERN_ANGLES = np.asarray(angles, dtype=float)
+    ANTENNA_PATTERN_GAINS = np.asarray(gains, dtype=float)
     PATTERN_INTERP = interp1d(
         ANTENNA_PATTERN_ANGLES,
         ANTENNA_PATTERN_GAINS,
