@@ -32,6 +32,12 @@ echo === Building %APP% %VERSION%
 
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
+if exist dist (
+    echo.
+    echo The old dist folder could not be deleted: some of its files are in use.
+    echo Close %APP%.exe ^(also in Task Manager^) and any window open on dist, then run build.bat again.
+    goto :error
+)
 %PY% -m PyInstaller --noconfirm gui.spec || goto :error
 
 echo === Copying the data files
