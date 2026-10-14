@@ -358,7 +358,7 @@ def content():
     story += H1("Main window")
     story += FIG("orbit_passes", "Figure 1 – Main window, Orbit &amp; Passes tab.")
     story.append(P(
-        "The header shows the program version, the project name, the licence and the <b>About</b> (version, "
+        "The header shows the program version, the licence and the <b>About</b> (version, "
         "author and licence; also F1) and <b>Exit</b> buttons. "
         "Below it, the tabs:"))
     story += TABLE([
@@ -383,7 +383,7 @@ def content():
     story += H1("Orbit & Passes tab")
     story += H2("Project")
     story.append(P(
-        "<b>Project Name</b> is shown in the window header and title, in the PDF report (page header and above "
+        "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
         "parameters file (key project_name)."))
     story += H2("TLE and observation settings")
