@@ -4,6 +4,7 @@ This module provides antenna pattern utilities, Doppler and atmospheric
 attenuation calculations, and functions to compute detailed link budget
 parameters.
 """
+import math
 import numpy as np
 import itur as itu
 import sys
@@ -202,6 +203,32 @@ def load_antenna_pattern(file_path: str) -> None:
     MAX_ANTENNA_GAIN = float(np.max(ANTENNA_PATTERN_GAINS))
 # Speed of light in km/s used for Doppler calculations
 C_KM_S = 299_792.458
+def satellite_antenna_gain_dbi(angle_deg: float | np.ndarray) -> float | np.ndarray:
+    """Satellite antenna gain (dBi) from the pattern, at an angle from nadir (deg).
+
+    Angles outside the pattern table give 0 dBi.
+    """
+
+    gains = PATTERN_INTERP(np.atleast_1d(angle_deg))
+    if np.isscalar(angle_deg):
+        return float(gains[0])
+    return gains
+
+
+def off_nadir_angle_deg(elevation_deg: float, sat_altitude_km: float, gs_altitude_km: float = 0.0) -> float:
+    """Angle (deg) between the satellite nadir and the ground station direction.
+
+    Spherical Earth, circular orbit: ``sin(η) = (R + h_gs)·cos(el) / (R + h_sat)``.
+    It is the angle at which a nadir-pointing satellite antenna sees a
+    ground station at elevation ``el``.
+    """
+
+    r_gs = EARTH_RADIUS_KM + gs_altitude_km
+    r_sat = EARTH_RADIUS_KM + sat_altitude_km
+    ratio = r_gs * math.cos(math.radians(elevation_deg)) / r_sat
+    return math.degrees(math.asin(max(-1.0, min(1.0, ratio))))
+
+
 def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:
     """Return the satellite antenna pattern loss for a given off-nadir angle.
 
@@ -1195,6 +1222,7 @@ def calculate_link_budget_parameters(
     uplink_bitrate: float | None = None,
     uplink_overhead: float | None = None,
     apply_antenna_pattern: bool = True,
+    tx_chain_dbw: Optional[float] = None,
     link_losses_db: float = 0.0,
     modulation_degradation_db: float = 0.0,
     formatting_overhead: float = 1.0,
@@ -1262,11 +1290,16 @@ def calculate_link_budget_parameters(
         Optional uplink coding overhead. If omitted, the downlink ``overhead``
         factor is reused for uplink Eb/No calculations.
     apply_antenna_pattern : bool
-        Subtract the satellite antenna pattern loss (peak gain minus the gain
-        at the off-nadir angle of the ground station) from both directions.
-        Use it when ``eirp_sat`` / ``gt_sat`` are given at the antenna
-        boresight; leave it off when they already hold the values for the
-        worst-case geometry (as in the fixed-elevation link budget).
+        Use the satellite antenna pattern (gain versus angle from nadir) at
+        each time step. Downlink: with ``tx_chain_dbw`` the EIRP is
+        ``tx_chain_dbw`` + the pattern gain towards the ground station;
+        without it ``eirp_sat`` is taken at the pattern peak and the pattern
+        loss (peak − gain) is subtracted. Uplink: ``gt_sat`` is taken at the
+        pattern peak and the pattern loss is subtracted. The ground station
+        antenna is assumed to track the satellite (no pointing loss).
+    tx_chain_dbw : float, optional
+        Satellite transmitter power minus circuit and VSWR losses, in dBW
+        (the Tx chain without the antenna gain).
     link_losses_db, ul_link_losses_db : float
         Elevation-independent losses of each direction (ionospheric,
         polarisation, multipath, receive antenna pointing; see
@@ -1291,9 +1324,14 @@ def calculate_link_budget_parameters(
             Distance to the satellite.
         ``"Path Loss (dB)"`` : float
             Free-space path loss.
+        ``"S/C Antenna Gain (dBi)"`` : float or None
+            Satellite antenna gain towards the ground station, from the
+            pattern (None when ``apply_antenna_pattern`` is off).
+        ``"EIRP (dBW)"`` : float
+            Downlink EIRP at this time step.
         ``"S/C Antenna Loss (dB)"`` : float
-            Satellite antenna pattern loss at the off-nadir angle of the
-            ground station (0 when ``apply_antenna_pattern`` is off).
+            Pattern peak gain minus the gain towards the ground station
+            (0 when ``apply_antenna_pattern`` is off).
         ``"Link Losses (dB)"`` : float
             ``link_losses_db``.
         ``"Off Boresight Angle (°)"``
@@ -1354,9 +1392,16 @@ def calculate_link_budget_parameters(
         off_boresight_angle = np.degrees(angle_rad)
     else:
         off_boresight_angle = pre_off_boresight_angle
-    pointing_loss = antenna_pattern(off_boresight_angle) if apply_antenna_pattern else 0.0
+    if apply_antenna_pattern:
+        sat_antenna_gain = satellite_antenna_gain_dbi(off_boresight_angle)
+        pointing_loss = antenna_pattern(off_boresight_angle)
+        eirp = tx_chain_dbw + sat_antenna_gain if tx_chain_dbw is not None else eirp_sat - pointing_loss
+    else:
+        sat_antenna_gain = None
+        pointing_loss = 0.0
+        eirp = eirp_sat
 
-    rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss - link_losses_db
+    rx_power = eirp - path_loss - atm_att - other_att - link_losses_db
     cno_db = rx_power + gt_gs + 228.6 - demod_loss - modulation_degradation_db
 
     if cisat_lin is not None:
@@ -1377,6 +1422,8 @@ def calculate_link_budget_parameters(
         "Slant Range (km)": slant_range_km,
         "Path Loss (dB)": path_loss,
         "Atmospheric Att (dB)": atm_att,
+        "S/C Antenna Gain (dBi)": sat_antenna_gain,
+        "EIRP (dBW)": eirp,
         "S/C Antenna Loss (dB)": pointing_loss,
         "Off Boresight Angle (°)": off_boresight_angle,
         "Link Losses (dB)": link_losses_db,

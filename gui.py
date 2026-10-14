@@ -625,6 +625,9 @@ def _stop_for_invalid_license(status) -> None:
 
 
 NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
+# Satellite antenna pattern loaded at startup (next to the executable, in the
+# working directory or next to the source), like tle.txt and parameters.json.
+ANTENNA_PATTERN_FILE = "Antenna Pattern Default.txt"
 
 
 class LinkBudgetApp:
@@ -665,6 +668,8 @@ class LinkBudgetApp:
         # parameters.json section -> function returning that tab's
         # elevation-independent losses, applied to the pass analysis.
         self._static_lb_loss_providers: dict[str, Callable[[], dict]] = {}
+        # Functions refreshing the static tabs (e.g. after a new antenna pattern).
+        self._static_lb_refreshers: list[Callable[[], None]] = []
         # str(tab frame) -> function returning the canvas the mouse wheel scrolls.
         self._wheel_targets: dict[str, Callable[[], tk.Canvas | None]] = {}
         self.current_param_file: str | None = None
@@ -864,11 +869,25 @@ class LinkBudgetApp:
         """
 
         tle_path = calculations.resolve_optional_data_file("tle.txt", env_var="TLE_FILE")
+        # (The satellite antenna pattern file is picked up the same way.)
         if tle_path:
             try:
                 self._apply_tle_file(tle_path)
             except Exception as exc:
                 print(f"Warning: could not auto-load default TLE '{tle_path}': {exc}", file=sys.stderr)
+
+        pattern_path = calculations.resolve_optional_data_file(
+            ANTENNA_PATTERN_FILE, env_var="ANTENNA_PATTERN_FILE"
+        )
+        if pattern_path:
+            try:
+                load_antenna_pattern(pattern_path)
+                self.pattern_file_var.set(f"Pattern: {os.path.abspath(pattern_path)}")
+            except Exception as exc:
+                print(
+                    f"Warning: could not auto-load the antenna pattern '{pattern_path}': {exc}",
+                    file=sys.stderr,
+                )
 
         params_path = calculations.resolve_optional_data_file(
             "parameters.json", env_var="PARAMETERS_FILE"
@@ -1030,63 +1049,78 @@ class LinkBudgetApp:
                 self.uplink_recalc_button.config(style="TButton")
 
     def _pass_loss_settings(self) -> dict:
-        """Satellite antenna pattern switch and the losses taken from the
-        static link budget tabs, as keyword arguments of
-        :func:`calculate_link_budget_parameters`.
+        """Values the pass analysis takes from the static link budget tabs,
+        as keyword arguments of :func:`calculate_link_budget_parameters`.
 
-        Also writes what is applied into the Downlink and Uplink tabs.
-        Inputs of a static tab that cannot be read leave that direction
-        without the extra losses (and say so).
+        The satellite antenna pattern is always applied: on the downlink the
+        EIRP is the Tx chain of the Static LB · Downlink tab plus the pattern
+        gain towards the station (or EIRP SAT at the pattern peak when that
+        tab uses an EIRP value); on the uplink G/T SAT is taken at the
+        pattern peak. The ground station antenna tracks the satellite, so
+        it has no pointing loss. Also writes what is applied into the
+        Downlink and Uplink tabs.
         """
 
-        apply_pattern = bool(self.apply_pattern_var.get())
-        kwargs: dict = {"apply_antenna_pattern": apply_pattern}
+        kwargs: dict = {"apply_antenna_pattern": True}
         directions = (
-            ("Downlink", "downlink", self.include_static_dl_var, self.dl_losses_var, "", "rx", "tx"),
-            ("Uplink", "uplink", self.include_static_ul_var, self.ul_losses_var, "ul_", "tx", "rx"),
+            ("Downlink", "downlink", self.include_static_dl_var, self.dl_losses_var, ""),
+            ("Uplink", "uplink", self.include_static_ul_var, self.ul_losses_var, "ul_"),
         )
-        for title, key, include_var, text_var, prefix, gs_side, sat_side in directions:
+        for title, key, include_var, text_var, prefix in directions:
+            if title == "Downlink":
+                antenna = (
+                    "EIRP: EIRP SAT at the peak of the satellite antenna pattern, minus the pattern "
+                    "roll-off towards the station."
+                )
+            else:
+                antenna = (
+                    "G/T SAT at the peak of the satellite antenna pattern, minus the pattern roll-off "
+                    "towards the station."
+                )
             if not include_var.get():
                 text_var.set(
-                    "Not included: only the losses of this tab (atmospheric, other attenuations, "
-                    "demodulator loss) are applied, and Eb/No is referred to the information bit rate."
+                    f"{antenna}\nStatic link budget losses not included: only the losses of this tab "
+                    "(atmospheric, other attenuations, demodulator loss); Eb/No referred to the "
+                    "information bit rate."
                 )
                 continue
             provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS[key])
             try:
                 values = provider() if provider else None
             except ValueError as exc:
-                values = None
-                text_var.set(f"Not applied: an input of the Static LB · {title} tab is not valid ({exc})")
+                text_var.set(f"{antenna}\nNot applied: an input of the Static LB · {title} tab is not valid ({exc})")
+                continue
             if values is None:
                 continue
+            if title == "Downlink" and values["tx_chain_dbw"] is not None:
+                kwargs["tx_chain_dbw"] = values["tx_chain_dbw"]
+                antenna = (
+                    f"EIRP: Tx chain of the Static LB · Downlink tab ({values['tx_chain_dbw']:.2f} dBW: "
+                    "power − circuit − VSWR losses) + satellite antenna gain from the pattern at each "
+                    "time step."
+                )
             parts = [
                 ("ionospheric", values["ionospheric_loss_db"]),
                 ("polarisation", values["polarisation_loss_db"]),
                 ("multipath", values["multipath_loss_db"]),
-                (f"GS {gs_side.capitalize()} antenna pointing", values[f"{gs_side}_pointing_loss_db"]),
             ]
-            # The satellite antenna term is replaced by the pattern when that is applied.
-            if not apply_pattern:
-                parts.append(
-                    (f"S/C {sat_side.capitalize()} antenna pointing", values[f"{sat_side}_pointing_loss_db"])
-                )
             total = sum(value for _name, value in parts)
             kwargs[f"{prefix}link_losses_db"] = total
             kwargs[f"{prefix}modulation_degradation_db"] = values["modulation_degradation_db"]
             kwargs[f"{prefix}formatting_overhead"] = values["formatting_overhead"]
             text_var.set(
-                "Link losses: "
+                f"{antenna}\n"
+                + "Link losses: "
                 + " + ".join(f"{name} {value:.2f}" for name, value in parts)
-                + f" = {total:.2f} dB.   Modulation degradation: {values['modulation_degradation_db']:.2f} dB.   "
+                + f" = {total:.2f} dB (GS antenna tracking: no pointing loss).   "
+                + f"Modulation degradation: {values['modulation_degradation_db']:.2f} dB.   "
                 + "Eb/No referred to the transfer frame bit rate (formatting factor "
                 + f"{values['formatting_overhead']:.6g})."
-                + ("   S/C antenna: from the pattern (Orbit & Passes tab)." if apply_pattern else "")
             )
         return kwargs
 
     def _on_pass_losses_changed(self) -> None:
-        """The pattern switch or a loss checkbox changed: show it and flag the budgets."""
+        """A loss checkbox changed: show what is applied and flag the budgets."""
 
         self._pass_loss_settings()
         self.set_uplink_budget_stale()
@@ -1246,6 +1280,8 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "S/C Antenna Gain (dBi)",
+                "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
                 "Link Losses (dB)",
@@ -1432,6 +1468,8 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "S/C Antenna Gain (dBi)",
+                "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
                 "Link Losses (dB)",
@@ -1585,8 +1623,9 @@ class LinkBudgetApp:
             "Slant Range (km)",
             "Path Loss (dB)",
             "Atmospheric Att (dB)",
-            "S/C Antenna Loss (dB)",
             "Off Boresight Angle (°)",
+            "S/C Antenna Gain (dBi)",
+            "EIRP (dBW)",
             "Link Losses (dB)",
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
@@ -1643,17 +1682,21 @@ class LinkBudgetApp:
         canvas_popup.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
 
     def load_antenna_pattern_file(self):
-        """Load antenna gain pattern data from a CSV file."""
+        """Load the satellite antenna pattern (angle from nadir, gain in dBi) from a CSV file."""
         file_path = filedialog.askopenfilename(
-            title="Select Antenna Pattern File",
+            title="Select Satellite Antenna Pattern File",
             filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")],
         )
         if not file_path:
             return
         try:
             load_antenna_pattern(file_path)
-            messagebox.showinfo("Success", "Antenna pattern loaded successfully.")
+            self.pattern_file_var.set(f"Pattern: {os.path.abspath(file_path)}")
+            messagebox.showinfo("Success", "Satellite antenna pattern loaded successfully.")
             self.set_analysis_stale()
+            # The static tabs read the Tx antenna gain from the pattern.
+            for refresh in self._static_lb_refreshers:
+                refresh()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load antenna pattern: {e}")
 
@@ -2071,8 +2114,17 @@ class LinkBudgetApp:
                     F(
                         "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 0",
                         "Tx antenna gain towards the receiver. Part of the Tx chain (required "
-                        "there).",
+                        "there)."
+                        + (
+                            " Can be read from the satellite antenna pattern instead (option below)."
+                            if rx_is_ground_station
+                            else ""
+                        ),
                     ),
+                ]
+                # The satellite antenna pattern gives the Tx gain on the downlink only.
+                + ([("gain_source",)] if rx_is_ground_station else [])
+                + [
                     ("eirp_used",),
                     F(
                         "ant_axial_ratio_db", "Tx Antenna Axial Ratio [dB]", "", "e.g. 3",
@@ -2229,6 +2281,8 @@ class LinkBudgetApp:
         # Read-only boxes with values derived from the bit rate and overheads.
         computed_boxes: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
+        gain_pattern_var = tk.BooleanVar(value=False)
+        gain_pattern_text_var = tk.StringVar(value="")
         # The station of this view is its own (saved with its inputs), so
         # changing it here never touches the pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
@@ -2259,7 +2313,7 @@ class LinkBudgetApp:
                 kind = item[0]
                 if kind in (
                     "eirp_mode", "eirp_used", "iono_mode", "iono_used", "framing_mode", "ccsds_options",
-                    "framing_used",
+                    "framing_used", "gain_source",
                 ):
                     # Full-width rows.
                     if c:
@@ -2405,6 +2459,27 @@ class LinkBudgetApp:
                             "window), or the Tx chain below (transmitter power − circuit loss − VSWR "
                             "loss + antenna gain). The fields of the other option are greyed out "
                             "and ignored; the EIRP actually used is shown under the Tx chain.",
+                        ).pack(side=tk.LEFT)
+                    elif kind == "gain_source":
+                        gain_row = ttk.Frame(group_frame)
+                        gain_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(2, 2))
+                        ttk.Checkbutton(
+                            gain_row,
+                            text="Antenna gain from the satellite antenna pattern at this elevation",
+                            variable=gain_pattern_var,
+                            command=lambda: _refresh_states(),
+                        ).pack(side=tk.LEFT)
+                        _info_icon(
+                            gain_row,
+                            "The satellite antenna pattern (gain versus angle from nadir, loaded in "
+                            "the Orbit & Passes tab) gives the Tx antenna gain towards the ground "
+                            "station: the angle from nadir follows from the elevation and the "
+                            "satellite altitude. The pass analysis uses the same pattern at every "
+                            "time step. The pattern already includes the off-pointing, so the Tx "
+                            "Antenna Pointing Loss is not used.",
+                        ).pack(side=tk.LEFT, padx=(4, 8))
+                        ttk.Label(
+                            gain_row, textvariable=gain_pattern_text_var, foreground=PALETTE["accent_dark"]
                         ).pack(side=tk.LEFT)
                     else:  # eirp_used
                         ttk.Label(
@@ -2745,6 +2820,19 @@ class LinkBudgetApp:
                 box_var.set(text)
                 box_icon.tooltip.text = explanation
 
+        def _pattern_gain():
+            """(angle from nadir, satellite antenna gain) at this view's geometry, or None."""
+
+            try:
+                elevation = float(_field_text("elevation_deg"))
+                altitude = float(_field_text("sat_altitude_km"))
+            except ValueError:
+                return None
+            station = calculations.GROUND_STATIONS.get(station_var.get())
+            gs_alt_km = station[2] / 1000.0 if station else 0.0
+            angle = calculations.off_nadir_angle_deg(elevation, altitude, gs_alt_km)
+            return angle, calculations.satellite_antenna_gain_dbi(angle)
+
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
 
@@ -2756,6 +2844,20 @@ class LinkBudgetApp:
             _set_field_enabled(f"panel:{eirp_label}", not chain)
             for key in tx_chain_keys:
                 _set_field_enabled(key, chain)
+            if rx_is_ground_station:
+                # Tx antenna gain read from the satellite antenna pattern.
+                use_pattern = bool(gain_pattern_var.get())
+                gain_pattern_text_var.set("")
+                if use_pattern:
+                    _set_field_enabled("ant_gain_dbi", False)
+                    angle_gain = _pattern_gain()
+                    if angle_gain is None:
+                        gain_pattern_text_var.set("enter Elevation Angle and Satellite Altitude")
+                    else:
+                        angle, gain = angle_gain
+                        _write_computed("ant_gain_dbi", f"{gain:.2f}")
+                        gain_pattern_text_var.set(f"{angle:.1f}° from nadir → {gain:.2f} dBi")
+                _set_field_enabled("tx_pointing_loss_db", not use_pattern)
             # Axial ratios only matter when the polarisation loss is derived from them.
             derive_polarisation = not _field_text("polarisation_loss_db")
             _set_field_enabled("ant_axial_ratio_db", derive_polarisation)
@@ -2791,6 +2893,8 @@ class LinkBudgetApp:
             )
 
         for key in tx_chain_keys + (
+            "elevation_deg",
+            "sat_altitude_km",
             "polarisation_loss_db",
             "rx_depointing_deg",
             f"panel:{eirp_label}",
@@ -2911,6 +3015,8 @@ class LinkBudgetApp:
             if tolerances_out:
                 values["tolerances"] = tolerances_out
             values["eirp_mode"] = eirp_mode_var.get()
+            if rx_is_ground_station:
+                values["ant_gain_from_pattern"] = bool(gain_pattern_var.get())
             values["station"] = station_var.get()
             values["ionospheric_mode"] = iono_mode_var.get()
             if rx_is_ground_station:
@@ -2935,6 +3041,7 @@ class LinkBudgetApp:
                 # whenever a transmitter power was given.
                 mode = "tx_chain" if _format_value(values.get("tx_power_w")) else "eirp"
             eirp_mode_var.set(mode)
+            gain_pattern_var.set(bool(values.get("ant_gain_from_pattern", False)))
             station = values.get("station")
             station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
             framing_mode = values.get("framing_mode")
@@ -2994,7 +3101,7 @@ class LinkBudgetApp:
         station_var.trace_add("write", lambda *_args: _refresh_states())
         watched_vars = [
             station_var, eirp_mode_var, iono_mode_var, scint_var, framing_mode_var, ccsds_ocf_var, ccsds_fecf_var,
-            ccsds_pec_var,
+            ccsds_pec_var, gain_pattern_var,
         ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
@@ -3187,6 +3294,15 @@ class LinkBudgetApp:
                     ant_circuit_loss_db = _field("ant_circuit_loss_db", _parse_optional)
                     vswr = _field("vswr", _parse_optional_or_none)
                     ant_gain_dbi = _field("ant_gain_dbi", _parse_optional_or_none)
+                    if rx_is_ground_station and gain_pattern_var.get():
+                        angle_gain = _pattern_gain()
+                        if angle_gain is None:
+                            raise ValueError(
+                                "'Elevation Angle [deg]' and 'Satellite Altitude [km]' are needed for "
+                                "the antenna gain from the pattern."
+                            )
+                        ant_gain_dbi = angle_gain[1]
+                        pointing_loss_db = 0.0  # included in the pattern gain
                     if tx_power_w is None or ant_gain_dbi is None:
                         raise ValueError(
                             "The EIRP source is 'Tx chain': enter Transmitter Power [W] and "
@@ -3364,6 +3480,17 @@ class LinkBudgetApp:
                                     f"{'yes' if ccsds_ocf_var.get() else 'no'} / "
                                     f"{'yes' if ccsds_fecf_var.get() else 'no'}, "
                                     f"{'yes' if ccsds_pec_var.get() else 'no'}",
+                                )
+                            )
+                    elif item[0] == "gain_source":
+                        if eirp_mode_var.get() == "tx_chain" and gain_pattern_var.get():
+                            angle_gain = _pattern_gain()
+                            group_items.append(
+                                (
+                                    "Antenna Gain Source",
+                                    f"Satellite antenna pattern ({angle_gain[0]:.1f}° from nadir)"
+                                    if angle_gain
+                                    else "Satellite antenna pattern",
                                 )
                             )
                     elif item[0] in ("iono_used", "eirp_used", "framing_used", "computed"):
@@ -3621,7 +3748,19 @@ class LinkBudgetApp:
             formatting = opt("formatting_overhead", _parse_optional, default=1.0)
             if formatting <= 0:
                 raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
+            tx_chain_dbw = None
+            if eirp_mode_var.get() == "tx_chain":
+                power_w = _field("tx_power_w", _parse_required)
+                if power_w <= 0:
+                    raise ValueError("'Transmitter Power [W]' must be greater than 0.")
+                vswr = _field("vswr", _parse_optional_or_none)
+                tx_chain_dbw = (
+                    10 * math.log10(power_w)
+                    - _field("ant_circuit_loss_db", _parse_optional)
+                    - (calculations.vswr_mismatch_loss_db(vswr) if vswr else 0.0)
+                )
             return {
+                "tx_chain_dbw": tx_chain_dbw,
                 "ionospheric_loss_db": losses["ionospheric_loss_db"],
                 "polarisation_loss_db": losses["polarisation_loss_db"],
                 "multipath_loss_db": losses["multipath_loss_db"],
@@ -3632,6 +3771,7 @@ class LinkBudgetApp:
             }
 
         self._static_lb_loss_providers[section] = _pass_link_losses
+        self._static_lb_refreshers.append(_refresh_states)
 
 
     def _render_fixed_link_budget_results(self, pages, budget, link_availability_pct, extra_info=None):
@@ -4514,33 +4654,30 @@ class LinkBudgetApp:
 
         antenna_row = ttk.Frame(passes_frame)
         antenna_row.pack(fill=tk.X, padx=5, pady=(10, 0))
-        self.apply_pattern_var = tk.BooleanVar(value=False)
-        pattern_check = ttk.Checkbutton(
+        ttk.Label(antenna_row, text="Satellite antenna pattern (gain vs angle from nadir):").pack(side=tk.LEFT)
+        _info_icon(
             antenna_row,
-            text="Apply the satellite antenna pattern",
-            variable=self.apply_pattern_var,
-            command=self._on_pass_losses_changed,
-        )
-        pattern_check.pack(side=tk.LEFT)
-        _add_tooltip(
-            pattern_check,
-            "Satellite antenna gain versus the angle from nadir (boresight), used for both "
-            "directions: at each time step the loss is the peak gain minus the gain towards the "
-            "ground station. Turn it on only when EIRP SAT and G/T SAT are given at the antenna "
-            "boresight. Leave it off when they already hold the values for the worst-case "
-            "geometry (e.g. EIRP from the Tx chain with the antenna gain at low elevation, as in "
-            "the static link budget): the pattern would count that roll-off a second time.",
-        )
+            "Satellite antenna gain versus the angle from nadir (boresight), applied at every time "
+            "step in both directions. Downlink: EIRP = Tx chain of the Static LB · Downlink tab + "
+            "the pattern gain towards the station (or EIRP SAT at the pattern peak when that tab "
+            "uses an EIRP value). Uplink: G/T SAT at the pattern peak minus the roll-off. The "
+            "ground station antenna tracks the satellite: no pointing loss. At startup the pattern "
+            f"is read from '{ANTENNA_PATTERN_FILE}' (next to the program), if present.",
+        ).pack(side=tk.LEFT, padx=(4, 0))
         load_antenna_btn = ttk.Button(
             antenna_row, text="Load Antenna Pattern...", command=self.load_antenna_pattern_file
         )
-        load_antenna_btn.pack(side=tk.LEFT, padx=(14, 6))
+        load_antenna_btn.pack(side=tk.LEFT, padx=(12, 6))
         _add_tooltip(
             load_antenna_btn,
             "Load the satellite antenna gain pattern from a .csv/.txt file: two columns, angle "
             "from the antenna boresight (nadir) in degrees and gain in dBi.",
         )
         ttk.Button(antenna_row, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(side=tk.LEFT)
+        self.pattern_file_var = tk.StringVar(value="Pattern: built-in example (no file loaded)")
+        ttk.Label(passes_frame, textvariable=self.pattern_file_var, foreground=PALETTE["text_muted"]).pack(
+            anchor="w", padx=5, pady=(4, 0)
+        )
 
         contact_frame = ttk.Frame(passes_frame)
         contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
