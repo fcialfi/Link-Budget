@@ -226,13 +226,14 @@ def synthetic_tle(
     norad_id: int = SYNTHETIC_NORAD_ID,
     eccentricity: float = 0.0,
     arg_perigee_deg: float = 0.0,
+    arg_latitude_deg: float = 0.0,
 ) -> Tle:
     """TLE of a mission not launched yet, from its mean orbital elements.
 
     ``altitude_km`` is the mean semi-major axis minus the equatorial radius;
     without ``inclination_deg`` the orbit is sun-synchronous. The epoch is
     ``when`` (use the start of the analysed day), with the satellite at the
-    ascending node. No drag. The mean motion of the TLE is set so that SGP4
+    argument of latitude ``arg_latitude_deg`` (0: at the ascending node). No drag. The mean motion of the TLE is set so that SGP4
     flies the nodal period of the J2 theory: the pass times then stay right
     over the day analysed (a plain Keplerian mean motion would drift by
     about a minute per orbit).
@@ -252,8 +253,8 @@ def synthetic_tle(
         raise ValueError("inclination must be between 0 and 180°")
     raan = raan_for_ltan_deg(ltan_h, when)
     arg_perigee = arg_perigee_deg % 360.0
-    # At the ascending node: argument of latitude 0, so true (≈ mean) anomaly = -ω.
-    mean_anomaly = (-arg_perigee) % 360.0
+    # Argument of latitude u = ω + true anomaly (≈ mean anomaly, nearly circular orbit).
+    mean_anomaly = (arg_latitude_deg - arg_perigee) % 360.0
 
     target_rate = 2 * math.pi / nodal_period_min(a, eccentricity, inclination)  # rad/min
     revs_per_day = 1440.0 / nodal_period_min(a, eccentricity, inclination)

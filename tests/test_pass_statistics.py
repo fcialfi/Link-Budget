@@ -108,3 +108,54 @@ def test_compute_calls_each_day():
     assert [d.day for d in seen] == [30, 31, 1]
     with pytest.raises(ValueError):
         ps.compute(samples, datetime.date(2026, 10, 30), 0, 600)
+
+
+def test_latency_requirement():
+    # As in test_memory_model...: each dump takes the data of the hour before it.
+    d1 = _day(1, [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 5])
+    result = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4,
+                          latency_requirement=(45.0, 90.0))
+    # Latencies uniform from 0 to 60 min: 75 % within 45 min, 90 % within 54 min.
+    assert result.latency_fraction(45.0) == pytest.approx(0.75)
+    assert result.summary["latency_within_pct"] == pytest.approx(75.0)
+    assert result.summary["latency_at_required_pct_min"] == pytest.approx(54.0, abs=0.01)
+    assert result.summary["latency_requirement_met"] is False
+    assert result.latency_fraction(60.0) == pytest.approx(1.0)
+
+
+def _sat_day(visible, margin=5.0):
+    start = datetime.datetime(2026, 10, 1, tzinfo=UTC)
+    visible = np.array(visible, dtype=bool)
+    return ps.DaySamples(start, np.where(visible, 20.0, -5.0), visible, np.where(visible, margin, np.nan))
+
+
+def test_constellation_station_conflict():
+    # Two satellites seen together by the only station in samples 1-2: one waits.
+    day = {
+        "S1": {"G": _sat_day([0, 1, 1, 0, 0, 0])},
+        "S2": {"G": _sat_day([0, 1, 1, 1, 0, 0])},
+    }
+    result = ps.simulate_constellation([day], step_s=60, info_bitrate_bps=1e6, generated_bps=1e4)
+    s1, s2 = result.satellites
+    # Same memory: S1 (first) gets the station in sample 1 and keeps it while its pass lasts
+    # (sample 2), although S2 then has more data; S2 is served in sample 3 only.
+    assert s1["served_min_per_day"] == 2.0 and s2["served_min_per_day"] == 1.0
+    assert s2["conflict_min_per_day"] == 2.0
+    assert s1["conflict_min_per_day"] + s2["conflict_min_per_day"] == 2.0
+    assert result.stations[0]["served_min_per_day"] == 3.0
+    assert result.stations[0]["contention_min_per_day"] == 2.0
+    assert result.summary["satellites"] == 2
+
+
+def test_constellation_two_stations_serve_both():
+    day = {
+        "S1": {"A": _sat_day([0, 1, 1, 0]), "B": _sat_day([0, 1, 1, 0], margin=3.0)},
+        "S2": {"A": _sat_day([0, 1, 1, 0], margin=6.0), "B": _sat_day([0, 0, 0, 0])},
+    }
+    result = ps.simulate_constellation([day], step_s=60, info_bitrate_bps=1e6, generated_bps=1e4)
+    assert result.summary["conflict_min_per_day"] == 0.0
+    by_station = {s["station"]: s for s in result.stations}
+    assert by_station["A"]["served_min_per_day"] == 2.0
+    assert by_station["B"]["served_min_per_day"] == 2.0
+    # Data generated before each dump: everything generated up to the last dump is on ground.
+    assert result.summary["downloaded_mb_per_day"] == pytest.approx(2 * 3 * 60 * 1e4 / 8e6)

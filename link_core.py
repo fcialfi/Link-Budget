@@ -475,3 +475,36 @@ def station_from_catalogue(name: str, default_diameter_m: float = 3.0) -> Statio
         d_gs=calculations.GROUND_STATION_DIAMETERS.get(name, default_diameter_m),
         mask=calculations.load_horizon_mask(mask_path) if mask_path else None,
     )
+
+
+def constellation_tles(orbit: dict, epoch: datetime, name: str) -> list[tuple[str, tuple[str, str]]]:
+    """Synthetic TLEs of every satellite of a custom-orbit constellation.
+
+    ``orbit`` is the orbit section of the mission's parameters: the planes
+    are its LTAN list; ``satellites_per_plane`` satellites (default 1) are
+    spaced evenly in each plane, and ``phasing_deg`` (default 0) shifts the
+    argument of latitude from one plane to the next. Returns (name, TLE
+    lines) per satellite, e.g. "EPS-Sterna 15:30 #1".
+    """
+    import tle_source
+
+    planes = orbit.get("ltan") or ["22:20"]
+    planes = planes if isinstance(planes, list) else [planes]
+    per_plane = max(1, int(orbit.get("satellites_per_plane") or 1))
+    phasing = float(orbit.get("phasing_deg") or 0.0)
+    result = []
+    for p, plane in enumerate(planes):
+        for j in range(per_plane):
+            tle = tle_source.synthetic_tle(
+                float(orbit.get("altitude_km", 628.0)),
+                tle_source.ltan_hours(plane),
+                epoch,
+                orbit.get("inclination_deg"),
+                name=f"{name} {plane} #{j + 1}".upper(),
+                norad_id=99900 + p * 10 + j,
+                eccentricity=float(orbit.get("eccentricity") or 0.0),
+                arg_perigee_deg=float(orbit.get("arg_perigee_deg") or 0.0),
+                arg_latitude_deg=(j * 360.0 / per_plane + p * phasing) % 360.0,
+            )
+            result.append((f"{name} {plane} #{j + 1}", (tle.line1, tle.line2)))
+    return result

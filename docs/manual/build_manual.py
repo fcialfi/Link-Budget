@@ -420,7 +420,8 @@ def content():
         "(nodal period 96.716 min, altitude over the ellipsoid 600–628 km). SGP4 adds its short-period terms "
         "to the mean elements, so the instantaneous altitude swings a few km more than in the reference "
         "table; the mean altitude and the pass times are those of the reference orbit. The orbit is saved in "
-        "the orbit section of the mission's parameters.json."))
+        "the orbit section of the mission's parameters.json. <b>Sats/plane</b> and <b>Phasing</b> define the "
+        "constellation used by the Statistics tab."))
     story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit and synthetic TLE.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
@@ -489,9 +490,23 @@ def content():
         "arrival on ground, first in first out; mean and maximum). The downlink keeps up when the mean "
         "capacity is at least the data generated per day. The rates are read from and saved to the parameters "
         "file (downlink_data_kbps).",
+        "<b>Latency Requirement</b> (min) and <b>Within</b> (% of data), with the on-board data rates: e.g. "
+        "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
+        "required time, the time within which the required share arrives, and whether the requirement is met. "
+        "Saved in the parameters file (latency_requirement).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
+        "<b>Whole constellation</b> (custom-orbit missions with several satellites): all the satellites of the "
+        "planes (LTAN list) × <b>Sats/plane</b>, evenly spaced in each plane and shifted by <b>Phasing</b> from "
+        "one plane to the next (custom orbit fields of the Orbit &amp; Passes tab, saved in the orbit section). "
+        "Each satellite has its own memory with the same data rates. Each station tracks one satellite at a "
+        "time and keeps it while the link closes; free stations go to the satellites with more data on board. "
+        "A satellite ready to download whose stations are all busy waits (<b>conflict</b>). The summary gives "
+        "the system figures (served minutes, conflicts, volume, memory, latency and requirement), the Per "
+        "Satellite table the figures of each satellite, the Per Station table the use of each station "
+        "(served minutes, volume, busy time, minutes with more than one satellite usable).",
+        "The <b>Per Station</b> table is also given for one satellite and several stations.",
     ])
     story += FIG("statistics_tables", "Per-day and per-pass tables.")
     story.append(P(
@@ -749,7 +764,7 @@ def content():
         "Options: <font face='Courier'>--download</font> (download the TLE first), "
         "<font face='Courier'>--plane hh:mm</font> (orbital plane of a custom-orbit mission), "
         "<font face='Courier'>--min-elevation</font>, <font face='Courier'>--required-ebno</font>, "
-        "<font face='Courier'>--required-margin</font>; <font face='Courier'>-h</font> lists them all.",
+        "<font face='Courier'>--required-margin</font>, <font face='Courier'>--constellation</font>, <font face='Courier'>--latency</font> / <font face='Courier'>--latency-pct</font>; <font face='Courier'>-h</font> lists them all.",
     ])
 
     # 10 ------------------------------------------------------------------
