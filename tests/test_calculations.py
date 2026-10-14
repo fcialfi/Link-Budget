@@ -1063,3 +1063,27 @@ def test_static_link_losses_matches_fixed_budget_terms():
     assert losses["total_db"] == pytest.approx(
         losses["ionospheric_loss_db"] + losses["polarisation_loss_db"] + 0.2 + losses["rx_pointing_loss_db"]
     )
+
+
+def test_off_nadir_angle_geometry():
+    # Overhead pass: the station is at nadir.
+    assert calculations.off_nadir_angle_deg(90.0, 628.0) == pytest.approx(0.0, abs=1e-6)
+    # Low elevation from 628 km: about 65°, consistent with the slant range.
+    angle = calculations.off_nadir_angle_deg(3.0, 628.0)
+    r = calculations.EARTH_RADIUS_KM
+    slant = calculations.slant_range_from_elevation(3.0, 628.0)
+    # Law of sines in the Earth centre / station / satellite triangle.
+    assert np.sin(np.radians(angle)) / r == pytest.approx(np.sin(np.radians(93.0)) / (r + 628.0))
+    assert 60.0 < angle < 70.0 and slant > 0
+
+
+def test_link_budget_eirp_from_tx_chain_and_pattern_gain():
+    params = calculations.calculate_link_budget_parameters(
+        **_base_kwargs(pre_off_boresight_angle=40.0, tx_chain_dbw=4.51)
+    )
+    gain = calculations.satellite_antenna_gain_dbi(40.0)
+    assert params["S/C Antenna Gain (dBi)"] == pytest.approx(gain)
+    assert params["EIRP (dBW)"] == pytest.approx(4.51 + gain)
+    # Without the Tx chain, EIRP SAT is taken at the pattern peak.
+    peak = calculations.calculate_link_budget_parameters(**_base_kwargs(pre_off_boresight_angle=40.0))
+    assert peak["EIRP (dBW)"] == pytest.approx(20.0 - calculations.antenna_pattern(40.0))
