@@ -1,6 +1,10 @@
 {
-  "project_name": "AWS",
-  "norad_id": 60543,
+  "project_name": "EPS-Sterna",
+  "orbit": {
+    "altitude_km": 628.0,
+    "ltan": "22:20",
+    "inclination_deg": null
+  },
   "eirp_sat_dbw": 4.51,
   "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,

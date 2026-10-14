@@ -42,13 +42,15 @@ if exist dist (
 %PY% -m PyInstaller --noconfirm gui.spec || goto :error
 
 echo === Copying the data files
-for %%f in ("ground_stations.txt" "tle.txt" "parameters.json" "Antenna Pattern Default.txt") do (
+for %%f in ("ground_stations.txt" "satellites.json" "Antenna Pattern Default.txt") do (
     if exist %%f (
         copy /y %%f "dist\%APP%\" >nul || goto :error
     ) else (
         echo WARNING: %%f not found, not copied
     )
 )
+rem The mission folders: parameters, antenna pattern and last TLE of each satellite.
+xcopy /e /i /y /q missions "dist\%APP%\missions" >nul || goto :error
 
 echo.
 echo Done: dist\%APP%\%APP%.exe

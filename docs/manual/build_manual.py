@@ -141,7 +141,13 @@ def CODE(text):
     return Paragraph(text.replace("\n", "<br/>"), S["code"])
 
 
+_FIGURES = [0]
+
+
 def FIG(name, caption, width_cm=16.5):
+    """A screenshot with its caption, numbered in order of appearance."""
+    _FIGURES[0] += 1
+    caption = f"Figure {_FIGURES[0]} – {caption}"
     path = os.path.join(IMG, f"{name}.png")
     if not os.path.exists(path):
         return [P(f"<i>[missing screenshot {name}.png: run take_screenshots.py]</i>")]
@@ -356,7 +362,7 @@ def content():
 
     # 3 -------------------------------------------------------------------
     story += H1("Main window")
-    story += FIG("orbit_passes", "Figure 1 – Main window, Orbit &amp; Passes tab.")
+    story += FIG("orbit_passes", "Main window, Orbit &amp; Passes tab.")
     story.append(P(
         "The header shows the program version, the licence and the <b>About</b> (version, "
         "author and licence; also F1) and <b>Exit</b> buttons. "
@@ -381,7 +387,29 @@ def content():
 
     # 4 -------------------------------------------------------------------
     story += H1("Orbit & Passes tab")
-    story += H2("Project")
+    story += H2("Satellite and project")
+    story.append(P(
+        "<b>Satellite</b> lists the satellites of <b>satellites.json</b> (EUMETSAT missions; the file can be "
+        "edited). Each satellite has a folder <b>missions/&lt;name&gt;</b> next to the program:"))
+    story += BUL([
+        "<b>parameters.json</b>: the link budget parameters of the mission (all the fields of the Downlink, "
+        "Uplink and Static LB tabs). When it is present they are loaded and the link budget is available.",
+        "Without parameters.json only the <b>contact analysis</b> is done: the passes with their times, "
+        "duration and maximum elevation. The Downlink, Uplink and Static LB tabs are disabled. To add the "
+        "link budget, copy the parameters.json of a similar mission (e.g. AWS) into the folder and edit it.",
+        "<b>antenna_pattern.txt</b> (optional): the satellite antenna pattern of the mission; otherwise "
+        "Antenna Pattern Default.txt is used.",
+        "<b>tle.txt</b>: the last TLE downloaded. On selection the TLE is downloaded again when it is older "
+        "than one day; without internet the saved one is used.",
+    ])
+    story.append(P(
+        "A mission not launched yet (e.g. EPS-Sterna, of which AWS is the protoflight) has "
+        "<b>custom orbit</b>: enter the <b>altitude</b> of the circular orbit, the <b>LTAN</b> (local time of "
+        "the ascending node) and, if it is not sun-synchronous, the <b>inclination</b> (empty: computed for a "
+        "sun-synchronous orbit). The program builds a synthetic TLE with its epoch at the analysed date "
+        "(also with <b>Generate TLE</b>), so that passes and link budgets are computed as for a launched "
+        "satellite. The orbit is saved in the orbit section of the mission's parameters.json."))
+    story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit and synthetic TLE.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
@@ -416,7 +444,7 @@ def content():
 
     # 5 -------------------------------------------------------------------
     story += H1("Downlink tab")
-    story += FIG("downlink_params", "Figure 2 – Downlink tab: parameters and link losses.")
+    story += FIG("downlink_params", "Downlink tab: parameters and link losses.")
     story += H2("Parameters")
     story += TABLE([
         ["Field", "Meaning"],
@@ -445,7 +473,7 @@ def content():
         "budget. The panel shows the values applied. The ground station antenna tracks the satellite and has "
         "no pointing loss."))
     story += H2("Results of the selected pass")
-    story += FIG("downlink_results", "Figure 3 – Plots and table of a pass.")
+    story += FIG("downlink_results", "Plots and table of a pass.")
     story.append(P(
         "The plots show elevation, Eb/No and C/(No+Io), and Doppler shift along the pass; the table gives every "
         "30 s step. <b>Calculate DL Link Budget</b> recomputes the budget with new parameters without repeating "
@@ -464,7 +492,7 @@ def content():
 
     # 6 -------------------------------------------------------------------
     story += H1("Uplink tab")
-    story += FIG("uplink", "Figure 4 – Uplink tab.")
+    story += FIG("uplink", "Uplink tab.")
     story.append(P(
         "Same principle as the Downlink tab, for the ground station to satellite link: EIRP GS, uplink "
         "frequency, G/T SAT, satellite demodulator loss, uplink attenuations and baseband parameters. G/T SAT is "
@@ -475,7 +503,7 @@ def content():
     # 7 -------------------------------------------------------------------
     story += H1("Static link budget tabs")
     story += H2("Layout")
-    story += FIG("static_geometry", "Figure 5 – Static LB · Downlink: toolstrip, sidebar and an input page.")
+    story += FIG("static_geometry", "Static LB · Downlink: toolstrip, sidebar and an input page.")
     story += BUL([
         "<b>Toolstrip</b>: RUN – <b>Calculate</b> (blue when there are no results yet or the inputs changed); "
         "FILE – <b>Load…</b>, <b>Save…</b>, <b>Reset</b>; EXPORT – <b>Export CSV…</b>, <b>Export PDF…</b> "
@@ -494,7 +522,7 @@ def content():
         "attenuation and the ionospheric zone), elevation angle (the worst case: the minimum operational "
         "elevation) and satellite altitude, which give the slant range; antenna diameter and link "
         "availability (shared); tropospheric scintillation (off by default)."))
-    story += FIG("static_data", "Figure 6 – Data Channel page with the CCSDS framing.")
+    story += FIG("static_data", "Data Channel page with the CCSDS framing.")
     story.append(H3("Data Channel & Requirements"))
     story.append(P(
         "<b>Data framing</b>: <i>Manual</i> (enter overhead and formatting factor) or <i>CCSDS TM</i> "
@@ -504,7 +532,7 @@ def content():
         "with a Source Packet length also the packet headers, CUC data field header and packet error control "
         "are deducted) and the transfer frame and information bit rates, shown in grey boxes. The (i) icons give "
         "the detailed breakdown. Then the required Eb/No and required nominal margin."))
-    story += FIG("static_tx", "Figure 7 – Transmitter page: Tx chain and antenna gain from the pattern.")
+    story += FIG("static_tx", "Transmitter page: Tx chain and antenna gain from the pattern.")
     story.append(H3("Transmitter"))
     story.append(P(
         "<b>EIRP source</b>: <i>EIRP value</i> (shared field) or <i>Tx chain</i>: EIRP = transmitter power − "
@@ -512,7 +540,7 @@ def content():
         "satellite antenna pattern at this elevation</b> reads the gain from the pattern at the angle from nadir "
         "of the station (e.g. 65.4° at 3° and 628 km); the Tx antenna pointing loss is then not used. The EIRP "
         "actually used is shown under the chain. Tx axial ratio and Tx pointing loss complete the page."))
-    story += FIG("static_propagation", "Figure 8 – Propagation page: ionospheric loss from S4.")
+    story += FIG("static_propagation", "Propagation page: ionospheric loss from S4.")
     story.append(H3("Propagation & PFD Limit"))
     story.append(P(
         "<b>Ionospheric loss</b>: <i>Manual</i> or <i>From S4 scintillation index</i> (ITU-R P.531, chapter "
@@ -520,7 +548,7 @@ def content():
         "other attenuations (shared; values ≥ 1 dB are flagged, as they may count the atmospheric losses "
         "twice), polarisation mismatch loss (entered, or computed from the Tx and Rx axial ratios when empty), "
         "multipath losses and, on the downlink, the PFD limit."))
-    story += FIG("static_ul_rx", "Figure 9 – Static LB · Uplink, Receiver page: G/T SAT from the pattern.")
+    story += FIG("static_ul_rx", "Static LB · Uplink, Receiver page: G/T SAT from the pattern.")
     story.append(H3("Receiver"))
     story.append(P(
         "G/T and demodulator loss (shared), modulation degradation, Rx axial ratio, Rx antenna depointing angle "
@@ -535,7 +563,7 @@ def content():
         "UNI (uniform) or GAU (Gaussian with the limits at ±3σ). They give the statistical margins (chapter "
         "8.7)."))
     story += H2("Result pages")
-    story += FIG("static_summary", "Figure 10 – Summary page.")
+    story += FIG("static_summary", "Summary page.")
     story += BUL([
         "<b>Summary</b>: overall PASS/FAIL, one tile per key result (Eb/No, Data Recovery Margin, MEAN − 3σ, "
         "Worst Case RSS, PFD margin) with clear-sky / rain-faded values and requirement, notes (e.g. elevation "
@@ -546,7 +574,7 @@ def content():
         "<b>With Tolerances</b>: each toleranced quantity down to the margin, with nominal, favourable, adverse, "
         "mean, variance and distribution (rain-faded condition).",
     ])
-    story += FIG("static_link_budget", "Figure 11 – Link Budget page.")
+    story += FIG("static_link_budget", "Link Budget page.")
     story += H2("Exports")
     story.append(P(
         "<b>Export CSV…</b> saves inputs and results as a table. <b>Export PDF…</b> creates an A4 report: "

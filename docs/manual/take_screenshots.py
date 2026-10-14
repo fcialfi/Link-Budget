@@ -108,6 +108,10 @@ def main() -> None:
     app.main_tabs.select(ul)
     static_page(ul, "Receiver (S/C)")
     shot("static_ul_rx")
+
+    # A mission not launched yet: custom orbit and synthetic TLE.
+    app.select_satellite("EPS-Sterna")
+    app.main_tabs.select(tabs[0]); scroll(0); shot("custom_orbit", height=460)
     root.destroy()
 
 

@@ -62,3 +62,46 @@ def test_wrong_satellite_rejected(monkeypatch):
     monkeypatch.setattr(tle_source, "_get", lambda url: json.dumps(answer) if "satnogs" in url else "")
     with pytest.raises(RuntimeError, match="not 12345"):
         tle_source.fetch_tle(12345)
+
+
+def test_sso_inclination():
+    assert tle_source.sso_inclination_deg(628) == pytest.approx(97.90, abs=0.02)
+    assert tle_source.sso_inclination_deg(800) == pytest.approx(98.60, abs=0.02)
+
+
+def test_ltan_parsing():
+    assert tle_source.ltan_hours("22:20") == pytest.approx(22 + 1 / 3)
+    assert tle_source.ltan_hours("9.5") == 9.5
+    with pytest.raises(ValueError):
+        tle_source.ltan_hours("25:00")
+
+
+def test_aws_ltan_from_its_tle():
+    # The ascending node of AWS is at about 22:20 local time.
+    assert tle_source.ltan_of_tle(L1, L2) == pytest.approx(22.33, abs=0.05)
+
+
+def test_synthetic_tle_is_valid_and_has_the_requested_orbit():
+    when = datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc)
+    tle = tle_source.synthetic_tle(628, tle_source.ltan_hours("22:20"), when, name="EPS-STERNA")
+    assert len(tle.line1) == len(tle.line2) == 69
+    assert tle_source.checksum_ok(tle.line1) and tle_source.checksum_ok(tle.line2)
+    assert tle_source.epoch(tle.line1) == when
+    assert float(tle.line2[8:16]) == pytest.approx(97.8983, abs=1e-4)
+    assert tle_source.ltan_of_tle(tle.line1, tle.line2) == pytest.approx(22 + 1 / 3, abs=1e-3)
+    revs_per_day = float(tle.line2[52:63])
+    assert revs_per_day == pytest.approx(14.804, abs=0.001)
+
+    skyfield = pytest.importorskip("skyfield.api")
+    ts = skyfield.load.timescale()
+    sat = skyfield.EarthSatellite(tle.line1, tle.line2, "X", ts)
+    height = skyfield.wgs84.height_of(sat.at(ts.utc(2026, 10, 14, 0, 0))).km
+    assert height == pytest.approx(628, abs=5)
+
+
+def test_synthetic_tle_with_inclination_and_bad_inputs():
+    when = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    tle = tle_source.synthetic_tle(800, 10.0, when, inclination_deg=55.0)
+    assert float(tle.line2[8:16]) == 55.0
+    with pytest.raises(ValueError):
+        tle_source.synthetic_tle(50, 10.0, when)

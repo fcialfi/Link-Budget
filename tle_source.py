@@ -11,6 +11,7 @@ apply; on Windows these are the ones of the Internet options.
 from __future__ import annotations
 
 import datetime
+import math
 import json
 import urllib.request
 from dataclasses import dataclass
@@ -114,3 +115,107 @@ def fetch_tle(norad_id: int) -> Tle:
         except Exception as exc:  # network, HTTP, JSON or TLE errors
             errors.append(f"{name}: {exc or type(exc).__name__}")
     raise RuntimeError("Could not download the TLE:\n" + "\n".join(f"- {e}" for e in errors))
+
+
+# ---------------------------------------------------------------------------
+# Synthetic TLE for a mission not launched yet
+# ---------------------------------------------------------------------------
+
+MU_KM3_S2 = 398600.4418
+EARTH_RADIUS_KM = 6378.137
+J2 = 1.08262668e-3
+# Rotation of the orbit plane needed for a sun-synchronous orbit (360° per tropical year).
+SSO_NODE_RATE_RAD_S = 2 * math.pi / (365.2421897 * 86400.0)
+SYNTHETIC_NORAD_ID = 99999
+
+
+def sso_inclination_deg(altitude_km: float) -> float:
+    """Inclination of the circular sun-synchronous orbit at ``altitude_km`` (J2 only)."""
+    a = EARTH_RADIUS_KM + altitude_km
+    n = math.sqrt(MU_KM3_S2 / a**3)
+    cos_i = -SSO_NODE_RATE_RAD_S / (1.5 * n * J2 * (EARTH_RADIUS_KM / a) ** 2)
+    if not -1.0 <= cos_i <= 1.0:
+        raise ValueError(f"no sun-synchronous orbit at {altitude_km:g} km")
+    return math.degrees(math.acos(cos_i))
+
+
+def sun_right_ascension_deg(when: datetime.datetime) -> float:
+    """Apparent right ascension of the Sun (low-precision formula, ~0.01°)."""
+    jd = when.timestamp() / 86400.0 + 2440587.5
+    n = jd - 2451545.0
+    mean_lon = math.radians((280.460 + 0.9856474 * n) % 360.0)
+    anomaly = math.radians((357.528 + 0.9856003 * n) % 360.0)
+    ecl_lon = mean_lon + math.radians(1.915) * math.sin(anomaly) + math.radians(0.020) * math.sin(2 * anomaly)
+    obliquity = math.radians(23.439 - 0.0000004 * n)
+    ra = math.atan2(math.cos(obliquity) * math.sin(ecl_lon), math.cos(ecl_lon))
+    return math.degrees(ra) % 360.0
+
+
+def ltan_hours(text: str) -> float:
+    """Parse a local time of the ascending node, "hh:mm" or decimal hours."""
+    text = str(text).strip()
+    if ":" in text:
+        hours, minutes = text.split(":", 1)
+        value = int(hours) + int(minutes) / 60.0
+    else:
+        value = float(text)
+    if not 0.0 <= value < 24.0:
+        raise ValueError(f"LTAN {text} is not between 00:00 and 24:00")
+    return value
+
+
+def raan_for_ltan_deg(ltan_h: float, when: datetime.datetime) -> float:
+    """RAAN that puts the ascending node at local time ``ltan_h`` at ``when``."""
+    return (sun_right_ascension_deg(when) + (ltan_h - 12.0) * 15.0) % 360.0
+
+
+def ltan_of_tle(line1: str, line2: str) -> float:
+    """Local time of the ascending node of a TLE, at its epoch (hours)."""
+    raan = float(line2[17:25])
+    return ((raan - sun_right_ascension_deg(epoch(line1))) / 15.0 + 12.0) % 24.0
+
+
+def _with_checksum(line: str) -> str:
+    total = sum(int(c) if c.isdigit() else (1 if c == "-" else 0) for c in line[:68])
+    return line[:68] + str(total % 10)
+
+
+def synthetic_tle(
+    altitude_km: float,
+    ltan_h: float,
+    when: datetime.datetime,
+    inclination_deg: float | None = None,
+    name: str = "CUSTOM ORBIT",
+    norad_id: int = SYNTHETIC_NORAD_ID,
+) -> Tle:
+    """TLE of a circular orbit, for the passes of a mission not launched yet.
+
+    ``altitude_km`` is above the equatorial radius; without
+    ``inclination_deg`` the orbit is sun-synchronous. The epoch is ``when``
+    (use the start of the analysed day) and the satellite is at the
+    ascending node at the epoch. No drag. The elements are taken as SGP4
+    mean elements, which is accurate enough for preliminary pass geometry.
+    """
+    if not 100.0 <= altitude_km <= 40000.0:
+        raise ValueError("altitude must be between 100 and 40000 km")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    inclination = sso_inclination_deg(altitude_km) if inclination_deg is None else float(inclination_deg)
+    if not 0.0 <= inclination <= 180.0:
+        raise ValueError("inclination must be between 0 and 180°")
+    a = EARTH_RADIUS_KM + altitude_km
+    revs_per_day = math.sqrt(MU_KM3_S2 / a**3) * 86400.0 / (2 * math.pi)
+    raan = raan_for_ltan_deg(ltan_h, when)
+
+    start = datetime.datetime(when.year, 1, 1, tzinfo=datetime.timezone.utc)
+    day = (when - start).total_seconds() / 86400.0 + 1.0
+    line1 = (
+        f"1 {norad_id:05d}U 00000A   {when.year % 100:02d}{day:012.8f}"
+        f"  .00000000  00000-0  00000-0 0  999"
+    )
+    line2 = (
+        f"2 {norad_id:05d} {inclination:8.4f} {raan:8.4f} 0001000   0.0000   0.0000 "
+        f"{revs_per_day:11.8f}    1"
+    )
+    line1, line2 = _with_checksum(line1.ljust(68)), _with_checksum(line2.ljust(68))
+    return Tle(name, line1, line2, "synthetic")
