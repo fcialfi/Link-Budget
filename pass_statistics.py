@@ -69,6 +69,37 @@ class StatisticsResult:
     passes: list[PassRecord] = field(default_factory=list)
     days: list[DayRecord] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    # Downloaded chunks: (bits, smallest latency s, largest latency s); the bits
+    # of a chunk were generated uniformly over that latency range.
+    latency_chunks: list[tuple[float, float, float]] = field(default_factory=list)
+
+    def latency_fraction(self, latency_min: float) -> Optional[float]:
+        """Share (0-1) of the downloaded data that reached the ground within ``latency_min``."""
+        total = sum(bits for bits, _lo, _hi in self.latency_chunks)
+        if not total:
+            return None
+        limit = latency_min * 60.0
+        within = 0.0
+        for bits, lo, hi in self.latency_chunks:
+            if hi <= limit:
+                within += bits
+            elif lo < limit:
+                within += bits * (limit - lo) / (hi - lo)
+        return within / total
+
+    def latency_percentile(self, percent: float) -> Optional[float]:
+        """Latency (min) within which ``percent`` % of the downloaded data reached the ground."""
+        if not self.latency_chunks:
+            return None
+        target = percent / 100.0
+        low, high = 0.0, max(hi for _bits, _lo, hi in self.latency_chunks) / 60.0
+        for _ in range(60):
+            mid = (low + high) / 2
+            if self.latency_fraction(mid) >= target:
+                high = mid
+            else:
+                low = mid
+        return high
 
 
 def combine_stations(samples: dict[str, DaySamples]) -> DaySamples:
@@ -132,6 +163,7 @@ def aggregate(
     info_bitrate_bps: Optional[float] = None,
     min_margin_db: float = 0.0,
     generated_bps: Optional[float] = None,
+    latency_requirement: Optional[tuple[float, float]] = None,
 ) -> StatisticsResult:
     """Passes, daily figures and a summary from the samples of consecutive days.
 
@@ -142,6 +174,9 @@ def aggregate(
     on board) the memory is simulated, starting empty: the downloaded volume
     is at most what is on board. The gap after a pass lasts until the next
     pass starts and counts for the day the next pass starts.
+
+    ``latency_requirement`` = (minutes, percent), e.g. (60, 90) for "90 % of
+    the data on ground within 60 min", is checked on the downloaded data.
     """
     days = list(days)
     result = StatisticsResult()
@@ -189,6 +224,7 @@ def aggregate(
                 newest = (downloaded_total + take) / generated_bps
                 max_latency = max(max_latency, t_now - oldest)
                 latencies_weighted += take * (t_now - (oldest + newest) / 2)
+                result.latency_chunks.append((take, t_now - newest, t_now - oldest))
                 downloaded_total += take
             memory -= take
             downloaded_bits[i] = take
@@ -264,6 +300,16 @@ def aggregate(
             final_on_board_mb=float(memory_end_bits[-1]) / 8e6,
             **latency,
         )
+        if latency_requirement is not None and result.latency_chunks:
+            minutes, percent = latency_requirement
+            within = float(result.latency_fraction(minutes)) * 100.0
+            summary.update(
+                latency_requirement_min=minutes,
+                latency_requirement_pct=percent,
+                latency_within_pct=within,
+                latency_at_required_pct_min=result.latency_percentile(percent),
+                latency_requirement_met=bool(within >= percent),
+            )
     result.summary = summary
     return result
 

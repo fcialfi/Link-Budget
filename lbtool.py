@@ -146,6 +146,7 @@ def cmd_statistics(args) -> None:
             info_bitrate_bps=link.info_bitrate_bps,
             min_margin_db=float(margin or 0.0),
             generated_bps=sum(rates) * 1e3 if rates else None,
+            latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
         )
     analyses = [link_core.PassAnalysis(tle, st, link, args.min_elevation) for st in stations]
 
@@ -213,6 +214,9 @@ def main(argv=None) -> None:
     stats.add_argument("--instruments", type=float, help="instrument data rate on the downlink [kbps]")
     stats.add_argument("--hktm", type=float, help="HKTM rate on the downlink [kbps]")
     stats.add_argument("--other", type=float, help="other data rate on the downlink [kbps]")
+    stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
+    stats.add_argument("--latency-pct", type=float, default=100.0,
+                       help="share of the data that must meet it [%%] (default 100)")
     stats.set_defaults(func=cmd_statistics)
 
     args = parser.parse_args(argv)

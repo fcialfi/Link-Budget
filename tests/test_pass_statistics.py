@@ -108,3 +108,16 @@ def test_compute_calls_each_day():
     assert [d.day for d in seen] == [30, 31, 1]
     with pytest.raises(ValueError):
         ps.compute(samples, datetime.date(2026, 10, 30), 0, 600)
+
+
+def test_latency_requirement():
+    # As in test_memory_model...: each dump takes the data of the hour before it.
+    d1 = _day(1, [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 5])
+    result = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4,
+                          latency_requirement=(45.0, 90.0))
+    # Latencies uniform from 0 to 60 min: 75 % within 45 min, 90 % within 54 min.
+    assert result.latency_fraction(45.0) == pytest.approx(0.75)
+    assert result.summary["latency_within_pct"] == pytest.approx(75.0)
+    assert result.summary["latency_at_required_pct_min"] == pytest.approx(54.0, abs=0.01)
+    assert result.summary["latency_requirement_met"] is False
+    assert result.latency_fraction(60.0) == pytest.approx(1.0)

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- Statistics: latency requirement (share of the data on ground within a time).
+- Fix: crash of the statistics on Windows (garbage collection in the worker thread).
+
 ## 1.1.0
 
 ### Missions and orbits

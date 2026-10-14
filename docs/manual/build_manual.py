@@ -489,6 +489,10 @@ def content():
         "arrival on ground, first in first out; mean and maximum). The downlink keeps up when the mean "
         "capacity is at least the data generated per day. The rates are read from and saved to the parameters "
         "file (downlink_data_kbps).",
+        "<b>Latency Requirement</b> (min) and <b>Within</b> (% of data), with the on-board data rates: e.g. "
+        "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
+        "required time, the time within which the required share arrives, and whether the requirement is met. "
+        "Saved in the parameters file (latency_requirement).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
@@ -749,7 +753,7 @@ def content():
         "Options: <font face='Courier'>--download</font> (download the TLE first), "
         "<font face='Courier'>--plane hh:mm</font> (orbital plane of a custom-orbit mission), "
         "<font face='Courier'>--min-elevation</font>, <font face='Courier'>--required-ebno</font>, "
-        "<font face='Courier'>--required-margin</font>; <font face='Courier'>-h</font> lists them all.",
+        "<font face='Courier'>--required-margin</font>, <font face='Courier'>--latency</font> / <font face='Courier'>--latency-pct</font>; <font face='Courier'>-h</font> lists them all.",
     ])
 
     # 10 ------------------------------------------------------------------

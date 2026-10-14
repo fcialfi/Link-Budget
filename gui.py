@@ -1174,6 +1174,10 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        latency = payload.get("latency_requirement")
+        if isinstance(latency, dict) and hasattr(self, "stats_latency_var"):
+            self.stats_latency_var.set("" if latency.get("minutes") is None else f"{latency['minutes']:g}")
+            self.stats_latency_pct_var.set("" if latency.get("percent") is None else f"{latency['percent']:g}")
         flows = payload.get("downlink_data_kbps")
         if isinstance(flows, dict) and hasattr(self, "stats_instrument_var"):
             for key, var in (
@@ -1674,6 +1678,8 @@ class LinkBudgetApp:
         self.stats_instrument_var = tk.StringVar(value="")
         self.stats_hktm_var = tk.StringVar(value="")
         self.stats_other_var = tk.StringVar(value="")
+        self.stats_latency_var = tk.StringVar(value="")
+        self.stats_latency_pct_var = tk.StringVar(value="")
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -1690,6 +1696,11 @@ class LinkBudgetApp:
             ("Other Data [kbps]", self.stats_other_var,
              "Optional: anything else sent on this downlink band (e.g. ancillary data). The uplink "
              "(telecommands) is not part of the volume."),
+            ("Latency Requirement [min]", self.stats_latency_var,
+             "Optional, with the on-board data rates: maximum time from generation on board to arrival "
+             "on ground, e.g. 60."),
+            ("Within [% of data]", self.stats_latency_pct_var,
+             "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
         )
         grid = ttk.Frame(inputs)
         grid.pack(side=tk.LEFT, anchor="n")
@@ -1873,8 +1884,13 @@ class LinkBudgetApp:
         if any(v is not None and v < 0 for v in flows.values()):
             raise ValueError("The on-board data rates must be positive.")
         given = {name: value for name, value in flows.items() if value}
+        latency = _number(self.stats_latency_var, "Latency Requirement [min]")
+        latency_pct = _number(self.stats_latency_pct_var, "Within [% of data]")
+        if latency is not None and (latency <= 0 or not 0 < (latency_pct or 100.0) <= 100):
+            raise ValueError("The latency requirement must be > 0 min, for 0–100 % of the data.")
         inputs["link"] = link
         inputs["budget"] = {
+            "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
             "required_ebno": float(required_ebno),
             "required_margin": float(required_margin) if required_margin is not None else 0.0,
             "info_bitrate_bps": link.info_bitrate_bps,
@@ -1940,6 +1956,7 @@ class LinkBudgetApp:
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     generated_bps=budget["generated_bps"] if budget else None,
+                    latency_requirement=budget["latency_requirement"] if budget else None,
                 )
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
@@ -1997,6 +2014,14 @@ class LinkBudgetApp:
                     + ")    "
                     f"Downloaded: {s['downloaded_mb_per_day_mean']:.0f} MB/day"
                 )
+                if "latency_requirement_min" in s:
+                    lines.append(
+                        f"Latency requirement: {s['latency_requirement_pct']:g}% of the data within "
+                        f"{s['latency_requirement_min']:g} min  →  {s['latency_within_pct']:.1f}% within "
+                        f"{s['latency_requirement_min']:g} min; {s['latency_requirement_pct']:g}% within "
+                        f"{s['latency_at_required_pct_min']:.1f} min  "
+                        + ("✓ met" if s["latency_requirement_met"] else "✗ NOT met")
+                    )
                 lines.append(
                     f"On board: max {s['max_on_board_mb']:.0f} MB, {s['final_on_board_mb']:.0f} MB at the end    "
                     f"Data latency: mean {_fmt(s['mean_latency_min'])} min, max {_fmt(s['max_latency_min'])} min    "
@@ -4587,6 +4612,16 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
+            try:
+                latency = {
+                    "minutes": float(self.stats_latency_var.get()) if self.stats_latency_var.get().strip() else None,
+                    "percent": float(self.stats_latency_pct_var.get())
+                    if self.stats_latency_pct_var.get().strip() else None,
+                }
+            except ValueError:
+                latency = {"minutes": None}
+            if latency.get("minutes") is not None:
+                panel_values["latency_requirement"] = latency
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values
