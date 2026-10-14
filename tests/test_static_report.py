@@ -218,3 +218,22 @@ def test_summary_checks_and_verdict(budget):
 
 def test_summary_verdict_without_requirements():
     assert static_report.summary_verdict([])[0] is None
+
+
+def test_report_shows_project_name(tmp_path, monkeypatch, budget):
+    pytest.importorskip("reportlab")
+    from reportlab import rl_config
+
+    monkeypatch.setattr(rl_config, "pageCompression", 0)  # readable text in the PDF
+    path = tmp_path / "report.pdf"
+    context = static_report.ReportContext(
+        title="Fixed-Elevation Downlink Link Budget",
+        direction="Downlink (S/C → GS)",
+        station="Svalbard",
+        elevation_deg=3.0,
+        link_availability_pct=99.99,
+        project="AWS",
+    )
+    static_report.build_static_report_pdf(str(path), budget, EXTRA_INFO, context)
+    data = path.read_bytes()
+    assert b"PROJECT: AWS" in data
