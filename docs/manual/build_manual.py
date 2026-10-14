@@ -397,9 +397,11 @@ def content():
         "Without parameters.json only the <b>contact analysis</b> is done: the passes with their times, "
         "duration and maximum elevation. The Downlink, Uplink and Static LB tabs are disabled. To add the "
         "link budget, copy the parameters.json of a similar mission (e.g. AWS) into the folder and edit it.",
-        "<b>antenna_pattern.txt</b> (optional): the satellite antenna pattern of the mission (two columns, "
-        "angle from nadir in degrees and gain in dBi, separated by commas, semicolons, tabs or spaces; header "
-        "lines and # comments are skipped); otherwise Antenna Pattern Default.txt is used. The line under the "
+        "<b>antenna_pattern.txt</b> (optional; or any .txt/.csv file with \"pattern\" in its name): the "
+        "satellite antenna pattern of the mission (two columns, angle from nadir in degrees and gain in dBi, "
+        "separated by commas, tabs, spaces or semicolons, then also with a decimal comma as Excel writes it with "
+        "Italian settings; header lines and # comments are skipped); otherwise Antenna Pattern Default.txt is "
+        "used. A mission pattern that cannot be read is reported in orange and the default is used. The line under the "
         "pattern buttons and the title of Show Antenna Gain give the file in use; Load Antenna Pattern… only "
         "replaces it for the session.",
         "<b>tle.txt</b>: the last TLE downloaded (or, for a custom orbit, the last synthetic TLE generated). "
