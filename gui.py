@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import tkinter.font as tkfont
 import csv
+import gc
 import math
 import os
 import re
@@ -284,6 +285,34 @@ from calculations import (
 )
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+
+
+def _run_in_background(root, work, on_done, on_tick=None, poll_ms: int = 200) -> None:
+    """Run ``work`` in a worker thread; call ``on_done`` (and ``on_tick``) in the Tk thread.
+
+    Tk objects must only be touched, and freed, by the Tk thread. Python's
+    cyclic garbage collector runs in whichever thread allocates when it
+    triggers, so a worker thread could free leftover Tk variables or images
+    and crash Tcl ("main thread is not in main loop", "Tcl_AsyncDelete").
+    The garbage is therefore collected here first and the collector stays
+    off while the worker runs.
+    """
+
+    gc.collect()
+    gc.disable()
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+
+    def _poll():
+        if on_tick is not None:
+            on_tick()
+        if worker.is_alive():
+            root.after(poll_ms, _poll)
+            return
+        gc.enable()
+        on_done()
+
+    root.after(poll_ms, _poll)
 
 
 def _format_optional(value, default: str) -> str:
@@ -806,13 +835,7 @@ class LinkBudgetApp:
             except Exception as exc:
                 result["error"] = exc
 
-        worker = threading.Thread(target=_work, daemon=True)
-        worker.start()
-
-        def _poll():
-            if worker.is_alive():
-                self.root.after(150, _poll)
-                return
+        def _done():
             self.tle_download_button.state(["!disabled"])
             if self.norad_var.get().strip() != text:
                 # Another satellite was selected meanwhile: just keep the file.
@@ -847,7 +870,7 @@ class LinkBudgetApp:
                 origin += f", saved in {self.tle_file_path}"
             self._set_tle_lines(tle.line1, tle.line2, origin)
 
-        self.root.after(150, _poll)
+        _run_in_background(self.root, _work, _done, poll_ms=150)
 
     @staticmethod
     def _save_tle(tle, path: str) -> str | None:
@@ -1609,6 +1632,7 @@ class LinkBudgetApp:
         canvas = FigureCanvasTkAgg(fig, master=popup)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)  # embedded in Tk: no pyplot figure left behind
 
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""
@@ -1920,14 +1944,10 @@ class LinkBudgetApp:
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
 
-        worker = threading.Thread(target=_work, daemon=True)
-        worker.start()
-
-        def _poll():
+        def _tick():
             self.stats_progress["value"] = state["done"] / state["total"]
-            if worker.is_alive():
-                self.root.after(200, _poll)
-                return
+
+        def _done():
             self.stats_button.state(["!disabled"])
             if "error" in state:
                 self.stats_status_var.set("")
@@ -1936,7 +1956,7 @@ class LinkBudgetApp:
             self.stats_inputs = inputs
             self._show_statistics(state["result"], inputs)
 
-        self.root.after(200, _poll)
+        _run_in_background(self.root, _work, _done, on_tick=_tick)
 
     def _show_statistics(self, result, inputs) -> None:
         self.stats_result = result
@@ -2380,6 +2400,7 @@ class LinkBudgetApp:
         canvas_plot_widget = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas_plot_widget.draw()
         canvas_plot_widget.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
+        plt.close(fig)  # embedded in Tk: no pyplot figure left behind
 
         # Columns of the pass table: (data column, short heading, group, description).
         column_specs = [
@@ -2511,6 +2532,7 @@ class LinkBudgetApp:
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
         canvas_popup.draw()
         canvas_popup.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
+        plt.close(fig)  # embedded in Tk: no pyplot figure left behind
 
     def load_antenna_pattern_file(self):
         """Load the satellite antenna pattern (angle from nadir, gain in dBi) from a CSV file."""
