@@ -878,6 +878,15 @@ class LinkBudgetApp:
         "Load TLE from file" / "Import Link Budget Parameters" buttons.
         """
 
+        # The ground station catalogue is read when calculations is imported.
+        if self.gs_file_var is not None:
+            gs_path = calculations.GROUND_STATIONS_FILE
+            self.gs_file_var.set(
+                f"Ground stations: {os.path.abspath(gs_path)}"
+                if gs_path and os.path.isfile(gs_path)
+                else "Ground stations: built-in list (ground_stations.txt not found)"
+            )
+
         tle_path = calculations.resolve_optional_data_file("tle.txt", env_var="TLE_FILE")
         # (The satellite antenna pattern file is picked up the same way.)
         if tle_path:
@@ -1727,7 +1736,13 @@ class LinkBudgetApp:
         if not file_path:
             return
         try:
-            self.current_table_df.to_csv(file_path, index=False)
+            with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                project = self.project_var.get().strip()
+                if project:
+                    # Project and pass on the first lines, then the table.
+                    f.write(f"Project,{project}\n")
+                    f.write(f"Pass,{self.selected_pass_var.get()}\n\n")
+                self.current_table_df.to_csv(f, index=False)
             messagebox.showinfo("Export Successful", f"Data exported to {file_path}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export CSV: {e}")
@@ -2215,7 +2230,20 @@ class LinkBudgetApp:
             (
                 f"Receiver ({rx_side})",
                 [
-                    L(gt_label, gt_entry, "Receiving figure of merit: antenna gain over system noise temperature."),
+                    L(
+                        gt_label, gt_entry,
+                        "Receiving figure of merit: antenna gain over system noise temperature."
+                        + (
+                            ""
+                            if rx_is_ground_station
+                            else " With the option below it is the value at the satellite antenna "
+                            "boresight (pattern peak)."
+                        ),
+                    ),
+                ]
+                # The satellite antenna pattern gives the Rx gain on the uplink only.
+                + ([] if rx_is_ground_station else [("gain_source",)])
+                + [
                     L(
                         demod_loss_label, demod_loss_entry,
                         "Receiver (demodulator) implementation loss. Lowers Eb/No.",
@@ -2476,26 +2504,48 @@ class LinkBudgetApp:
                             "and ignored; the EIRP actually used is shown under the Tx chain.",
                         ).pack(side=tk.LEFT)
                     elif kind == "gain_source":
-                        gain_row = ttk.Frame(group_frame)
-                        gain_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(2, 2))
+                        gain_box = ttk.Frame(group_frame)
+                        gain_box.grid(row=r, column=0, columnspan=4, sticky="w", pady=(2, 2))
+                        gain_row = ttk.Frame(gain_box)
+                        gain_row.pack(anchor="w")
                         ttk.Checkbutton(
                             gain_row,
-                            text="Antenna gain from the satellite antenna pattern at this elevation",
+                            text=(
+                                "Antenna gain from the satellite antenna pattern at this elevation"
+                                if rx_is_ground_station
+                                else "G/T SAT at the antenna boresight: subtract the pattern roll-off "
+                                "at this elevation"
+                            ),
                             variable=gain_pattern_var,
                             command=lambda: _refresh_states(),
                         ).pack(side=tk.LEFT)
                         _info_icon(
                             gain_row,
-                            "The satellite antenna pattern (gain versus angle from nadir, loaded in "
-                            "the Orbit & Passes tab) gives the Tx antenna gain towards the ground "
-                            "station: the angle from nadir follows from the elevation and the "
-                            "satellite altitude. The pass analysis uses the same pattern at every "
-                            "time step. The pattern already includes the off-pointing, so the Tx "
-                            "Antenna Pointing Loss is not used.",
+                            (
+                                "The satellite antenna pattern (gain versus angle from nadir, loaded "
+                                "in the Orbit & Passes tab) gives the Tx antenna gain towards the "
+                                "ground station: the angle from nadir follows from the elevation and "
+                                "the satellite altitude. The pass analysis uses the same pattern at "
+                                "every time step. The pattern already includes the off-pointing, so "
+                                "the Tx Antenna Pointing Loss is not used."
+                            )
+                            if rx_is_ground_station
+                            else (
+                                "G/T SAT is usually specified at the antenna boresight (nadir), "
+                                "where the satellite antenna gain is highest. Towards a station at "
+                                "low elevation the antenna sees it far from nadir and its gain is "
+                                "lower by the pattern roll-off (peak gain − gain at that angle), and "
+                                "so is the G/T. With this option the G/T used is G/T SAT minus that "
+                                "roll-off; the angle from nadir follows from the elevation and the "
+                                "satellite altitude. The pass analysis does the same at every time "
+                                "step. The pattern already includes the off-pointing, so the Rx "
+                                "Antenna Depointing Angle is not used."
+                            ),
                         ).pack(side=tk.LEFT, padx=(4, 8))
+                        # Angle, gain and value used, on its own line under the option.
                         ttk.Label(
-                            gain_row, textvariable=gain_pattern_text_var, foreground=PALETTE["accent_dark"]
-                        ).pack(side=tk.LEFT)
+                            gain_box, textvariable=gain_pattern_text_var, foreground=PALETTE["accent_dark"]
+                        ).pack(anchor="w", padx=(22, 0))
                     else:  # eirp_used
                         ttk.Label(
                             group_frame,
@@ -2848,6 +2898,15 @@ class LinkBudgetApp:
             angle = calculations.off_nadir_angle_deg(elevation, altitude, gs_alt_km)
             return angle, calculations.satellite_antenna_gain_dbi(angle)
 
+        def _pattern_rolloff():
+            """(angle from nadir, pattern gain, peak gain − gain) at this view's geometry, or None."""
+
+            angle_gain = _pattern_gain()
+            if angle_gain is None:
+                return None
+            angle, gain = angle_gain
+            return angle, gain, calculations.antenna_pattern(angle)
+
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
 
@@ -2873,6 +2932,25 @@ class LinkBudgetApp:
                         _write_computed("ant_gain_dbi", f"{gain:.2f}")
                         gain_pattern_text_var.set(f"{angle:.1f}° from nadir → {gain:.2f} dBi")
                 _set_field_enabled("tx_pointing_loss_db", not use_pattern)
+            else:
+                # G/T SAT reduced by the satellite antenna pattern roll-off.
+                gain_pattern_text_var.set("")
+                use_pattern = bool(gain_pattern_var.get())
+                if use_pattern:
+                    rolloff = _pattern_rolloff()
+                    if rolloff is None:
+                        gain_pattern_text_var.set("enter Elevation Angle and Satellite Altitude")
+                    else:
+                        angle, gain, loss = rolloff
+                        try:
+                            gt_used = f"{float(_field_text(f'panel:{gt_label}')) - loss:.2f} dB/K"
+                        except ValueError:
+                            gt_used = "enter G/T SAT"
+                        gain_pattern_text_var.set(
+                            f"{angle:.1f}° from nadir → {gain:.2f} dBi, roll-off {loss:.2f} dB "
+                            f"→ G/T used {gt_used}"
+                        )
+                _set_field_enabled("rx_depointing_deg", not use_pattern)
             # Axial ratios only matter when the polarisation loss is derived from them.
             derive_polarisation = not _field_text("polarisation_loss_db")
             _set_field_enabled("ant_axial_ratio_db", derive_polarisation)
@@ -3030,8 +3108,9 @@ class LinkBudgetApp:
             if tolerances_out:
                 values["tolerances"] = tolerances_out
             values["eirp_mode"] = eirp_mode_var.get()
-            if rx_is_ground_station:
-                values["ant_gain_from_pattern"] = bool(gain_pattern_var.get())
+            values["ant_gain_from_pattern" if rx_is_ground_station else "gt_from_pattern"] = bool(
+                gain_pattern_var.get()
+            )
             values["station"] = station_var.get()
             values["ionospheric_mode"] = iono_mode_var.get()
             if rx_is_ground_station:
@@ -3056,7 +3135,9 @@ class LinkBudgetApp:
                 # whenever a transmitter power was given.
                 mode = "tx_chain" if _format_value(values.get("tx_power_w")) else "eirp"
             eirp_mode_var.set(mode)
-            gain_pattern_var.set(bool(values.get("ant_gain_from_pattern", False)))
+            gain_pattern_var.set(
+                bool(values.get("ant_gain_from_pattern" if rx_is_ground_station else "gt_from_pattern", False))
+            )
             station = values.get("station")
             station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
             framing_mode = values.get("framing_mode")
@@ -3296,6 +3377,16 @@ class LinkBudgetApp:
                 freq = _parse_required(freq_entry, freq_label) * u.GHz
                 eirp = _parse_optional_or_none(eirp_entry, eirp_label)
                 gt = _parse_required(gt_entry, gt_label)
+                gt_pattern_rolloff_db = None
+                if not rx_is_ground_station and gain_pattern_var.get():
+                    rolloff = _pattern_rolloff()
+                    if rolloff is None:
+                        raise ValueError(
+                            "'Elevation Angle [deg]' and 'Satellite Altitude [km]' are needed for "
+                            "the G/T from the antenna pattern."
+                        )
+                    gt_pattern_rolloff_db = rolloff[2]
+                    gt -= gt_pattern_rolloff_db
                 demod_loss = _parse_required(demod_loss_entry, demod_loss_label)
                 bitrate_mbps = _parse_required(bitrate_entry, bitrate_label)
                 bitrate = bitrate_mbps * 1e6
@@ -3356,6 +3447,8 @@ class LinkBudgetApp:
                 if formatting_overhead <= 0:
                     raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
                 rx_depointing_deg = _field("rx_depointing_deg", _parse_optional_or_none)
+                if gt_pattern_rolloff_db is not None:
+                    rx_depointing_deg = None  # included in the pattern roll-off
                 rx_beamwidth_deg = _field("rx_beamwidth_deg", _parse_optional_or_none)
                 if rx_beamwidth_deg is not None and rx_beamwidth_deg <= 0:
                     raise ValueError("'Rx Antenna 3dB Beamwidth [deg]' must be greater than 0.")
@@ -3495,6 +3588,16 @@ class LinkBudgetApp:
                                     f"{'yes' if ccsds_ocf_var.get() else 'no'} / "
                                     f"{'yes' if ccsds_fecf_var.get() else 'no'}, "
                                     f"{'yes' if ccsds_pec_var.get() else 'no'}",
+                                )
+                            )
+                    elif item[0] == "gain_source" and not rx_is_ground_station:
+                        if gt_pattern_rolloff_db is not None:
+                            angle_gain = _pattern_gain()
+                            group_items.append(
+                                (
+                                    "G/T SAT Pattern Roll-off [dB]",
+                                    f"{gt_pattern_rolloff_db:.2f} ({angle_gain[0]:.1f}° from nadir; "
+                                    f"G/T used {gt:.2f} dB/K)",
                                 )
                             )
                     elif item[0] == "gain_source":
@@ -4830,10 +4933,12 @@ class LinkBudgetApp:
         ttk.Label(atm_frame, text="Other Attenuations [dB]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.other_att_entry = ttk.Entry(atm_frame, width=15)
         self.other_att_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-        self.scint_var = tk.BooleanVar(value=True)
+        # Off by default, as in the static link budget: the ITU-R P.618 model
+        # is given for elevations of at least 5° and about 4-20 GHz.
+        self.scint_var = tk.BooleanVar(value=False)
         scint_check = ttk.Checkbutton(
             atm_frame,
-            text="Scintillation loss",
+            text="Tropospheric scintillation",
             variable=self.scint_var,
             command=self.set_analysis_stale,
         )
@@ -4841,9 +4946,10 @@ class LinkBudgetApp:
         _add_tooltip(
             scint_check,
             "ITU-R P.618 tropospheric scintillation fading, applied to both downlink and uplink. "
-            "Matters mainly above ~4 GHz (more so in Ku/Ka-band); usually negligible below that. "
-            "This does NOT model ionospheric scintillation (relevant at L/S-band and below), "
-            "which this tool does not implement.",
+            "Off by default: the model is given for elevations of at least 5° and about 4–20 GHz "
+            "and matters mainly in Ku/Ka-band; below that (e.g. L/S band at low elevation) it is "
+            "an extrapolation. Ionospheric scintillation (the relevant one at L/S band) comes from "
+            "the Static LB tabs (S4 index), with the other link losses.",
         )
         self.atm_label_var = tk.StringVar(
             value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"

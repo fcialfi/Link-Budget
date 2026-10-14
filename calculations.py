@@ -165,11 +165,12 @@ except Exception as exc:  # pragma: no cover - fallback for packaging/runtime er
 
 
 # Antenna pattern data as constants
+# Fallback when "Antenna Pattern Default.txt" is missing: the same values.
 ANTENNA_PATTERN_ANGLES = np.array([
-    -65, -55, -45, -35, -25, -15, -5, 0, 5, 15, 25, 35, 45, 55, 65
+    -66, -65, -55, -45, -35, -25, -15, -5, 0, 5, 15, 25, 35, 45, 55, 65, 66
 ])
 ANTENNA_PATTERN_GAINS = np.array([
-    0.5, 1.2, 2.3, 3.5, 4.3, 5.0, 5.5, 5.6, 5.5, 5.0, 4.3, 3.5, 2.3, 1.2, 0.5
+    0.5, 0.5, 1.2, 2.3, 3.5, 4.3, 5.0, 5.5, 5.6, 5.5, 5.0, 4.3, 3.5, 2.3, 1.2, 0.5, 0.5
 ])
 PATTERN_INTERP = interp1d(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS,
                           kind='linear', fill_value=0.0, bounds_error=False)
