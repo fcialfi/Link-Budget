@@ -69,6 +69,37 @@ class StatisticsResult:
     passes: list[PassRecord] = field(default_factory=list)
     days: list[DayRecord] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    # Downloaded chunks: (bits, smallest latency s, largest latency s); the bits
+    # of a chunk were generated uniformly over that latency range.
+    latency_chunks: list[tuple[float, float, float]] = field(default_factory=list)
+
+    def latency_fraction(self, latency_min: float) -> Optional[float]:
+        """Share (0-1) of the downloaded data that reached the ground within ``latency_min``."""
+        total = sum(bits for bits, _lo, _hi in self.latency_chunks)
+        if not total:
+            return None
+        limit = latency_min * 60.0
+        within = 0.0
+        for bits, lo, hi in self.latency_chunks:
+            if hi <= limit:
+                within += bits
+            elif lo < limit:
+                within += bits * (limit - lo) / (hi - lo)
+        return within / total
+
+    def latency_percentile(self, percent: float) -> Optional[float]:
+        """Latency (min) within which ``percent`` % of the downloaded data reached the ground."""
+        if not self.latency_chunks:
+            return None
+        target = percent / 100.0
+        low, high = 0.0, max(hi for _bits, _lo, hi in self.latency_chunks) / 60.0
+        for _ in range(60):
+            mid = (low + high) / 2
+            if self.latency_fraction(mid) >= target:
+                high = mid
+            else:
+                low = mid
+        return high
 
 
 def combine_stations(samples: dict[str, DaySamples]) -> DaySamples:
@@ -132,6 +163,7 @@ def aggregate(
     info_bitrate_bps: Optional[float] = None,
     min_margin_db: float = 0.0,
     generated_bps: Optional[float] = None,
+    latency_requirement: Optional[tuple[float, float]] = None,
 ) -> StatisticsResult:
     """Passes, daily figures and a summary from the samples of consecutive days.
 
@@ -142,6 +174,9 @@ def aggregate(
     on board) the memory is simulated, starting empty: the downloaded volume
     is at most what is on board. The gap after a pass lasts until the next
     pass starts and counts for the day the next pass starts.
+
+    ``latency_requirement`` = (minutes, percent), e.g. (60, 90) for "90 % of
+    the data on ground within 60 min", is checked on the downloaded data.
     """
     days = list(days)
     result = StatisticsResult()
@@ -189,6 +224,7 @@ def aggregate(
                 newest = (downloaded_total + take) / generated_bps
                 max_latency = max(max_latency, t_now - oldest)
                 latencies_weighted += take * (t_now - (oldest + newest) / 2)
+                result.latency_chunks.append((take, t_now - newest, t_now - oldest))
                 downloaded_total += take
             memory -= take
             downloaded_bits[i] = take
@@ -264,6 +300,16 @@ def aggregate(
             final_on_board_mb=float(memory_end_bits[-1]) / 8e6,
             **latency,
         )
+        if latency_requirement is not None and result.latency_chunks:
+            minutes, percent = latency_requirement
+            within = float(result.latency_fraction(minutes)) * 100.0
+            summary.update(
+                latency_requirement_min=minutes,
+                latency_requirement_pct=percent,
+                latency_within_pct=within,
+                latency_at_required_pct_min=result.latency_percentile(percent),
+                latency_requirement_met=bool(within >= percent),
+            )
     result.summary = summary
     return result
 
@@ -288,3 +334,224 @@ def compute(
         if progress is not None:
             progress(k + 1, n_days)
     return aggregate(samples, step_s, **aggregate_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Constellation: several satellites sharing the ground stations
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConstellationResult(StatisticsResult):
+    # One dict per satellite and per station (see simulate_constellation).
+    satellites: list[dict] = field(default_factory=list)
+    stations: list[dict] = field(default_factory=list)
+
+
+def simulate_constellation(
+    days: list[dict[str, dict[str, DaySamples]]],
+    step_s: float,
+    info_bitrate_bps: float,
+    min_margin_db: float = 0.0,
+    generated_bps: float = 0.0,
+    latency_requirement: Optional[tuple[float, float]] = None,
+) -> ConstellationResult:
+    """Satellites sharing ground stations that track one satellite at a time.
+
+    ``days[k][satellite][station]`` are the samples of day k. Every satellite
+    generates ``generated_bps`` into its own memory (empty at the start). At
+    each sample each station serves at most one of the satellites for which
+    the link closes (margin >= ``min_margin_db``), and each satellite uses at
+    most one station: the satellites with more data on board are served
+    first, each through its best-margin station still free. A satellite that
+    could have downloaded but found its stations busy loses that sample
+    (conflict). Latency is first in first out per satellite; the system
+    figures put the data of all satellites together.
+    """
+    result = ConstellationResult()
+    if not days:
+        return result
+    sat_names = list(days[0])
+    station_names = list(days[0][sat_names[0]])
+    n_days = len(days)
+    per_day = [len(days[k][sat_names[0]][station_names[0]].visible) for k in range(n_days)]
+    n = sum(per_day)
+    starts = [days[k][sat_names[0]][station_names[0]].start for k in range(n_days)]
+    times = [starts[k] + datetime.timedelta(seconds=step_s * i) for k in range(n_days) for i in range(per_day[k])]
+    day_index = np.concatenate([np.full(per_day[k], k) for k in range(n_days)])
+
+    def joined(sat, st, attr):
+        return np.concatenate([getattr(days[k][sat][st], attr) for k in range(n_days)])
+
+    # usable[s, g, i], margin[s, g, i], elevation[s, g, i]
+    margin = np.stack([np.stack([joined(s, g, "margin_db") for g in station_names]) for s in sat_names])
+    visible = np.stack([np.stack([joined(s, g, "visible") for g in station_names]) for s in sat_names]).astype(bool)
+    elevation = np.stack([np.stack([joined(s, g, "elevation_deg") for g in station_names]) for s in sat_names])
+    usable = visible & (np.nan_to_num(margin, nan=-np.inf) >= min_margin_db)
+
+    n_sat, n_st = len(sat_names), len(station_names)
+    step_bits = info_bitrate_bps * step_s
+    gen_step = generated_bps * step_s
+    memory = np.zeros(n_sat)
+    downloaded_total = np.zeros(n_sat)
+    served_station = np.full((n_sat, n), -1)
+    downloaded = np.zeros((n_sat, n))
+    on_board = np.zeros((n_sat, n))
+    conflict = np.zeros((n_sat, n), dtype=bool)
+    chunks: list[list] = [[] for _ in range(n_sat)]
+    for i in range(n):
+        memory += gen_step
+        # A station keeps tracking its satellite while the link closes (a real
+        # antenna follows one pass); the free stations then go to the other
+        # satellites by a maximum matching (augmenting paths), the satellites
+        # with more data on board first.
+        owner: dict[int, int] = {}
+        if i > 0:
+            for s in range(n_sat):
+                g = served_station[s, i - 1]
+                if g >= 0 and usable[s, g, i]:
+                    owner[int(g)] = s
+        tracked = set(owner.values())
+        options = {
+            s: sorted(
+                (g for g in np.flatnonzero(usable[s, :, i]) if int(g) not in owner),
+                key=lambda g, s=s: -margin[s, g, i],
+            )
+            for s in range(n_sat)
+        }
+        locked = set(owner)
+
+        def _assign(s, seen):
+            for g in options[s]:
+                g = int(g)
+                if g in seen or g in locked:
+                    continue
+                seen.add(g)
+                if g not in owner or _assign(owner[g], seen):
+                    owner[g] = s
+                    return True
+            return False
+
+        for s in np.argsort(-memory, kind="stable"):
+            s = int(s)
+            if s in tracked:
+                continue
+            if usable[s, :, i].any() and not _assign(s, set()):
+                conflict[s, i] = True
+        for g, s in owner.items():
+            served_station[s, i] = g
+        for s in range(n_sat):
+            if served_station[s, i] < 0:
+                continue
+            take = min(memory[s], step_bits)
+            if take > 0 and generated_bps > 0:
+                t_now = (i + 1) * step_s
+                oldest = downloaded_total[s] / generated_bps
+                newest = (downloaded_total[s] + take) / generated_bps
+                chunks[s].append((take, t_now - newest, t_now - oldest))
+            elif generated_bps <= 0:
+                take = step_bits  # capacity only
+            memory[s] -= take if generated_bps > 0 else 0.0
+            downloaded_total[s] += take
+            downloaded[s, i] = take
+        on_board[:, i] = memory
+
+    step_min = step_s / 60.0
+    with_memory = generated_bps > 0
+    for s, name in enumerate(sat_names):
+        sat_chunks = chunks[s]
+        sat_result = StatisticsResult(latency_chunks=sat_chunks)
+        bits = sum(c[0] for c in sat_chunks)
+        record = {
+            "satellite": name,
+            "served_min_per_day": float(np.count_nonzero(served_station[s] >= 0)) * step_min / n_days,
+            "conflict_min_per_day": float(np.count_nonzero(conflict[s])) * step_min / n_days,
+            "downloaded_mb_per_day": float(downloaded[s].sum()) / 8e6 / n_days,
+            "max_on_board_mb": float(on_board[s].max()) / 8e6 if with_memory else None,
+            "final_on_board_mb": float(on_board[s, -1]) / 8e6 if with_memory else None,
+            "mean_latency_min": (
+                sum(c[0] * (c[1] + c[2]) / 2 for c in sat_chunks) / bits / 60.0 if bits else None
+            ),
+            "max_latency_min": max(c[2] for c in sat_chunks) / 60.0 if sat_chunks else None,
+        }
+        if latency_requirement is not None and sat_chunks:
+            record["latency_within_pct"] = float(sat_result.latency_fraction(latency_requirement[0])) * 100.0
+        result.satellites.append(record)
+        # Service windows of this satellite: runs of served samples.
+        for first, last in _groups(served_station[s] >= 0):
+            used = [station_names[g] for g in served_station[s, first : last + 1]]
+            best_el = [elevation[s, served_station[s, i], i] for i in range(first, last + 1)]
+            served_margin = [margin[s, served_station[s, i], i] for i in range(first, last + 1)]
+            result.passes.append(
+                PassRecord(
+                    start=times[first],
+                    end=times[last] + datetime.timedelta(seconds=step_s),
+                    max_elevation_deg=float(max(best_el)),
+                    contact_min=(last - first + 1) * step_min,
+                    stations=f"{name}: " + " + ".join(_ordered_unique(used)),
+                    usable_min=(last - first + 1) * step_min,
+                    capacity_mb=(last - first + 1) * step_bits / 8e6,
+                    downloaded_mb=float(downloaded[s, first : last + 1].sum()) / 8e6,
+                    min_margin_db=float(np.nanmin(served_margin)),
+                )
+            )
+    result.passes.sort(key=lambda p: p.start)
+
+    for g, name in enumerate(station_names):
+        served_here = served_station == g
+        result.stations.append({
+            "station": name,
+            "served_min_per_day": float(np.count_nonzero(served_here)) * step_min / n_days,
+            "downloaded_mb_per_day": float(downloaded[served_here].sum()) / 8e6 / n_days,
+            "busy_pct": float(np.count_nonzero(served_here.any(axis=0))) / n * 100.0,
+            "contention_min_per_day": float(
+                np.count_nonzero(usable[:, g, :].sum(axis=0) > 1)
+            ) * step_min / n_days,
+        })
+
+    for k in range(n_days):
+        in_day = day_index == k
+        record = DayRecord(starts[k].date())
+        record.contacts = sum(1 for p in result.passes if p.start.date() == record.date)
+        record.contact_min = float(np.count_nonzero(served_station[:, in_day] >= 0)) * step_min
+        record.usable_min = float(np.count_nonzero(usable[:, :, in_day].any(axis=1))) * step_min
+        record.capacity_mb = float(np.count_nonzero(usable[:, :, in_day].any(axis=1))) * step_bits / 8e6
+        record.downloaded_mb = float(downloaded[:, in_day].sum()) / 8e6
+        if with_memory:
+            record.on_board_mb = float(on_board[:, in_day][:, -1].sum()) / 8e6
+        result.days.append(record)
+
+    all_chunks = [c for sat_chunks in chunks for c in sat_chunks]
+    result.latency_chunks = all_chunks
+    total_bits = sum(c[0] for c in all_chunks)
+    summary = {
+        "satellites": n_sat,
+        "stations": n_st,
+        "days": n_days,
+        "served_min_per_day": float(np.count_nonzero(served_station >= 0)) * step_min / n_days,
+        "conflict_min_per_day": float(np.count_nonzero(conflict)) * step_min / n_days,
+        "downloaded_mb_per_day": float(downloaded.sum()) / 8e6 / n_days,
+        "info_bitrate_bps": info_bitrate_bps,
+        "min_margin_db": min_margin_db,
+    }
+    if with_memory:
+        summary.update(
+            generated_bps=generated_bps,
+            generated_mb_per_day=generated_bps * 86400 / 8e6 * n_sat,
+            max_on_board_mb=float(on_board.sum(axis=0).max()) / 8e6,
+            final_on_board_mb=float(on_board[:, -1].sum()) / 8e6,
+            mean_latency_min=sum(c[0] * (c[1] + c[2]) / 2 for c in all_chunks) / total_bits / 60.0 if total_bits else None,
+            max_latency_min=max(c[2] for c in all_chunks) / 60.0 if all_chunks else None,
+        )
+        if latency_requirement is not None and all_chunks:
+            minutes, percent = latency_requirement
+            within = float(result.latency_fraction(minutes)) * 100.0
+            summary.update(
+                latency_requirement_min=minutes,
+                latency_requirement_pct=percent,
+                latency_within_pct=within,
+                latency_at_required_pct_min=result.latency_percentile(percent),
+                latency_requirement_met=bool(within >= percent),
+            )
+    result.summary = summary
+    return result
