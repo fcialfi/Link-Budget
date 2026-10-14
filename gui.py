@@ -964,6 +964,8 @@ class LinkBudgetApp:
             self.orbit_ecc_var.set(_format_optional(orbit.get("eccentricity"), "0"))
             self.orbit_argp_var.set(_format_optional(orbit.get("arg_perigee_deg"), "0"))
             self.orbit_inc_var.set(_format_optional(orbit.get("inclination_deg"), ""))
+            self.orbit_spp_var.set(_format_optional(orbit.get("satellites_per_plane"), "1"))
+            self.orbit_phasing_var.set(_format_optional(orbit.get("phasing_deg"), "0"))
             planes = orbit.get("ltan") or ["22:20"]
             planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
             self.orbit_ltan_combo.configure(values=planes)
@@ -1125,12 +1127,19 @@ class LinkBudgetApp:
             return None
         ltan = self.orbit_ltan_var.get().strip()
         planes = [ltan] + [p for p in self.orbit_ltan_combo.cget("values") if p != ltan]
+        try:
+            per_plane = int(float(self.orbit_spp_var.get() or 1))
+            phasing = float(self.orbit_phasing_var.get() or 0)
+        except ValueError:
+            per_plane, phasing = 1, 0.0
         return {
             "altitude_km": orbit["altitude_km"],
             "eccentricity": orbit["eccentricity"],
             "arg_perigee_deg": orbit["arg_perigee_deg"],
             "inclination_deg": orbit["inclination_deg"],
             "ltan": planes,
+            "satellites_per_plane": per_plane,
+            "phasing_deg": phasing,
         }
 
     def load_tle_from_file(self):
@@ -1735,6 +1744,17 @@ class LinkBudgetApp:
             "(ground_stations.txt); at each instant the best station is used.",
         )
         self._refresh_statistics_stations()
+        self.stats_constellation_var = tk.BooleanVar(value=True)
+        constellation_check = ttk.Checkbutton(
+            station_box, text="Whole constellation", variable=self.stats_constellation_var
+        )
+        constellation_check.pack(anchor="w", pady=(6, 0))
+        _add_tooltip(
+            constellation_check,
+            "For a custom-orbit mission with several satellites (planes × satellites per plane): all "
+            "satellites together. Each station tracks one satellite at a time; when several are in view, "
+            "the one with more data on board is served and the others wait (conflict).",
+        )
 
         buttons = ttk.Frame(inputs)
         buttons.pack(side=tk.RIGHT, anchor="n")
@@ -1765,6 +1785,35 @@ class LinkBudgetApp:
         self.stats_plot_frame = ttk.Frame(parent, height=320)
         self.stats_plot_frame.pack(fill=tk.X, pady=(10, 0))
         self.stats_plot_frame.pack_propagate(False)
+
+        usage = ttk.Frame(parent)
+        usage.pack(fill=tk.X, pady=(10, 0))
+        station_frame = ttk.LabelFrame(usage, text="Per Station", padding=6)
+        station_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+        self.stats_sat_frame = ttk.LabelFrame(usage, text="Per Satellite (constellation)", padding=6)
+        self.stats_sat_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _small_table(frame, columns, widths):
+            table = ttk.Treeview(frame, columns=columns, show="headings", height=6)
+            for col, width in zip(columns, widths):
+                table.heading(col, text=col)
+                table.column(col, anchor="center", width=width)
+            table.tag_configure("evenrow", background=PALETTE["row_even"])
+            table.tag_configure("oddrow", background=PALETTE["row_odd"])
+            table.pack(fill=tk.BOTH, expand=True)
+            return table
+
+        self.stats_station_table = _small_table(
+            station_frame,
+            ("Station", "Served [min/day]", "Volume [MB/day]", "Busy [%]", "Contention [min/day]"),
+            (110, 110, 110, 70, 135),
+        )
+        self.stats_sat_table = _small_table(
+            self.stats_sat_frame,
+            ("Satellite", "Served [min/day]", "Conflicts [min/day]", "Volume [MB/day]", "Max On Board [MB]",
+             "Latency mean/max [min]", "Within Req. [%]"),
+            (150, 105, 115, 105, 115, 140, 100),
+        )
 
         tables = ttk.Frame(parent)
         tables.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -1853,11 +1902,19 @@ class LinkBudgetApp:
             except ValueError:
                 raise ValueError(f"'{label}' is not a number.") from None
 
+        constellation = None
+        if self.current_sat is not None and self.current_sat.custom_orbit and self.stats_constellation_var.get():
+            orbit_file = self._custom_orbit_for_file()
+            if orbit_file is not None:
+                sats = link_core.constellation_tles(orbit_file, link_core.utc_midnight(start), self.current_sat.name)
+                if len(sats) > 1:
+                    constellation = sats
         inputs = {
             "start": start,
             "days": days,
             "stations": [self._station(name) for name in names],
             "tle": (tle1, tle2),
+            "constellation": constellation,
             "min_el": self._min_elevation(),
             "link": None,
             "budget": None,
@@ -1901,28 +1958,34 @@ class LinkBudgetApp:
 
     @staticmethod
     def _statistics_day_function(inputs: dict):
-        """The per-day sample function of the statistics (pure: runs in a worker thread)."""
+        """The per-day sample function of the statistics (pure: runs in a worker thread).
 
-        analyses = [
-            link_core.PassAnalysis(inputs["tle"], station, inputs["link"], inputs["min_el"])
-            for station in inputs["stations"]
-        ]
+        Returns day_samples(day_start) -> {satellite: {station: DaySamples}}.
+        """
+
+        satellites = inputs["constellation"] or [("SAT", inputs["tle"])]
+        analyses = {
+            name: [link_core.PassAnalysis(tle, station, inputs["link"], inputs["min_el"]) for station in inputs["stations"]]
+            for name, tle in satellites
+        }
         budget = inputs["budget"]
 
         def day_samples(day_start):
-            per_station = {}
-            for analysis in analyses:
-                frame = analysis.day(day_start, budget="visible")
-                margin = None
-                if budget:
-                    margin = frame["Eb/No (dB)"].to_numpy(dtype=float) - budget["required_ebno"]
-                per_station[analysis.station.name] = pass_statistics.DaySamples(
-                    day_start,
-                    frame["Elevation (°)"].to_numpy(dtype=float),
-                    frame["Visible"].to_numpy(dtype=bool),
-                    margin,
-                )
-            return pass_statistics.combine_stations(per_station)
+            result = {}
+            for name, per_station in analyses.items():
+                result[name] = {}
+                for analysis in per_station:
+                    frame = analysis.day(day_start, budget="visible")
+                    margin = None
+                    if budget:
+                        margin = frame["Eb/No (dB)"].to_numpy(dtype=float) - budget["required_ebno"]
+                    result[name][analysis.station.name] = pass_statistics.DaySamples(
+                        day_start,
+                        frame["Elevation (°)"].to_numpy(dtype=float),
+                        frame["Visible"].to_numpy(dtype=bool),
+                        margin,
+                    )
+            return result
 
         return day_samples, link_core.STEP_S
 
@@ -1947,17 +2010,29 @@ class LinkBudgetApp:
             try:
                 day_samples, step_s = self._statistics_day_function(inputs)
                 budget = inputs["budget"]
-                state["result"] = pass_statistics.compute(
-                    day_samples,
-                    inputs["start"],
-                    inputs["days"],
-                    step_s,
-                    progress=_progress,
+                days = []
+                for k in range(inputs["days"]):
+                    days.append(day_samples(link_core.utc_midnight(inputs["start"] + timedelta(days=k))))
+                    _progress(k + 1, inputs["days"])
+                kwargs = dict(
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
-                    generated_bps=budget["generated_bps"] if budget else None,
                     latency_requirement=budget["latency_requirement"] if budget else None,
                 )
+                if inputs["constellation"] and budget:
+                    state["result"] = pass_statistics.simulate_constellation(
+                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                    )
+                else:
+                    combined = [pass_statistics.combine_stations(day["SAT"]) for day in days]
+                    state["result"] = pass_statistics.aggregate(
+                        combined, step_s, generated_bps=budget["generated_bps"] if budget else None, **kwargs
+                    )
+                    if budget:
+                        # Use of each station of the network (one satellite: no conflicts).
+                        state["result"].stations = pass_statistics.simulate_constellation(
+                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                        ).stations
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
 
@@ -1981,6 +2056,9 @@ class LinkBudgetApp:
         s = result.summary
         budget = inputs["budget"]
         sat_name = self.current_sat.name if self.current_sat else "satellite"
+        constellation = inputs.get("constellation") and budget
+        if constellation:
+            sat_name = f"{sat_name} constellation ({len(inputs['constellation'])} satellites)"
         end = inputs["start"] + timedelta(days=inputs["days"] - 1)
         names = " + ".join(st.name for st in inputs["stations"])
         masks = [st.name for st in inputs["stations"] if st.mask is not None]
@@ -1992,6 +2070,37 @@ class LinkBudgetApp:
 
         def _fmt(value, digits=1):
             return "–" if value is None else f"{value:.{digits}f}"
+
+        def _latency_line():
+            return (
+                f"Latency requirement: {s['latency_requirement_pct']:g}% of the data within "
+                f"{s['latency_requirement_min']:g} min  →  {s['latency_within_pct']:.1f}% within "
+                f"{s['latency_requirement_min']:g} min; {s['latency_requirement_pct']:g}% within "
+                f"{s['latency_at_required_pct_min']:.1f} min  "
+                + ("✓ met" if s["latency_requirement_met"] else "✗ NOT met")
+            )
+
+        if constellation:
+            lines = [
+                f"{s['satellites']} satellites, {s['stations']} stations: served {s['served_min_per_day']:.1f} "
+                f"min/day in total    Conflicts (satellite ready, stations busy): "
+                f"{s['conflict_min_per_day']:.1f} min/day    Downloaded: {s['downloaded_mb_per_day']:.0f} MB/day"
+            ]
+            if "generated_bps" in s:
+                lines.append(
+                    f"Generated on board: {s['generated_mb_per_day']:.0f} MB/day by the constellation "
+                    f"({s['generated_bps'] / 1e3:g} kbps per satellite)    On board: max "
+                    f"{s['max_on_board_mb']:.0f} MB, {s['final_on_board_mb']:.0f} MB at the end    "
+                    f"Latency: mean {_fmt(s['mean_latency_min'])} min, max {_fmt(s['max_latency_min'])} min"
+                )
+                if "latency_requirement_min" in s:
+                    lines.append(_latency_line())
+            else:
+                lines.append("Enter the on-board data rates for the memory, the volume and the latency.")
+            self.stats_summary_var.set("\n".join(lines))
+            self._fill_statistics_tables(result, _fmt)
+            self._draw_statistics_plot(result, budget)
+            return
 
         lines = [
             f"Passes: {s['passes']} ({s['passes_per_day']:.1f} per day)    "
@@ -2015,13 +2124,7 @@ class LinkBudgetApp:
                     f"Downloaded: {s['downloaded_mb_per_day_mean']:.0f} MB/day"
                 )
                 if "latency_requirement_min" in s:
-                    lines.append(
-                        f"Latency requirement: {s['latency_requirement_pct']:g}% of the data within "
-                        f"{s['latency_requirement_min']:g} min  →  {s['latency_within_pct']:.1f}% within "
-                        f"{s['latency_requirement_min']:g} min; {s['latency_requirement_pct']:g}% within "
-                        f"{s['latency_at_required_pct_min']:.1f} min  "
-                        + ("✓ met" if s["latency_requirement_met"] else "✗ NOT met")
-                    )
+                    lines.append(_latency_line())
                 lines.append(
                     f"On board: max {s['max_on_board_mb']:.0f} MB, {s['final_on_board_mb']:.0f} MB at the end    "
                     f"Data latency: mean {_fmt(s['mean_latency_min'])} min, max {_fmt(s['max_latency_min'])} min    "
@@ -2033,7 +2136,26 @@ class LinkBudgetApp:
                     "rates for the memory, the actual volume and the latency)."
                 )
         self.stats_summary_var.set("\n".join(lines))
+        self._fill_statistics_tables(result, _fmt)
+        self._draw_statistics_plot(result, budget)
 
+    def _fill_statistics_tables(self, result, _fmt) -> None:
+        for table in (self.stats_station_table, self.stats_sat_table):
+            table.delete(*table.get_children())
+        for i, st in enumerate(getattr(result, "stations", []) or []):
+            self.stats_station_table.insert(
+                "", "end", tags=("evenrow" if i % 2 == 0 else "oddrow",),
+                values=(st["station"], _fmt(st["served_min_per_day"]), _fmt(st["downloaded_mb_per_day"], 0),
+                        _fmt(st["busy_pct"]), _fmt(st["contention_min_per_day"])),
+            )
+        for i, sat in enumerate(getattr(result, "satellites", []) or []):
+            latency = f"{_fmt(sat['mean_latency_min'])} / {_fmt(sat['max_latency_min'])}"
+            self.stats_sat_table.insert(
+                "", "end", tags=("evenrow" if i % 2 == 0 else "oddrow",),
+                values=(sat["satellite"], _fmt(sat["served_min_per_day"]), _fmt(sat["conflict_min_per_day"]),
+                        _fmt(sat["downloaded_mb_per_day"], 0), _fmt(sat["max_on_board_mb"], 0), latency,
+                        _fmt(sat.get("latency_within_pct"))),
+            )
         for table in (self.stats_day_table, self.stats_pass_table):
             table.delete(*table.get_children())
         for i, day in enumerate(result.days):
@@ -2056,6 +2178,7 @@ class LinkBudgetApp:
                         _fmt(record.min_margin_db, 2)),
             )
 
+    def _draw_statistics_plot(self, result, budget) -> None:
         for widget in self.stats_plot_frame.winfo_children():
             widget.destroy()
         fig, ax = plt.subplots(figsize=(12, 3.2), layout="constrained")
@@ -5647,6 +5770,8 @@ class LinkBudgetApp:
         self.orbit_argp_var = tk.StringVar(value="0")
         self.orbit_ltan_var = tk.StringVar(value="22:20")
         self.orbit_inc_var = tk.StringVar(value="")
+        self.orbit_spp_var = tk.StringVar(value="1")
+        self.orbit_phasing_var = tk.StringVar(value="0")
         orbit_row = ttk.Frame(project_frame)
         orbit_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         ttk.Label(orbit_row, text="Custom orbit", width=12).pack(side=tk.LEFT, padx=5)
@@ -5670,6 +5795,18 @@ class LinkBudgetApp:
                 self.orbit_ltan_var,
                 6,
                 "Local time of the ascending node. For a constellation, choose the orbital plane.",
+            ),
+            (
+                "Sats/plane",
+                self.orbit_spp_var,
+                3,
+                "Satellites per orbital plane, evenly spaced (used by the constellation statistics).",
+            ),
+            (
+                "Phasing (°)",
+                self.orbit_phasing_var,
+                5,
+                "Shift of the argument of latitude from one plane to the next (constellation statistics).",
             ),
         ):
             ttk.Label(orbit_row, text=label).pack(side=tk.LEFT, padx=(6, 4))

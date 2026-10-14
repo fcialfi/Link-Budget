@@ -18,7 +18,7 @@ import csv
 import json
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import calculations
 import link_core
@@ -148,27 +148,48 @@ def cmd_statistics(args) -> None:
             generated_bps=sum(rates) * 1e3 if rates else None,
             latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
         )
-    analyses = [link_core.PassAnalysis(tle, st, link, args.min_elevation) for st in stations]
+    satellites = [("SAT", tle)]
+    if args.constellation:
+        orbit = (params or {}).get("orbit")
+        if not _sat.custom_orbit or not orbit:
+            raise SystemExit("--constellation needs a custom-orbit mission (e.g. EPS-Sterna).")
+        satellites = link_core.constellation_tles(orbit, link_core.utc_midnight(start), _sat.name)
+    analyses = {
+        name: [link_core.PassAnalysis(lines, st, link, args.min_elevation) for st in stations]
+        for name, lines in satellites
+    }
 
     def day_samples(day_start):
-        per_station = {}
-        for analysis in analyses:
-            frame = analysis.day(day_start, budget="visible")
-            margin_db = frame["Eb/No (dB)"].to_numpy(dtype=float) - float(required_ebno) if link else None
-            per_station[analysis.station.name] = pass_statistics.DaySamples(
-                day_start, frame["Elevation (°)"].to_numpy(dtype=float), frame["Visible"].to_numpy(dtype=bool),
-                margin_db,
-            )
-        return pass_statistics.combine_stations(per_station)
+        result = {}
+        for name, per_station in analyses.items():
+            result[name] = {}
+            for analysis in per_station:
+                frame = analysis.day(day_start, budget="visible")
+                margin_db = frame["Eb/No (dB)"].to_numpy(dtype=float) - float(required_ebno) if link else None
+                result[name][analysis.station.name] = pass_statistics.DaySamples(
+                    day_start, frame["Elevation (°)"].to_numpy(dtype=float),
+                    frame["Visible"].to_numpy(dtype=bool), margin_db,
+                )
+        return result
 
-    def progress(done, total):
-        print(f"\r{done}/{total} days", end="", file=sys.stderr, flush=True)
-
-    result = pass_statistics.compute(day_samples, start, args.days, link_core.STEP_S, progress=progress,
-                                     **budget_kwargs)
+    days = []
+    for k in range(args.days):
+        days.append(day_samples(link_core.utc_midnight(start + timedelta(days=k))))
+        print(f"\r{k + 1}/{args.days} days", end="", file=sys.stderr, flush=True)
+    if args.constellation and link:
+        kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
+        result = pass_statistics.simulate_constellation(days, link_core.STEP_S, **kwargs)
+    else:
+        result = pass_statistics.aggregate(
+            [pass_statistics.combine_stations(day["SAT"]) for day in days], link_core.STEP_S, **budget_kwargs
+        )
     print(file=sys.stderr)
     for key, value in result.summary.items():
         print(f"{key}: {value:.3f}" if isinstance(value, float) else f"{key}: {value}")
+    for sat in getattr(result, "satellites", []):
+        print("  " + ", ".join(f"{k}={v:.1f}" if isinstance(v, float) else f"{k}={v}" for k, v in sat.items()))
+    for st in getattr(result, "stations", []):
+        print("  " + ", ".join(f"{k}={v:.1f}" if isinstance(v, float) else f"{k}={v}" for k, v in st.items()))
     if args.output:
         with open(args.output, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -214,6 +235,8 @@ def main(argv=None) -> None:
     stats.add_argument("--instruments", type=float, help="instrument data rate on the downlink [kbps]")
     stats.add_argument("--hktm", type=float, help="HKTM rate on the downlink [kbps]")
     stats.add_argument("--other", type=float, help="other data rate on the downlink [kbps]")
+    stats.add_argument("--constellation", action="store_true",
+                       help="all satellites of a custom-orbit constellation (stations shared, one satellite at a time)")
     stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
     stats.add_argument("--latency-pct", type=float, default=100.0,
                        help="share of the data that must meet it [%%] (default 100)")

@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Statistics of a whole constellation (custom orbit: planes × satellites per plane, phasing): shared stations tracking one satellite at a time, conflicts, per-satellite and per-station figures; also in lbtool.py (--constellation).
+- Statistics: use of each station of the network.
 - Statistics: latency requirement (share of the data on ground within a time).
 - Fix: crash of the statistics on Windows (garbage collection in the worker thread).
 

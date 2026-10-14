@@ -130,3 +130,18 @@ def test_n2yo_page_without_tle(monkeypatch):
     monkeypatch.setattr(tle_source, "_get", lambda url: "[]" if "satnogs" in url else "<html>nothing</html>")
     with pytest.raises(RuntimeError, match="N2YO: no TLE of NORAD 60543 on the page"):
         tle_source.fetch_tle(60543)
+
+
+def test_constellation_tles():
+    import link_core
+
+    orbit = {"altitude_km": 595.6, "eccentricity": 0.001214, "arg_perigee_deg": 90.0, "inclination_deg": 97.794,
+             "ltan": ["15:30", "19:30", "23:30"], "satellites_per_plane": 2, "phasing_deg": 30.0}
+    when = datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc)
+    sats = link_core.constellation_tles(orbit, when, "EPS-Sterna")
+    assert [name for name, _ in sats][:2] == ["EPS-Sterna 15:30 #1", "EPS-Sterna 15:30 #2"]
+    assert len(sats) == 6 and len({lines[0][2:7] for _, lines in sats}) == 6  # distinct catalogue numbers
+    mean_anomaly = [float(lines[1][43:51]) for _, lines in sats]
+    # Plane 1: u = 0, 180 -> M = u - ω = 270, 90; plane 2 shifted by the 30° phasing.
+    assert mean_anomaly[:4] == [270.0, 90.0, 300.0, 120.0]
+    assert all(tle_source.checksum_ok(lines[0]) and tle_source.checksum_ok(lines[1]) for _, lines in sats)
