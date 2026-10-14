@@ -14,32 +14,47 @@ from typing import Callable
 # ---------------------------------------------------------------------------
 # Defined up here, before the slower imports below, because the startup
 # splash screen needs it immediately.
+# MATLAB-like look: light grey panels, white fields, MATLAB blue accents, a
+# toolstrip-style tab bar under a dark header carrying the logo.
 PALETTE = {
-    "bg": "#eef1f6",
+    "bg": "#f0f0f0",
     "surface": "#ffffff",
-    "surface_alt": "#f7f9fc",
-    "border": "#d7dde6",
-    "header_bg": "#0f2440",
-    "header_fg": "#f5f8ff",
-    "header_fg_muted": "#a9b8d1",
-    "header_hover": "#1b3558",
-    "accent": "#2f6fed",
-    "accent_dark": "#2354bd",
-    "accent_light": "#e8f0fe",
-    "text": "#1f2733",
-    "text_muted": "#5b6472",
+    "surface_alt": "#f7f7f7",
+    "border": "#c8c8c8",
+    "toolstrip": "#e6e6e6",
+    "toolstrip_hover": "#d6d6d6",
+    "header_bg": "#1f2a36",
+    "header_fg": "#ffffff",
+    "header_fg_muted": "#b8c4d0",
+    "header_hover": "#2c3b4b",
+    "accent": "#0072bd",
+    "accent_dark": "#005a96",
+    "accent_light": "#e3f0fa",
+    "text": "#1a1a1a",
+    "text_muted": "#5f5f5f",
     "danger": "#d64545",
     "success": "#2e7d32",
     "danger_dark": "#b23434",
     "row_odd": "#ffffff",
-    "row_even": "#f3f6fb",
-    "selection": "#cfe0fd",
+    "row_even": "#f5f9fd",
+    "selection": "#cfe5f7",
     "warning": "#c77700",
     "warning_on_dark": "#ffb74d",
     "success_light": "#e8f5e9",
     "danger_light": "#fdecec",
     "danger_border": "#f1b5b5",
     "nav_disabled": "#aab3c0",
+}
+
+# MATLAB's default line colour order, for the plots.
+MATLAB_COLORS = {
+    "blue": "#0072BD",
+    "orange": "#D95319",
+    "yellow": "#EDB120",
+    "purple": "#7E2F8E",
+    "green": "#77AC30",
+    "cyan": "#4DBEEE",
+    "red": "#A2142F",
 }
 
 
@@ -199,6 +214,25 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.dates import MinuteLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+# Plots in the MATLAB style: white axes with a full box, light solid grid,
+# bold titles and MATLAB's line colours.
+plt.rcParams.update(
+    {
+        "axes.facecolor": "white",
+        "axes.edgecolor": "#262626",
+        "axes.linewidth": 0.8,
+        "axes.titleweight": "bold",
+        "axes.titlesize": 11,
+        "axes.prop_cycle": plt.cycler(color=list(MATLAB_COLORS.values())),
+        "grid.color": "#dcdcdc",
+        "grid.linestyle": "-",
+        "grid.linewidth": 0.6,
+        "lines.linewidth": 1.6,
+        "legend.fontsize": 8,
+        "legend.framealpha": 0.9,
+    }
+)
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import pandas as pd
@@ -968,7 +1002,7 @@ class LinkBudgetApp:
         """Mark the analysis as stale so the user must recompute."""
         if not self.analysis_needs_refresh:
             self.analysis_needs_refresh = True
-            self.start_refresh_button.config(style="Red.TButton")
+            self.start_refresh_button.config(style="Accent.TButton")
             self.recalc_button.config(state="disabled")
             self.clear_plot_and_table()
             self.clear_uplink_table()
@@ -982,7 +1016,7 @@ class LinkBudgetApp:
             self.uplink_needs_refresh = True
             self.clear_uplink_table()
             if self.uplink_recalc_button is not None:
-                self.uplink_recalc_button.config(style="Red.TButton")
+                self.uplink_recalc_button.config(style="Accent.TButton")
 
     def set_uplink_budget_fresh(self):
         """Reset the uplink-only link budget stale flag."""
@@ -1408,11 +1442,14 @@ class LinkBudgetApp:
         self.clear_uplink_table()
         self.clear_plot_and_table()
 
+        # Constrained layout leaves room for the twin axis of the middle plot,
+        # whose right-hand label otherwise ran into the Doppler plot.
         fig, (ax1, ax2, ax3) = plt.subplots(
             1,
             3,
-            figsize=(15, 4),
+            figsize=(12, 4),
             gridspec_kw={"width_ratios": [1, 1, 1]},
+            layout="constrained",
         )
 
         tk_bg_color = self.root.cget("bg")
@@ -1423,48 +1460,47 @@ class LinkBudgetApp:
             mpl_bg_color = "#F0F0F0"
         fig.patch.set_facecolor(mpl_bg_color)
 
-        ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color="tab:blue")
-        ax1.set_ylabel("Elevation (°)", color="tab:blue", fontsize=8)
-        ax1.tick_params(axis="both", labelcolor="tab:blue", labelsize=8)
+        ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color=MATLAB_COLORS["blue"])
+        ax1.set_ylabel("Elevation (°)", color=MATLAB_COLORS["blue"], fontsize=8)
+        ax1.tick_params(axis="both", labelcolor=MATLAB_COLORS["blue"], labelsize=8)
         ax1.set_xlabel("Time (UTC)", fontsize=8)
         ax1.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax1.grid(True, linestyle=":", alpha=0.7)
+        ax1.grid(True)
         ax1.set_title("Elevation Angle")
         fig.autofmt_xdate(rotation=30)
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()
-        ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
-        ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
-        ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
+        ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color=MATLAB_COLORS["orange"])
+        ax2_1.set_ylabel("Eb/No (dB)", color=MATLAB_COLORS["orange"], fontsize=8)
+        ax2_1.tick_params(axis="both", labelcolor=MATLAB_COLORS["orange"], labelsize=8)
         ax2_2.plot(
             df_pass["Time (UTC)"],
             df_pass["C/(No+Io) (dBHz)"],
             label="C/(No+Io) (dBHz)",
-            color="tab:green",
+            color=MATLAB_COLORS["green"],
             linestyle="--",
         )
-        ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
-        ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
+        ax2_2.set_ylabel("C/(No+Io) (dBHz)", color=MATLAB_COLORS["green"], fontsize=8)
+        ax2_2.tick_params(axis="both", labelcolor=MATLAB_COLORS["green"], labelsize=8)
         ax2.set_xlabel("Time (UTC)", fontsize=8)
         ax2.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax2.grid(True, linestyle=":", alpha=0.7)
+        ax2.grid(True)
         ax2.set_title("Link Quality (Eb/No & C/(No+Io))")
         lines, labels = ax2_1.get_legend_handles_labels()
         lines2, labels2 = ax2_2.get_legend_handles_labels()
         ax2.legend(lines + lines2, labels + labels2, loc="best")
 
-        ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color="tab:purple")
+        ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color=MATLAB_COLORS["purple"])
         ax3.set_xlabel("Time (UTC)", fontsize=8)
-        ax3.set_ylabel("Doppler (kHz)", color="tab:purple", fontsize=8)
-        ax3.tick_params(axis="both", labelcolor="tab:purple", labelsize=8)
+        ax3.set_ylabel("Doppler (kHz)", color=MATLAB_COLORS["purple"], fontsize=8)
+        ax3.tick_params(axis="both", labelcolor=MATLAB_COLORS["purple"], labelsize=8)
         ax3.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax3.grid(True, linestyle=":", alpha=0.7)
+        ax3.grid(True)
         ax3.set_title("Doppler Shift")
-        fig.tight_layout()
 
         canvas_plot_widget = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas_plot_widget.draw()
@@ -1527,7 +1563,7 @@ class LinkBudgetApp:
         ax.set_ylabel("Gain (dB)", fontsize=8)
         ax.set_title("Antenna Gain Pattern")
         ax.tick_params(axis="both", labelsize=8)
-        ax.grid(True, linestyle=":", alpha=0.7)
+        ax.grid(True)
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
         canvas_popup.draw()
         canvas_popup.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
@@ -2861,7 +2897,7 @@ class LinkBudgetApp:
             if not results_state["fresh"] or not win.winfo_exists():
                 return
             results_state["fresh"] = False
-            calc_button.configure(style="Red.TButton")
+            calc_button.configure(style="Tool.Accent.TButton")
             export_button.state(["disabled"])
             pdf_button.state(["disabled"])
             stale_label.pack(anchor="w", before=status_label)
@@ -3305,7 +3341,7 @@ class LinkBudgetApp:
             )
             pdf_button.state(["!disabled"])
             results_state["fresh"] = True
-            calc_button.configure(style="TButton")
+            calc_button.configure(style="Tool.TButton")
             if current_page["key"] not in result_pages:
                 _show_page("summary")
 
@@ -3428,17 +3464,35 @@ class LinkBudgetApp:
                 return
             status_var.set(f"PDF report saved to {os.path.abspath(file_path)}")
 
-        calc_button = ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton")
-        calc_button.pack(side=tk.LEFT, padx=(0, 10))
-        _add_tooltip(calc_button, "Red when there are no results yet or the inputs changed since the last calculation.")
-        load_button = ttk.Button(button_row, text="Load...", command=_load)
+        # Toolstrip: groups of large buttons, each with its caption below, as
+        # in the MATLAB toolstrip.
+        def _tool_group(caption: str, first: bool = False) -> ttk.Frame:
+            if not first:
+                ttk.Separator(button_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=10)
+            group = ttk.Frame(button_row, style="Toolbar.TFrame")
+            group.pack(side=tk.LEFT, fill=tk.Y)
+            buttons = ttk.Frame(group, style="Toolbar.TFrame")
+            buttons.pack(side=tk.TOP)
+            ttk.Label(
+                group, text=caption, style="ToolCaption.TLabel"
+            ).pack(side=tk.BOTTOM, pady=(4, 0))
+            return buttons
+
+        run_group = _tool_group("RUN", first=True)
+        file_group = _tool_group("FILE")
+        export_group = _tool_group("EXPORT")
+
+        calc_button = ttk.Button(run_group, text="Calculate", command=_calculate, style="Tool.Accent.TButton")
+        calc_button.pack(side=tk.LEFT)
+        _add_tooltip(calc_button, "Blue when there are no results yet or the inputs changed since the last calculation.")
+        load_button = ttk.Button(file_group, text="Load...", command=_load, style="Tool.TButton")
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             load_button,
             f"Load this tab's inputs from the '{section}' section of a parameters JSON file, "
             "and the shared values (blue labels) when the file has them.",
         )
-        save_button = ttk.Button(button_row, text="Save...", command=_save)
+        save_button = ttk.Button(file_group, text="Save...", command=_save, style="Tool.TButton")
         save_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             save_button,
@@ -3447,11 +3501,11 @@ class LinkBudgetApp:
             "the file are kept. Saving into parameters.json makes them load automatically at "
             "startup.",
         )
-        ttk.Button(button_row, text="Reset", command=_reset).pack(side=tk.LEFT, padx=(0, 6))
-        export_button = ttk.Button(button_row, text="Export CSV...", command=_export_csv)
+        ttk.Button(file_group, text="Reset", command=_reset, style="Tool.TButton").pack(side=tk.LEFT)
+        export_button = ttk.Button(export_group, text="Export CSV...", command=_export_csv, style="Tool.TButton")
         export_button.pack(side=tk.LEFT, padx=(0, 6))
         export_button.state(["disabled"])
-        pdf_button = ttk.Button(button_row, text="Export PDF...", command=_export_pdf)
+        pdf_button = ttk.Button(export_group, text="Export PDF...", command=_export_pdf, style="Tool.TButton")
         pdf_button.pack(side=tk.LEFT)
         pdf_button.state(["disabled"])
         _add_tooltip(
@@ -3952,80 +4006,96 @@ class LinkBudgetApp:
             font=subheader_font,
         )
 
+        # Panels as MATLAB uipanels: grey like the window, a thin border and a
+        # dark bold title.
         style.configure(
             "TLabelframe",
-            background=PALETTE["surface"],
+            background=PALETTE["bg"],
             bordercolor=PALETTE["border"],
             relief="solid",
             borderwidth=1,
         )
         style.configure(
             "TLabelframe.Label",
-            background=PALETTE["surface"],
-            foreground=PALETTE["accent_dark"],
+            background=PALETTE["bg"],
+            foreground=PALETTE["text"],
             font=bold_font,
         )
 
         style.configure(
             "TButton",
-            background=PALETTE["surface_alt"],
+            background="#fafafa",
             foreground=PALETTE["text"],
-            padding=(12, 7),
+            padding=(10, 5),
             relief="solid",
             borderwidth=1,
-            bordercolor=PALETTE["border"],
+            bordercolor="#b4b4b4",
+            lightcolor="#fafafa",
+            darkcolor="#fafafa",
             font=default_font,
         )
         style.map(
             "TButton",
-            background=[("active", PALETTE["accent_light"]), ("disabled", PALETTE["surface_alt"])],
+            background=[("active", PALETTE["accent_light"]), ("disabled", PALETTE["bg"])],
             foreground=[("disabled", PALETTE["text_muted"])],
-            bordercolor=[("active", PALETTE["accent"]), ("!active", PALETTE["border"])],
+            bordercolor=[("active", PALETTE["accent"]), ("!active", "#b4b4b4")],
+            lightcolor=[("active", PALETTE["accent_light"])],
+            darkcolor=[("active", PALETTE["accent_light"])],
         )
 
+        # The action that needs running (no results yet, or inputs changed).
         style.configure(
-            "Red.TButton",
-            background=PALETTE["danger"],
+            "Accent.TButton",
+            background=PALETTE["accent"],
             foreground="white",
             font=bold_font,
-            padding=(12, 7),
+            padding=(10, 5),
             relief="flat",
-            borderwidth=0,
+            borderwidth=1,
+            bordercolor=PALETTE["accent_dark"],
+            lightcolor=PALETTE["accent"],
+            darkcolor=PALETTE["accent"],
         )
         style.map(
-            "Red.TButton",
-            background=[("active", PALETTE["danger_dark"]), ("disabled", PALETTE["surface_alt"])],
+            "Accent.TButton",
+            background=[("active", PALETTE["accent_dark"]), ("disabled", PALETTE["bg"])],
             foreground=[("disabled", PALETTE["text_muted"])],
+            lightcolor=[("active", PALETTE["accent_dark"])],
+            darkcolor=[("active", PALETTE["accent_dark"])],
         )
+        # Large toolstrip buttons (static link budget actions); the
+        # "Tool.Accent" style inherits the Accent colours.
+        style.configure("Tool.TButton", padding=(14, 8))
+        style.configure("Tool.Accent.TButton", padding=(14, 8))
 
         style.configure("TNotebook", background=PALETTE["bg"], borderwidth=0)
-        # Main window tabs: a navy tab bar continuing the header, with the
-        # selected tab opening onto the page below.
+        # Main window tabs, as the MATLAB toolstrip tabs: a light grey strip,
+        # the selected tab opening onto the page below with blue text.
         style.configure(
             "Main.TNotebook",
-            background=PALETTE["header_bg"],
+            background=PALETTE["toolstrip"],
             borderwidth=0,
-            tabmargins=(16, 4, 16, 0),
-            bordercolor=PALETTE["header_bg"],
-            lightcolor=PALETTE["header_bg"],
-            darkcolor=PALETTE["header_bg"],
+            tabmargins=(8, 5, 8, 0),
+            bordercolor=PALETTE["border"],
+            lightcolor=PALETTE["toolstrip"],
+            darkcolor=PALETTE["toolstrip"],
         )
         style.configure(
             "Main.TNotebook.Tab",
-            background=PALETTE["header_bg"],
-            foreground=PALETTE["header_fg_muted"],
-            padding=(20, 9),
+            background=PALETTE["toolstrip"],
+            foreground="#3c3c3c",
+            padding=(18, 7),
             font=bold_font,
-            borderwidth=0,
-            bordercolor=PALETTE["header_bg"],
-            lightcolor=PALETTE["header_bg"],
+            borderwidth=1,
+            bordercolor=PALETTE["toolstrip"],
+            lightcolor=PALETTE["toolstrip"],
         )
         style.map(
             "Main.TNotebook.Tab",
-            background=[("selected", PALETTE["bg"]), ("active", PALETTE["header_hover"])],
-            foreground=[("selected", PALETTE["accent_dark"]), ("active", PALETTE["header_fg"])],
+            background=[("selected", PALETTE["bg"]), ("active", PALETTE["toolstrip_hover"])],
+            foreground=[("selected", PALETTE["accent"]), ("active", PALETTE["text"])],
             lightcolor=[("selected", PALETTE["bg"])],
-            bordercolor=[("selected", PALETTE["bg"])],
+            bordercolor=[("selected", PALETTE["border"])],
         )
         # Notebook without tabs, for windows that switch pages from a sidebar.
         style.layout("Pages.TNotebook.Tab", [])
@@ -4042,6 +4112,12 @@ class LinkBudgetApp:
         style.configure("Toolbar.TFrame", background=PALETTE["surface"])
         style.configure("Toolbar.TLabel", background=PALETTE["surface"])
         style.configure("Card.TLabel", background=PALETTE["surface"])
+        style.configure(
+            "ToolCaption.TLabel",
+            background=PALETTE["surface"],
+            foreground=PALETTE["text_muted"],
+            font=(base_font_family, 8),
+        )
         style.configure(
             "PageTitle.TLabel", foreground=PALETTE["accent_dark"], font=(base_font_family, 15, "bold")
         )
@@ -4085,15 +4161,19 @@ class LinkBudgetApp:
             borderwidth=1,
             font=default_font,
         )
+        # Light column headings, as in MATLAB tables.
         style.configure(
             "Treeview.Heading",
-            background=PALETTE["header_bg"],
-            foreground=PALETTE["header_fg"],
+            background=PALETTE["toolstrip"],
+            foreground=PALETTE["text"],
             font=bold_font,
             relief="flat",
-            padding=(6, 6),
+            bordercolor=PALETTE["border"],
+            lightcolor=PALETTE["toolstrip"],
+            darkcolor=PALETTE["border"],
+            padding=(6, 5),
         )
-        style.map("Treeview.Heading", background=[("active", PALETTE["accent_dark"])])
+        style.map("Treeview.Heading", background=[("active", PALETTE["toolstrip_hover"])])
         style.map(
             "Treeview",
             background=[("selected", PALETTE["selection"])],
@@ -4270,13 +4350,13 @@ class LinkBudgetApp:
             passes_row,
             text="Start/Refresh Analysis",
             command=self.run_analysis,
-            style="Red.TButton",
+            style="Accent.TButton",
         )
         self.start_refresh_button.pack(side=tk.LEFT)
         _add_tooltip(
             self.start_refresh_button,
             "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
-            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
+            "contact windows. Turns blue whenever those inputs change and a fresh run is needed.",
         )
         ttk.Label(
             passes_row,
