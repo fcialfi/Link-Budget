@@ -411,8 +411,12 @@ def content():
         "A mission not launched yet (e.g. EPS-Sterna, of which AWS is the protoflight) has "
         "<b>custom orbit</b>, given by its mean elements: <b>altitude</b> (mean semi-major axis minus the "
         "equatorial radius), <b>eccentricity</b>, argument of perigee <b>ω</b> (90° for a frozen orbit), "
-        "<b>inclination</b> (empty: computed for a sun-synchronous orbit) and <b>LTAN</b> (local time of the "
-        "ascending node; for a constellation the menu lists the orbital planes). The program builds a "
+        "<b>inclination</b> (empty: computed for a sun-synchronous orbit), on the <b>Custom orbit</b> row. "
+        "The <b>Constellation</b> row gives the orbital <b>planes</b> by the local time of their ascending "
+        "node (LTAN, hh:mm separated by commas, e.g. 15:30, 19:30, 23:30), the satellites per plane "
+        "(<b>Sats/plane</b>, evenly spaced in the plane) and the <b>Phasing</b> (shift of the argument of "
+        "latitude from one plane to the next). <b>Analyse: plane / sat #</b> chooses the satellite used by "
+        "the pass analysis and the link budgets. The program builds a "
         "synthetic TLE with its epoch at the analysed date (also with <b>Generate TLE</b>), with the mean "
         "motion set so that the nodal period is that of the J2 theory: the pass times do not drift over the "
         "day. Passes and link budgets are then computed as for a launched satellite. EPS-Sterna uses its "
@@ -420,9 +424,16 @@ def content():
         "(nodal period 96.716 min, altitude over the ellipsoid 600–628 km). SGP4 adds its short-period terms "
         "to the mean elements, so the instantaneous altitude swings a few km more than in the reference "
         "table; the mean altitude and the pass times are those of the reference orbit. The orbit is saved in "
-        "the orbit section of the mission's parameters.json. <b>Sats/plane</b> and <b>Phasing</b> define the "
-        "constellation used by the Statistics tab."))
-    story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit and synthetic TLE.")
+        "the orbit section of the mission's parameters.json with <b>Save</b> (Static LB tabs); the "
+        "Statistics tab can use the whole constellation. To change the orbits: edit the fields (a new plane "
+        "list or Sats/plane updates the plane and satellite menus), check them with <b>Show "
+        "Constellation</b>, then Save."))
+    story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit, constellation and synthetic TLE.")
+    story.append(P(
+        "<b>Show Constellation</b> lists every satellite (plane, RAAN, argument of latitude and inclination "
+        "at 00:00 UTC of the analysed date) and draws the ground tracks over the first 100 minutes of the day "
+        "with the ground stations, and the satellites in their planes (RAAN against argument of latitude)."))
+    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 0°.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
@@ -508,6 +519,16 @@ def content():
         "(served minutes, volume, busy time, minutes with more than one satellite usable).",
         "The <b>Per Station</b> table is also given for one satellite and several stations.",
     ])
+    story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
+                 "requirement 90 % within 100 min.")
+    story.append(P(
+        "Four plots follow the summary: <b>Contact time per day</b> (contact and usable minutes; dotted: "
+        "mean), <b>Data per day</b> (capacity and downloaded volume, data generated per day, data on board "
+        "at the end of the day; passes per day without link budget), <b>Gaps between contacts</b> (histogram "
+        "with the longest gap) or, for a constellation, <b>Time per satellite</b> (served and waiting minutes "
+        "per day), and <b>Data latency</b> (share of the data on ground within a given latency, with the "
+        "requirement in green when met, red when not) or, without on-board data, the duration of each pass "
+        "against its maximum elevation."))
     story += FIG("statistics_tables", "Per-day and per-pass tables.")
     story.append(P(
         "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "

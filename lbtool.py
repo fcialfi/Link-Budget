@@ -34,7 +34,7 @@ def _catalogue() -> missions.Catalogue:
     return missions.load_catalogue(path)
 
 
-def _mission(name: str, day: date, plane: str | None, download: bool = False):
+def _mission(name: str, day: date, plane: str | None, download: bool = False, sat_number: int = 1):
     """(satellite, parameters or None, TLE lines) of a mission; loads its antenna pattern."""
     catalogue = _catalogue()
     sat = catalogue.find(name)
@@ -55,14 +55,21 @@ def _mission(name: str, day: date, plane: str | None, download: bool = False):
         orbit = (params or {}).get("orbit") or {}
         planes = orbit.get("ltan") or ["22:20"]
         planes = planes if isinstance(planes, list) else [planes]
+        plane = plane or planes[0]
+        per_plane = max(1, int(orbit.get("satellites_per_plane") or 1))
+        if not 1 <= sat_number <= per_plane:
+            raise SystemExit(f"--sat must be 1 to {per_plane} (satellites per plane).")
+        plane_index = planes.index(plane) if plane in planes else 0
         tle = tle_source.synthetic_tle(
             float(orbit.get("altitude_km", 628.0)),
-            tle_source.ltan_hours(plane or planes[0]),
+            tle_source.ltan_hours(plane),
             link_core.utc_midnight(day),
             orbit.get("inclination_deg"),
             name=sat.name.upper(),
             eccentricity=float(orbit.get("eccentricity") or 0.0),
             arg_perigee_deg=float(orbit.get("arg_perigee_deg") or 0.0),
+            arg_latitude_deg=((sat_number - 1) * 360.0 / per_plane
+                              + plane_index * float(orbit.get("phasing_deg") or 0.0)) % 360.0,
         )
         lines = (tle.line1, tle.line2)
     else:
@@ -106,7 +113,7 @@ def cmd_missions(_args) -> None:
 
 def cmd_passes(args) -> None:
     day = date.fromisoformat(args.date)
-    _sat, params, tle = _mission(args.mission, day, args.plane, args.download)
+    _sat, params, tle = _mission(args.mission, day, args.plane, args.download, args.sat)
     link = _link(params, args)
     (station,) = _stations(args.station, params)
     analysis = link_core.PassAnalysis(tle, station, link, args.min_elevation)
@@ -130,7 +137,7 @@ def cmd_passes(args) -> None:
 
 def cmd_statistics(args) -> None:
     start = date.fromisoformat(args.start)
-    _sat, params, tle = _mission(args.mission, start, args.plane, args.download)
+    _sat, params, tle = _mission(args.mission, start, args.plane, args.download, args.sat)
     link = _link(params, args)
     stations = _stations(args.stations, params)
     budget_kwargs = {}
@@ -217,6 +224,7 @@ def main(argv=None) -> None:
     common.add_argument("--min-elevation", type=float, default=calculations.MIN_ELEVATION_DEG,
                         help="minimum elevation of a contact [deg] (default 5)")
     common.add_argument("--plane", help="LTAN hh:mm of the orbital plane (custom-orbit missions)")
+    common.add_argument("--sat", type=int, default=1, help="satellite number in the plane (custom-orbit missions)")
     common.add_argument("-o", "--output", help="CSV file to write")
     common.add_argument("--download", action="store_true",
                         help="download the latest TLE (SatNOGS / N2YO) into the mission folder first")

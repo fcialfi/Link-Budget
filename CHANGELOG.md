@@ -4,6 +4,8 @@
 - Statistics of a whole constellation (custom orbit: planes × satellites per plane, phasing): shared stations tracking one satellite at a time, conflicts, per-satellite and per-station figures; also in lbtool.py (--constellation).
 - Statistics: use of each station of the network.
 - Statistics: latency requirement (share of the data on ground within a time).
+- Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes). lbtool.py: --sat.
+- Statistics plots redrawn: contact time, data per day, gaps (or time per satellite) and data latency with the requirement.
 - Fix: crash of the statistics on Windows (garbage collection in the worker thread).
 
 ## 1.1.0
