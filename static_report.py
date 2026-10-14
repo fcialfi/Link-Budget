@@ -461,6 +461,8 @@ class ReportContext:
     # Company logo drawn in the page header (light artwork for the navy
     # band); left out when None or unreadable.
     logo_path: Optional[str] = None
+    # Project name, shown in the page header and above the title.
+    project: str = ""
 
 
 # Colours matching the application's MATLAB-like theme.
@@ -559,6 +561,8 @@ def build_static_report_pdf(
         "title": ParagraphStyle("title", parent=base, fontName="Helvetica-Bold", fontSize=18, leading=22,
                                 textColor=color(_TITLE)),
         "subtitle": ParagraphStyle("subtitle", parent=base, fontSize=10, leading=14, textColor=color(_MUTED)),
+        "project": ParagraphStyle("project", parent=base, fontName="Helvetica-Bold", fontSize=9, leading=12,
+                                  textColor=color(_ACCENT), spaceAfter=2),
         "h1": ParagraphStyle("h1", parent=base, fontName="Helvetica-Bold", fontSize=12, leading=15,
                              textColor=color(_TITLE), spaceBefore=10, spaceAfter=5),
         "body": base,
@@ -608,6 +612,8 @@ def build_static_report_pdf(
     story: list = []
 
     # ---- Title block -------------------------------------------------------
+    if context.project:
+        story.append(Paragraph(f"PROJECT: {_rich(context.project.upper())}", styles["project"]))
     story.append(Paragraph(_rich(context.title), styles["title"]))
     subtitle = (
         f"{context.direction}  ·  {context.station}  ·  "
@@ -785,7 +791,9 @@ def build_static_report_pdf(
     ))
 
     # ---- Page decoration (header, footer, "page x of y") -------------------
-    header_text = "Link Budget Tool  ·  Static Link Budget Report"
+    header_text = "Link Budget Tool  ·  Static Link Budget Report" + (
+        f"  ·  {context.project}" if context.project else ""
+    )
     stamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
 
     logo = _load_logo(context.logo_path)
@@ -843,7 +851,7 @@ def build_static_report_pdf(
         rightMargin=margin_x,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title=context.title,
+        title=f"{context.project} – {context.title}" if context.project else context.title,
         author="Exostaff",
         subject=f"{context.direction} static link budget",
     )
