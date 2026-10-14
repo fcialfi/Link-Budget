@@ -142,6 +142,14 @@ def test_load_antenna_pattern_replaces_globals(tmp_path, restore_antenna_pattern
     assert calculations.antenna_pattern(0.0) == pytest.approx(0.0, abs=1e-9)
 
 
+def test_load_antenna_pattern_other_separators_and_header(tmp_path, restore_antenna_pattern):
+    pattern_file = tmp_path / "antenna_pattern.txt"
+    pattern_file.write_text("# AWS pattern\nAngle (deg)\tGain (dBi)\n66\t-1.0\n0  3.0\n30;2.0\n")
+    calculations.load_antenna_pattern(str(pattern_file))
+    assert list(calculations.ANTENNA_PATTERN_ANGLES) == [0.0, 30.0, 66.0]
+    assert calculations.satellite_antenna_gain_dbi(15.0) == pytest.approx(2.5)
+
+
 def test_load_antenna_pattern_rejects_single_column_file(tmp_path):
     pattern_file = tmp_path / "pattern.csv"
     pattern_file.write_text("1.0\n2.0\n3.0\n")
