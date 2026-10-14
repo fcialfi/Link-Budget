@@ -992,6 +992,72 @@ class LinkBudgetApp:
         if self.pattern_info_label is not None:
             self.pattern_info_label.configure(foreground=PALETTE["warning"] if warning else PALETTE["text_muted"])
 
+    def _gt_model(self) -> dict | None:
+        """The G/T-versus-elevation inputs, or None for a constant G/T GS.
+
+        Raises ValueError when they are not valid numbers.
+        """
+
+        tsys_text = self.tsys_ref_entry.get().strip()
+        if not tsys_text:
+            return None
+        tsys = float(tsys_text)
+        ref_el = float(self.gt_ref_el_entry.get().strip() or MIN_ELEVATION_DEG)
+        radome = float(self.radome_loss_entry.get().strip() or 0.0)
+        if tsys <= 0 or not 0 < ref_el <= 90:
+            raise ValueError("System Noise Temperature must be > 0 K and the reference elevation 0–90°.")
+        return {"ref_elevation_deg": ref_el, "tsys_ref_k": tsys, "radome_loss_db": radome}
+
+    def _gt_scaling_db(self, d_gs: float) -> float:
+        """G/T change from the reference antenna (G/T Reference Diameter) to a ``d_gs`` antenna."""
+
+        text = self.gt_ref_diameter_entry.get().strip()
+        return calculations.gt_diameter_scaling_db(d_gs, float(text)) if text else 0.0
+
+    def _pass_atmosphere(self, lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, elevations, gt_gs):
+        """Atmospheric attenuation and G/T GS at each elevation of the pass.
+
+        The ITU-R model is evaluated on an elevation grid and interpolated.
+        Returns (attenuation_db, gt_dbk, summary text).
+        """
+
+        grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
+            lat_gs, lon_gs, freq_ghz, p, d_gs, alt_gs_km, include_scintillation=self.scint_var.get()
+        )
+        atm = calculations.interpolate_vs_elevation(np.asarray(elevations, dtype=float), grid, attenuation)
+        scaling = self._gt_scaling_db(d_gs)
+        gt_gs = gt_gs + scaling
+        model = self._gt_model()
+        if model is None:
+            gt = np.full_like(atm, gt_gs)
+            gt_text = f"G/T GS {gt_gs:g} dB/K at all elevations"
+        else:
+            sky_ref = calculations.gt_reference_sky_noise_k(
+                lat_gs, lon_gs, freq_ghz, d_gs, alt_gs_km, model["ref_elevation_deg"]
+            )
+            sky = calculations.sky_noise_temperature_k(atm)
+            gt = calculations.ground_station_gt_dbk(
+                gt_gs, model["tsys_ref_k"], sky_ref, sky, model["radome_loss_db"]
+            )
+            grid_gt = calculations.ground_station_gt_dbk(
+                gt_gs,
+                model["tsys_ref_k"],
+                sky_ref,
+                calculations.sky_noise_temperature_k(attenuation),
+                model["radome_loss_db"],
+            )
+            gt_text = (
+                f"G/T GS {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, grid_gt):.2f} dB/K "
+                f"at {MIN_ELEVATION_DEG:g}°, {grid_gt[-1]:.2f} at 90°"
+            )
+        if scaling:
+            gt_text += f" ({d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
+        summary = (
+            f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(MIN_ELEVATION_DEG, grid, attenuation):.3f} "
+            f"at {MIN_ELEVATION_DEG:g}° El, {attenuation[-1]:.3f} at 90° (per sample)\n{gt_text}"
+        )
+        return atm, gt, summary
+
     def _set_link_budget_enabled(self, enabled: bool) -> None:
         """Enable the link budget tabs, or leave only the contact analysis."""
 
@@ -1155,6 +1221,10 @@ class LinkBudgetApp:
             "gt_gs_dbk": self.gt_gs_entry,
             "gt_sat_dbk": self.gt_sat_entry,
             "antenna_diameter_m": self.d_gs_entry,
+            "gt_ref_diameter_m": self.gt_ref_diameter_entry,
+            "gt_ref_elevation_deg": self.gt_ref_el_entry,
+            "tsys_ref_k": self.tsys_ref_entry,
+            "radome_loss_db": self.radome_loss_entry,
             "link_availability_pct": self.LA_entry,
             "other_attenuations_db": self.other_att_entry,
             "uplink_other_attenuations_db": self.other_att_ul_entry,
@@ -1563,7 +1633,7 @@ class LinkBudgetApp:
             freq = float(self.freq_entry.get()) * u.GHz
             link_availability = float(self.LA_entry.get())
             p = 100.0 - link_availability
-            d_gs = float(self.d_gs_entry.get())
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
             other_att = float(self.other_att_entry.get() or 0.0)
             eirp_sat = float(self.eirp_sat_entry.get())
             gt_gs = float(self.gt_gs_entry.get())
@@ -1614,18 +1684,16 @@ class LinkBudgetApp:
         altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
             sat, gs, sky_times, freq
         )
-        atm_att = atmospheric_attenuation(
-            lat_gs,
-            lon_gs,
-            freq.to(u.GHz).value,
-            p,
-            d_gs,
-            alt_gs_km,
-            include_scintillation=self.scint_var.get(),
-        )
-        uplink_atm_att = None
+        try:
+            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
+                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
+            )
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
+            return
+        uplink_atm_by_sample = None
         if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            uplink_atm_att = atmospheric_attenuation(
+            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
                 lat_gs,
                 lon_gs,
                 uplink_freq.to(u.GHz).value,
@@ -1634,9 +1702,10 @@ class LinkBudgetApp:
                 alt_gs_km,
                 include_scintillation=self.scint_var.get(),
             )
-        self.atm_label_var.set(
-            f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
-        )
+            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
+                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
+            )
+        self.atm_label_var.set(atm_summary)
         results_list = []
         self.contact_windows.clear()
         in_contact = False
@@ -1654,13 +1723,13 @@ class LinkBudgetApp:
                 d_gs,
                 alt_gs_km,
                 eirp_sat,
-                gt_gs,
+                float(gt_by_sample[i]),
                 demod_loss,
                 bitrate,
                 overhead,
                 cisat_lin,
                 other_att,
-                atm_att,
+                float(atm_by_sample[i]),
                 elev,
                 slant_ranges[i],
                 dopplers[i],
@@ -1670,17 +1739,19 @@ class LinkBudgetApp:
                 gt_sat,
                 demod_loss_ul,
                 other_att_ul,
-                uplink_atm_att,
+                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
                 **loss_kwargs,
             )
+            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
                 "Elevation (°)",
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "G/T GS (dB/K)",
                 "S/C Antenna Gain (dBi)",
                 "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
@@ -1800,7 +1871,7 @@ class LinkBudgetApp:
             freq = float(self.freq_entry.get()) * u.GHz
             link_availability = float(self.LA_entry.get())
             p = 100.0 - link_availability
-            d_gs = float(self.d_gs_entry.get())
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(self.gs_var.get()) or float(self.d_gs_entry.get())
             other_att = float(self.other_att_entry.get() or 0.0)
             eirp_sat = float(self.eirp_sat_entry.get())
             gt_gs = float(self.gt_gs_entry.get())
@@ -1839,29 +1910,6 @@ class LinkBudgetApp:
             messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
             return
         gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
-        atm_att = atmospheric_attenuation(
-            lat_gs,
-            lon_gs,
-            freq.to(u.GHz).value,
-            p,
-            d_gs,
-            alt_gs_km,
-            include_scintillation=self.scint_var.get(),
-        )
-        uplink_atm_att = None
-        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
-            uplink_atm_att = atmospheric_attenuation(
-                lat_gs,
-                lon_gs,
-                uplink_freq.to(u.GHz).value,
-                p,
-                d_gs,
-                alt_gs_km,
-                include_scintillation=self.scint_var.get(),
-            )
-        self.atm_label_var.set(
-            f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: {atm_att:.3f}"
-        )
         updated_results = []
         times_dt = self.df_all["Time (UTC)"].tolist()
         sky_times = ts.utc(
@@ -1875,6 +1923,28 @@ class LinkBudgetApp:
         altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(
             sat, gs, sky_times, freq
         )
+        try:
+            atm_by_sample, gt_by_sample, atm_summary = self._pass_atmosphere(
+                lat_gs, lon_gs, freq.to(u.GHz).value, p, d_gs, alt_gs_km, altitudes, gt_gs
+            )
+        except ValueError as e:
+            messagebox.showerror("Input Error", f"Invalid G/T GS inputs: {e}")
+            return
+        uplink_atm_by_sample = None
+        if uplink_freq is not None and eirp_gs is not None and gt_sat is not None:
+            ul_grid, ul_attenuation = calculations.atmospheric_attenuation_vs_elevation(
+                lat_gs,
+                lon_gs,
+                uplink_freq.to(u.GHz).value,
+                p,
+                d_gs,
+                alt_gs_km,
+                include_scintillation=self.scint_var.get(),
+            )
+            uplink_atm_by_sample = calculations.interpolate_vs_elevation(
+                np.asarray(altitudes, dtype=float), ul_grid, ul_attenuation
+            )
+        self.atm_label_var.set(atm_summary)
         for i, t_utc_dt in enumerate(times_dt):
             t_sky = sky_times[i]
             params = calculate_link_budget_parameters(
@@ -1886,13 +1956,13 @@ class LinkBudgetApp:
                 d_gs,
                 alt_gs_km,
                 eirp_sat,
-                gt_gs,
+                float(gt_by_sample[i]),
                 demod_loss,
                 bitrate,
                 overhead,
                 cisat_lin,
                 other_att,
-                atm_att,
+                float(atm_by_sample[i]),
                 altitudes[i],
                 slant_ranges[i],
                 dopplers[i],
@@ -1902,18 +1972,20 @@ class LinkBudgetApp:
                 gt_sat,
                 demod_loss_ul,
                 other_att_ul,
-                uplink_atm_att,
+                float(uplink_atm_by_sample[i]) if uplink_atm_by_sample is not None else None,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
                 **loss_kwargs,
             )
 
+            params["G/T GS (dB/K)"] = float(gt_by_sample[i])
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
                 "Elevation (°)",
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
+                "G/T GS (dB/K)",
                 "S/C Antenna Gain (dBi)",
                 "EIRP (dBW)",
                 "S/C Antenna Loss (dB)",
@@ -2078,6 +2150,7 @@ class LinkBudgetApp:
             "Slant Range (km)",
             "Path Loss (dB)",
             "Atmospheric Att (dB)",
+            "G/T GS (dB/K)",
             "Off Boresight Angle (°)",
             "S/C Antenna Gain (dBi)",
             "EIRP (dBW)",
@@ -2465,7 +2538,8 @@ class LinkBudgetApp:
                     ),
                     L(
                         "Antenna Diameter GS [m]", self.d_gs_entry,
-                        "Used by the ITU-R atmospheric model"
+                        "Used for a station without diameter in ground_stations.txt (5th column): "
+                        "by the ITU-R atmospheric model, for the G/T scaling"
                         + (" and for the default Rx beamwidth." if rx_is_ground_station else "."),
                     ),
                     L(
@@ -2682,13 +2756,39 @@ class LinkBudgetApp:
                         gt_label, gt_entry,
                         "Receiving figure of merit: antenna gain over system noise temperature."
                         + (
-                            ""
+                            " With a System Noise Temperature it is the value at the G/T reference "
+                            "elevation, in clear sky."
                             if rx_is_ground_station
                             else " With the option below it is the value at the satellite antenna "
                             "boresight (pattern peak)."
                         ),
                     ),
                 ]
+                + (
+                    [
+                        L(
+                            "G/T Reference Diameter [m]", self.gt_ref_diameter_entry,
+                            "Antenna diameter the G/T GS refers to; another station diameter scales it by "
+                            "20 log10(D/Dref). Empty: no scaling.",
+                        ),
+                        L(
+                            "G/T Reference Elevation [deg]", self.gt_ref_el_entry,
+                            "Elevation at which the G/T GS is specified (clear sky).",
+                        ),
+                        L(
+                            "System Noise Temperature [K]", self.tsys_ref_entry,
+                            "System noise temperature at the G/T reference elevation, clear sky. With it the "
+                            "G/T follows the sky noise: lower at low elevation and in rain (ITU-R P.618 sky "
+                            "noise, Tm = 275 K). Empty: the G/T GS is used as it is at every elevation.",
+                        ),
+                        L(
+                            "Radome Loss [dB]", self.radome_loss_entry,
+                            "G/T degradation of the radome, subtracted from the G/T (e.g. 0.25 dB).",
+                        ),
+                    ]
+                    if rx_is_ground_station
+                    else []
+                )
                 # The satellite antenna pattern gives the Rx gain on the uplink only.
                 + ([] if rx_is_ground_station else [("gain_source",)])
                 + [
@@ -3842,6 +3942,7 @@ class LinkBudgetApp:
                 other_att = _parse_optional(other_att_entry, other_att_label)
                 link_availability = _parse_required(self.LA_entry, "Link Availability [%]")
                 d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+                d_gs = calculations.GROUND_STATION_DIAMETERS.get(station_var.get(), d_gs)
 
                 if eirp_mode_var.get() == "tx_chain":
                     tx_power_w = _field("tx_power_w", _parse_optional_or_none)
@@ -3965,6 +4066,8 @@ class LinkBudgetApp:
                     required_ebno=required_ebno,
                     ionospheric_s4_ref=iono_s4_ref,
                     ionospheric_s4_ref_freq_mhz=iono_s4_ref_freq,
+                    gt_model=self._gt_model() if rx_is_ground_station else None,
+                    gt_diameter_scaling_db=self._gt_scaling_db(d_gs) if rx_is_ground_station else 0.0,
                     tx_power_w=tx_power_w,
                     antenna_circuit_loss_db=ant_circuit_loss_db,
                     vswr=vswr,
@@ -4311,6 +4414,7 @@ class LinkBudgetApp:
 
             freq_ghz = _parse_required(freq_entry, freq_label)
             d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+            d_gs = calculations.GROUND_STATION_DIAMETERS.get(station_var.get(), d_gs)
             if iono_mode_var.get() == "s4":
                 iono_kwargs = dict(
                     ionospheric_s4_ref=_field("iono_s4_ref", _parse_required),
@@ -5464,6 +5568,32 @@ class LinkBudgetApp:
         ttk.Label(gs_frame, text="Antenna Diameter GS [m]").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         self.d_gs_entry = ttk.Entry(gs_frame, width=15)
         self.d_gs_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        for row, (label, attr, tip) in enumerate(
+            (
+                (
+                    "G/T Reference Diameter [m]",
+                    "gt_ref_diameter_entry",
+                    "Antenna diameter the G/T GS refers to. For a station with another diameter (5th column "
+                    "of ground_stations.txt, or Antenna Diameter GS) the G/T is scaled by 20 log10(D/Dref): "
+                    "same feed and receiver. Empty: no scaling.",
+                ),
+                ("G/T Reference Elevation [deg]", "gt_ref_el_entry", "Elevation at which the G/T GS is specified."),
+                (
+                    "System Noise Temperature [K]",
+                    "tsys_ref_entry",
+                    "At the G/T reference elevation, clear sky. With it the G/T GS follows the sky noise "
+                    "along the pass (lower at low elevation and in rain). Empty: constant G/T GS.",
+                ),
+                ("Radome Loss [dB]", "radome_loss_entry", "G/T degradation of the radome."),
+            ),
+            start=2,
+        ):
+            ttk.Label(gs_frame, text=label).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+            entry = ttk.Entry(gs_frame, width=15)
+            entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+            entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
+            _add_tooltip(entry, tip)
+            setattr(self, attr, entry)
         gs_frame.grid_columnconfigure(1, weight=1)
 
         # Atmospheric Attenuations frame

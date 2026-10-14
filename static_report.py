@@ -77,7 +77,20 @@ def link_budget_rows(budget: Dict[str, Any], required_margin_db: Optional[float]
     if budget.get("other_attenuation_db"):
         both(path, "Other Attenuations [dB]", budget["other_attenuation_db"])
     per_condition(path, "Total Propagation Loss [dB]", "total_propagation_loss_db", emphasis=True)
-    if "gt_dbk" in budget:
+    model = budget.get("gt_model")
+    if budget.get("gt_diameter_scaling_db"):
+        both(rx, "G/T of the Reference Antenna [dB/K]", budget["gt_reference_dbk"])
+        both(rx, "Antenna Diameter Scaling [dB]", budget["gt_diameter_scaling_db"])
+    if model:
+        both(rx, f"G/T at {model['ref_elevation_deg']:g}° El, clear sky [dB/K]", budget["gt_dbk"])
+        if model.get("radome_loss_db"):
+            both(rx, "Radome Loss [dB]", model["radome_loss_db"])
+        per_condition(rx, "Sky Noise Temperature [K]", "sky_noise_k")
+        per_condition(rx, "System Noise Temperature [K]", "system_noise_k")
+        per_condition(rx, "Rx G/T [dB/K]", "gt_dbk", emphasis=True)
+    elif "gt_dbk" in clear:
+        per_condition(rx, "Rx G/T [dB/K]", "gt_dbk")
+    elif "gt_dbk" in budget:
         both(rx, "Rx G/T [dB/K]", budget["gt_dbk"])
     if "rx_depointing_deg" in budget:
         both(rx, "Rx Antenna Pointing Loss [dB]", budget["rx_pointing_loss_db"])
