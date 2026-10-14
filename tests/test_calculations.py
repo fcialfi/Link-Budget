@@ -150,6 +150,13 @@ def test_load_antenna_pattern_other_separators_and_header(tmp_path, restore_ante
     assert calculations.satellite_antenna_gain_dbi(15.0) == pytest.approx(2.5)
 
 
+def test_load_antenna_pattern_excel_semicolon_decimal_comma(tmp_path, restore_antenna_pattern):
+    pattern_file = tmp_path / "AWS Antenna Pattern.csv"
+    pattern_file.write_text("Angle;Gain\n-66;0,5\n0;-2,25\n66;0,5\n", encoding="utf-8-sig")
+    calculations.load_antenna_pattern(str(pattern_file))
+    assert list(calculations.ANTENNA_PATTERN_GAINS) == [0.5, -2.25, 0.5]
+
+
 def test_load_antenna_pattern_rejects_single_column_file(tmp_path):
     pattern_file = tmp_path / "pattern.csv"
     pattern_file.write_text("1.0\n2.0\n3.0\n")

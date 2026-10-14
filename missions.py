@@ -15,7 +15,8 @@ with ``custom_orbit`` (not launched yet) uses a synthetic TLE built from the
 
 The link budget parameters of a satellite are in
 ``missions/<name>/parameters.json`` (same format as the old top-level
-parameters.json), with an optional ``antenna_pattern.txt``. The TLE last
+parameters.json), with an optional antenna pattern (``antenna_pattern.txt``
+or another .txt/.csv file with "pattern" in its name). The TLE last
 downloaded is kept in ``missions/<name>/tle.txt``. A satellite without
 parameters gets the contact analysis only.
 """
@@ -71,6 +72,24 @@ class Catalogue:
 
     def mission_file(self, sat: Satellite, filename: str) -> str:
         return os.path.join(self.mission_dir(sat), filename)
+
+    def pattern_path(self, sat: Satellite) -> str | None:
+        """The mission's antenna pattern, or None when it has none.
+
+        ``antenna_pattern.txt`` first; otherwise any .txt/.csv file of the
+        mission folder with "pattern" in its name (e.g. "AWS Antenna Pattern.txt").
+        """
+        path = self.mission_file(sat, PATTERN_FILE)
+        if os.path.isfile(path):
+            return path
+        folder = self.mission_dir(sat)
+        if not os.path.isdir(folder):
+            return None
+        for name in sorted(os.listdir(folder)):
+            stem, ext = os.path.splitext(name)
+            if "pattern" in stem.lower() and ext.lower() in (".txt", ".csv"):
+                return os.path.join(folder, name)
+        return None
 
     def parameters_path(self, sat: Satellite) -> str | None:
         """The mission's parameters file, or None when it has none."""

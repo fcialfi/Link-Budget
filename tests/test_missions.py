@@ -44,3 +44,18 @@ def test_catalogue_errors(tmp_path):
     cat = missions.load_catalogue(str(path))
     assert cat.default is None
     assert cat.mission_dir(cat.find("A/B")).endswith(os.path.join("missions", "A_B"))
+
+
+def test_mission_pattern_lookup(tmp_path):
+    (tmp_path / "satellites.json").write_text(json.dumps({"satellites": [{"name": "X", "norad_id": 1}]}))
+    cat = missions.load_catalogue(str(tmp_path / "satellites.json"))
+    sat = cat.find("X")
+    assert cat.pattern_path(sat) is None
+    folder = tmp_path / "missions" / "X"
+    folder.mkdir(parents=True)
+    (folder / "parameters.json").write_text("{}")
+    assert cat.pattern_path(sat) is None
+    (folder / "X Antenna Pattern.CSV").write_text("0,1\n10,0\n")
+    assert cat.pattern_path(sat).endswith("X Antenna Pattern.CSV")
+    (folder / "antenna_pattern.txt").write_text("0,1\n10,0\n")
+    assert cat.pattern_path(sat).endswith("antenna_pattern.txt")

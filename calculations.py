@@ -183,7 +183,8 @@ def load_antenna_pattern(file_path: str) -> None:
 
     The file must contain two numeric columns: angle from the antenna
     boresight (nadir) in degrees and gain in dBi, separated by a comma, a
-    semicolon, tabs or spaces. Lines that do not start with two numbers
+    semicolon (then a decimal comma is accepted, as Excel writes with
+    Italian settings), tabs or spaces. Lines that do not start with two numbers
     (a header, ``#`` comments) are skipped.
     Existing global pattern arrays are replaced and the interpolation function
     is updated accordingly.
@@ -194,7 +195,12 @@ def load_antenna_pattern(file_path: str) -> None:
     rows = []
     with open(file_path, "r", encoding="utf-8-sig") as f:
         for line in f:
-            fields = [field for field in re.split(r"[,;\s]+", line.strip()) if field]
+            text = line.strip()
+            if ";" in text:
+                # Semicolon-separated (e.g. Excel with Italian settings): the comma is the decimal mark.
+                fields = [field.replace(",", ".") for field in re.split(r"[;\s]+", text) if field]
+            else:
+                fields = [field for field in re.split(r"[,\s]+", text) if field]
             try:
                 rows.append((float(fields[0]), float(fields[1])))
             except (IndexError, ValueError):
