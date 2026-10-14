@@ -4641,25 +4641,17 @@ class LinkBudgetApp:
         self.root.bind_all("<F1>", lambda _e: self.show_about())
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.root.bind_all("<Control-q>", lambda _e: self.exit_app())
-        # Right of the header: the project name above the licence.
+        # Right of the header: the licence. The project name is in the window title.
         header_right = ttk.Frame(header, style="Header.TFrame")
         header_right.pack(side=tk.RIGHT, fill=tk.Y)
         self.project_var = tk.StringVar(value="")
-        project_header_var = tk.StringVar(value="")
 
         def _show_project(*_args):
             project = self.project_var.get().strip()
-            project_header_var.set(f"Project: {project}" if project else "")
             title = f"Satellite Link Budget Tool {APP_VERSION}"
             self.root.title(f"{title} – {project}" if project else title)
 
         self.project_var.trace_add("write", _show_project)
-        ttk.Label(
-            header_right,
-            textvariable=project_header_var,
-            style="Header.TLabel",
-            font=(base_font_family, 12, "bold"),
-        ).pack(side=tk.TOP, anchor="e")
         license_text = self.license_status.summary()
         if license_text:
             ttk.Label(
@@ -4667,7 +4659,7 @@ class LinkBudgetApp:
                 text=license_text,
                 style="HeaderSub.TLabel",
                 foreground=PALETTE["warning_on_dark"] if self.license_status.expiring_soon else None,
-            ).pack(side=tk.BOTTOM, anchor="e")
+            ).pack(side=tk.TOP, anchor="e", expand=True)
 
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
