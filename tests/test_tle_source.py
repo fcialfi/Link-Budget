@@ -32,29 +32,17 @@ def test_satnogs_answer(monkeypatch):
     assert tle.text() == f"ARCTIC WEATHER SATELLITE\n{L1}\n{L2}\n"
 
 
-def test_falls_back_to_celestrak(monkeypatch):
-    def fake_get(url):
-        if "satnogs" in url:
-            raise OSError("timed out")
-        return f"AWS\r\n{L1}\r\n{L2}\r\n"
-
-    monkeypatch.setattr(tle_source, "_get", fake_get)
-    tle = tle_source.fetch_tle(60543)
-    assert tle.source == "CelesTrak"
-    assert tle.name == "AWS"
-
-
 def test_all_sources_fail(monkeypatch):
     def fake_get(url):
         if "satnogs" in url:
             return "[]"
-        return "No GP data found"
+        raise OSError("timed out")
 
     monkeypatch.setattr(tle_source, "_get", fake_get)
     with pytest.raises(RuntimeError) as err:
         tle_source.fetch_tle(60543)
     assert "SatNOGS: no TLE" in str(err.value)
-    assert "CelesTrak: No GP data found" in str(err.value)
+    assert "N2YO: timed out" in str(err.value)
 
 
 def test_wrong_satellite_rejected(monkeypatch):
@@ -128,34 +116,17 @@ def test_synthetic_tle_with_inclination_and_bad_inputs():
         tle_source.synthetic_tle(50, 10.0, when)
 
 
-def _only(source_text):
-    """A fake _get where SatNOGS and CelesTrak find nothing and ``source_text`` answers the rest."""
-
-    def fake_get(url):
-        if "satnogs" in url:
-            return "[]"
-        if "celestrak" in url:
-            raise OSError("connection timed out")
-        return source_text(url)
-
-    return fake_get
-
-
-def test_n2yo_page(monkeypatch):
+def test_n2yo_page_when_satnogs_does_not_have_the_satellite(monkeypatch):
     # A page with a real TLE of AWS, shown the way N2YO does (lines separated by <br>).
     page = f"<html><head><title>ARCTIC WEATHER SATELLITE</title></head><body><pre>{L1}<br/>{L2}</pre></body></html>"
-    monkeypatch.setattr(tle_source, "_get", _only(lambda url: page if "n2yo" in url else "{}"))
+    monkeypatch.setattr(tle_source, "_get", lambda url: "[]" if "satnogs" in url else page)
     tle = tle_source.fetch_tle(60543)
     assert tle.source == "N2YO"
     assert (tle.line1, tle.line2) == (L1, L2)
     assert tle.name == "ARCTIC WEATHER SATELLITE"
 
 
-def test_tle_api(monkeypatch):
-    answer = json.dumps({"name": "ARCTIC WEATHER SATELLITE", "line1": L1, "line2": L2})
-    monkeypatch.setattr(
-        tle_source, "_get", _only(lambda url: "<html>nothing</html>" if "n2yo" in url else answer)
-    )
-    tle = tle_source.fetch_tle(60543)
-    assert tle.source == "TLE API (CelesTrak)"
-    assert tle.line1 == L1
+def test_n2yo_page_without_tle(monkeypatch):
+    monkeypatch.setattr(tle_source, "_get", lambda url: "[]" if "satnogs" in url else "<html>nothing</html>")
+    with pytest.raises(RuntimeError, match="N2YO: no TLE of NORAD 60543 on the page"):
+        tle_source.fetch_tle(60543)
