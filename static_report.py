@@ -463,6 +463,8 @@ class ReportContext:
     logo_path: Optional[str] = None
     # Project name, shown in the page header and above the title.
     project: str = ""
+    # Version of the tool that made the report, shown in the page footer.
+    app_version: str = ""
 
 
 # Colours matching the application's MATLAB-like theme.
@@ -840,7 +842,8 @@ def build_static_report_pdf(
             self.line(margin_x, 13 * mm, page_w - margin_x, 13 * mm)
             self.setFillColor(color(_MUTED))
             self.setFont("Helvetica", 8)
-            self.drawString(margin_x, 9 * mm, f"Generated {stamp}")
+            tool = f"  ·  Link Budget Tool {context.app_version}" if context.app_version else ""
+            self.drawString(margin_x, 9 * mm, f"Generated {stamp}{tool}")
             self.drawRightString(page_w - margin_x, 9 * mm, f"Page {self._pageNumber} of {total}")
             self.restoreState()
 
@@ -853,6 +856,7 @@ def build_static_report_pdf(
         bottomMargin=18 * mm,
         title=f"{context.project} – {context.title}" if context.project else context.title,
         author="Exostaff",
+        creator=f"Link Budget Tool {context.app_version}".strip(),
         subject=f"{context.direction} static link budget",
     )
     doc.build(story, canvasmaker=NumberedCanvas)

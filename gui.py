@@ -9,6 +9,8 @@ import re
 import sys
 from typing import Callable
 
+from version import APP_VERSION
+
 # ---------------------------------------------------------------------------
 # Visual theme
 # ---------------------------------------------------------------------------
@@ -155,7 +157,7 @@ def _show_startup_splash():
     ).pack()
     tk.Label(
         root,
-        text="Loading, please wait...",
+        text=f"Version {APP_VERSION}  ·  Loading, please wait...",
         bg=PALETTE["header_bg"],
         fg=PALETTE["header_fg_muted"],
         font=(font_family, 9),
@@ -3660,6 +3662,7 @@ class LinkBudgetApp:
                     input_groups=input_groups,
                     logo_path=_asset_path(LOGO_FILE),
                     project=self.project_var.get().strip(),
+                    app_version=APP_VERSION,
                 ),
             )
             pdf_button.state(["!disabled"])
@@ -4367,7 +4370,7 @@ class LinkBudgetApp:
             _SPLASH_PROGRESS = None
         else:
             self.root = tk.Tk()
-        self.root.title("Satellite Link Budget Tool")
+        self.root.title(f"Satellite Link Budget Tool {APP_VERSION}")
         self.root.geometry("1200x950")
         self.root.minsize(1000, 700)
         self.root.configure(bg=PALETTE["bg"])
@@ -4605,7 +4608,7 @@ class LinkBudgetApp:
         ttk.Label(title_box, text="Satellite Link Budget Tool", style="Header.TLabel").pack(anchor="w")
         ttk.Label(
             title_box,
-            text="Orbit prediction & downlink/uplink budget analysis",
+            text=f"Version {APP_VERSION}  ·  Orbit prediction & downlink/uplink budget analysis",
             style="HeaderSub.TLabel",
         ).pack(anchor="w")
         # Far right of the header: Exit (also Ctrl+Q and the window close button).
@@ -4623,7 +4626,8 @@ class LinkBudgetApp:
         def _show_project(*_args):
             project = self.project_var.get().strip()
             project_header_var.set(f"Project: {project}" if project else "")
-            self.root.title(f"Satellite Link Budget Tool – {project}" if project else "Satellite Link Budget Tool")
+            title = f"Satellite Link Budget Tool {APP_VERSION}"
+            self.root.title(f"{title} – {project}" if project else title)
 
         self.project_var.trace_add("write", _show_project)
         ttk.Label(
