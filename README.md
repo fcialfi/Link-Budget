@@ -30,6 +30,8 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
    ```
 3. All'avvio l'applicazione carica automaticamente, se presenti nella cartella del progetto (o accanto all'eseguibile), i file `tle.txt` e `parameters.json`, oltre a `ground_stations.txt` -- proprio come le stazioni di terra. Puoi comunque sovrascriverli in qualsiasi momento con i pulsanti **Load TLE from file**, **Load Ground Stations** e **Import Link Budget Parameters**, oppure modificando i campi a mano.
 4. Nella scheda **Orbit & Passes** premi **Start/Refresh Analysis** per calcolare le finestre di contatto, quindi seleziona una finestra dalla lista: le schede **Downlink** e **Uplink** mostrano grafici e tabelle del link budget di quel passaggio.
+   - **Perdite comuni con il link budget statico:** le schede Downlink e Uplink, con la casella *Include the losses entered in the Static LB tab* (attiva di default), sottraggono le stesse perdite indipendenti dall'elevazione del link budget statico della stessa direzione: ionosferica, depolarizzazione, multipath e puntamento delle antenne. Aggiungono anche la degradazione di modulazione alla perdita del demodulatore e riferiscono Eb/N0 al bit rate dei transfer frame (fattore di formattazione). Il riquadro mostra i valori applicati. Attenuazione atmosferica, EIRP, G/T e le altre perdite restano quelle della scheda dei passaggi.
+   - **Diagramma d'antenna del satellite:** è il guadagno in funzione dell'angolo dal nadir (boresight), caricabile con **Load Antenna Pattern...**. Si applica a entrambe le direzioni solo se si attiva *Apply the satellite antenna pattern* (scheda Orbit & Passes). In quel caso EIRP SAT e G/T SAT vanno dati al boresight dell'antenna e il diagramma sostituisce il puntamento dell'antenna del satellite inserito nella scheda statica. Va lasciato disattivo quando EIRP e G/T valgono già per la geometria peggiore (ad esempio l'EIRP della catena Tx con il guadagno d'antenna a bassa elevazione), altrimenti la perdita del diagramma verrebbe contata due volte.
 
 ### Formato dei file di ingresso
 - **Ground stations (`ground_stations.txt`)**: ogni riga non vuota deve avere 4 campi separati da virgola: `nome, latitudine_deg, longitudine_deg, altitudine_m`. Le righe che iniziano con `#` sono commenti. Esempio:
@@ -57,7 +59,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 
 ## Spunti per personalizzazioni
 - Modifica la variabile `GROUND_STATIONS` nel file Python per aggiungere nuove stazioni di terra.
-- Adatta la tabella dell'antenna (`ANTENNA_PATTERN_ANGLES` e `ANTENNA_PATTERN_GAINS`) al tuo specifico diagramma.
+- Adatta il diagramma d'antenna del satellite predefinito (`ANTENNA_PATTERN_ANGLES` in gradi dal nadir e `ANTENNA_PATTERN_GAINS` in dBi) al tuo, oppure caricalo da file con **Load Antenna Pattern...**.
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
 ## Creare un eseguibile

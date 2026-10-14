@@ -176,9 +176,10 @@ MAX_ANTENNA_GAIN = 5.6
 
 
 def load_antenna_pattern(file_path: str) -> None:
-    """Load antenna pattern data from a CSV or text file.
+    """Load the satellite antenna pattern from a CSV or text file.
 
-    The file must contain two numeric columns: angle in degrees and gain in dB.
+    The file must contain two numeric columns: angle from the antenna
+    boresight (nadir) in degrees and gain in dBi.
     Existing global pattern arrays are replaced and the interpolation function
     is updated accordingly.
     """
@@ -202,7 +203,10 @@ def load_antenna_pattern(file_path: str) -> None:
 # Speed of light in km/s used for Doppler calculations
 C_KM_S = 299_792.458
 def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:
-    """Return the antenna pointing loss for a given off-boresight angle.
+    """Return the satellite antenna pattern loss for a given off-nadir angle.
+
+    The loss is the peak gain of the pattern minus the gain at the angle
+    between the antenna boresight (nadir) and the ground station.
 
     Parameters
     ----------
@@ -808,6 +812,60 @@ def power_flux_density(
     return result
 
 
+def static_link_losses(
+    freq_ghz: float,
+    d_gs: float,
+    ionospheric_loss_db: float = 0.0,
+    ionospheric_s4_ref: Optional[float] = None,
+    ionospheric_s4_ref_freq_mhz: float = GPS_L1_MHZ,
+    polarisation_loss_db: Optional[float] = None,
+    tx_axial_ratio_db: Optional[float] = None,
+    rx_axial_ratio_db: Optional[float] = None,
+    multipath_loss_db: float = 0.0,
+    rx_depointing_deg: Optional[float] = None,
+    rx_beamwidth_3db_deg: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Link losses that do not depend on the elevation, in dB.
+
+    Shared by the fixed-elevation link budget and the pass analysis, so
+    both subtract the same values: ionospheric loss (entered, or the
+    scintillation fade from an S4 index), polarisation mismatch (entered,
+    or the co-polar value from the two axial ratios), multipath and the
+    receive antenna pointing loss ``12·(θ/θ3dB)²`` (beamwidth ``70·λ/D``
+    from the GS dish when not given). ``total_db`` is their sum.
+    """
+
+    ionospheric_scintillation = None
+    if ionospheric_s4_ref is not None:
+        ionospheric_scintillation = ionospheric_scintillation_fade_db(
+            ionospheric_s4_ref, freq_ghz * 1000.0, ionospheric_s4_ref_freq_mhz
+        )
+        ionospheric_loss_db = ionospheric_scintillation["fade_db"]
+
+    polarisation_range = None
+    if tx_axial_ratio_db is not None and rx_axial_ratio_db is not None:
+        polarisation_range = polarisation_mismatch_loss_db(tx_axial_ratio_db, rx_axial_ratio_db)
+    if polarisation_loss_db is None:
+        polarisation_loss_db = polarisation_range["co_polar"] if polarisation_range else 0.0
+
+    rx_pointing_loss_db = 0.0
+    if rx_depointing_deg is not None:
+        if rx_beamwidth_3db_deg is None:
+            rx_beamwidth_3db_deg = antenna_beamwidth_3db_deg(freq_ghz, d_gs)
+        rx_pointing_loss_db = antenna_pointing_loss_db(rx_depointing_deg, rx_beamwidth_3db_deg)
+
+    return {
+        "ionospheric_loss_db": float(ionospheric_loss_db),
+        "ionospheric_scintillation": ionospheric_scintillation,
+        "polarisation_loss_db": float(polarisation_loss_db),
+        "polarisation_range": polarisation_range,
+        "multipath_loss_db": float(multipath_loss_db),
+        "rx_pointing_loss_db": float(rx_pointing_loss_db),
+        "rx_beamwidth_3db_deg": rx_beamwidth_3db_deg,
+        "total_db": float(ionospheric_loss_db + polarisation_loss_db + multipath_loss_db + rx_pointing_loss_db),
+    }
+
+
 def calculate_fixed_elevation_link_budget(
     freq: u.Quantity,
     elevation_deg: float,
@@ -931,29 +989,27 @@ def calculate_fixed_elevation_link_budget(
     slant_range_km = slant_range_from_elevation(elevation_deg, sat_altitude_km, alt_gs_km)
     freq_ghz = freq.to(u.GHz).value
     path_loss = 20 * np.log10(slant_range_km) + 20 * np.log10(freq_ghz) + 92.45
-    ionospheric_scintillation = None
-    if ionospheric_s4_ref is not None:
-        ionospheric_scintillation = ionospheric_scintillation_fade_db(
-            ionospheric_s4_ref, freq_ghz * 1000.0, ionospheric_s4_ref_freq_mhz
-        )
-        ionospheric_loss_db = ionospheric_scintillation["fade_db"]
-    geomagnetic_lat = geomagnetic_latitude_deg(lat_gs, lon_gs)
-
-    polarisation_range = None
-    if tx_axial_ratio_db is not None and rx_axial_ratio_db is not None:
-        polarisation_range = polarisation_mismatch_loss_db(tx_axial_ratio_db, rx_axial_ratio_db)
-    if polarisation_loss_db is None:
-        polarisation_loss_db = polarisation_range["co_polar"] if polarisation_range else 0.0
-
-    rx_pointing_loss_db = 0.0
-    if rx_depointing_deg is not None:
-        if rx_beamwidth_3db_deg is None:
-            rx_beamwidth_3db_deg = antenna_beamwidth_3db_deg(freq_ghz, d_gs)
-        rx_pointing_loss_db = antenna_pointing_loss_db(rx_depointing_deg, rx_beamwidth_3db_deg)
-
-    extra_static_loss_db = (
-        ionospheric_loss_db + polarisation_loss_db + multipath_loss_db + rx_pointing_loss_db
+    losses = static_link_losses(
+        freq_ghz,
+        d_gs,
+        ionospheric_loss_db=ionospheric_loss_db,
+        ionospheric_s4_ref=ionospheric_s4_ref,
+        ionospheric_s4_ref_freq_mhz=ionospheric_s4_ref_freq_mhz,
+        polarisation_loss_db=polarisation_loss_db,
+        tx_axial_ratio_db=tx_axial_ratio_db,
+        rx_axial_ratio_db=rx_axial_ratio_db,
+        multipath_loss_db=multipath_loss_db,
+        rx_depointing_deg=rx_depointing_deg,
+        rx_beamwidth_3db_deg=rx_beamwidth_3db_deg,
     )
+    ionospheric_scintillation = losses["ionospheric_scintillation"]
+    ionospheric_loss_db = losses["ionospheric_loss_db"]
+    polarisation_range = losses["polarisation_range"]
+    polarisation_loss_db = losses["polarisation_loss_db"]
+    rx_pointing_loss_db = losses["rx_pointing_loss_db"]
+    rx_beamwidth_3db_deg = losses["rx_beamwidth_3db_deg"]
+    geomagnetic_lat = geomagnetic_latitude_deg(lat_gs, lon_gs)
+    extra_static_loss_db = losses["total_db"]
     demod_loss_total = demod_loss + modulation_degradation_db
     if bitrate > 0 and overhead > 0:
         ebno_bitrate = bitrate / overhead * (formatting_overhead or 1.0)
@@ -1138,6 +1194,13 @@ def calculate_link_budget_parameters(
     atm_att_ul: Optional[float] = None,
     uplink_bitrate: float | None = None,
     uplink_overhead: float | None = None,
+    apply_antenna_pattern: bool = True,
+    link_losses_db: float = 0.0,
+    modulation_degradation_db: float = 0.0,
+    formatting_overhead: float = 1.0,
+    ul_link_losses_db: float = 0.0,
+    ul_modulation_degradation_db: float = 0.0,
+    ul_formatting_overhead: float = 1.0,
 ) -> Dict[str, Any]:
     
     """Compute link budget parameters for a single time step.
@@ -1198,6 +1261,22 @@ def calculate_link_budget_parameters(
     uplink_overhead : float, optional
         Optional uplink coding overhead. If omitted, the downlink ``overhead``
         factor is reused for uplink Eb/No calculations.
+    apply_antenna_pattern : bool
+        Subtract the satellite antenna pattern loss (peak gain minus the gain
+        at the off-nadir angle of the ground station) from both directions.
+        Use it when ``eirp_sat`` / ``gt_sat`` are given at the antenna
+        boresight; leave it off when they already hold the values for the
+        worst-case geometry (as in the fixed-elevation link budget).
+    link_losses_db, ul_link_losses_db : float
+        Elevation-independent losses of each direction (ionospheric,
+        polarisation, multipath, receive antenna pointing; see
+        :func:`static_link_losses`), subtracted from the received power.
+    modulation_degradation_db, ul_modulation_degradation_db : float
+        Modulator/filter implementation loss, added to the demodulator loss.
+    formatting_overhead, ul_formatting_overhead : float
+        Frame / user data factor: Eb/No is referred to the transfer frame
+        bit rate, coded bit rate × formatting / overhead, as in the
+        fixed-elevation link budget.
 
     Returns
     -------
@@ -1212,8 +1291,11 @@ def calculate_link_budget_parameters(
             Distance to the satellite.
         ``"Path Loss (dB)"`` : float
             Free-space path loss.
-         ``"Pointing Loss (dB)"`` : float
-            Loss due to antenna off-pointing.
+        ``"S/C Antenna Loss (dB)"`` : float
+            Satellite antenna pattern loss at the off-nadir angle of the
+            ground station (0 when ``apply_antenna_pattern`` is off).
+        ``"Link Losses (dB)"`` : float
+            ``link_losses_db``.
         ``"Off Boresight Angle (°)"``
             Angle between satellite boresight and ground station direction.
         ``"Rx Power (dBW)"`` : float
@@ -1272,10 +1354,10 @@ def calculate_link_budget_parameters(
         off_boresight_angle = np.degrees(angle_rad)
     else:
         off_boresight_angle = pre_off_boresight_angle
-    pointing_loss = antenna_pattern(off_boresight_angle)
+    pointing_loss = antenna_pattern(off_boresight_angle) if apply_antenna_pattern else 0.0
 
-    rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss
-    cno_db = rx_power + gt_gs + 228.6 - demod_loss
+    rx_power = eirp_sat - path_loss - atm_att - other_att - pointing_loss - link_losses_db
+    cno_db = rx_power + gt_gs + 228.6 - demod_loss - modulation_degradation_db
 
     if cisat_lin is not None:
         cno_lin = 10 ** (cno_db / 10.0)
@@ -1284,8 +1366,8 @@ def calculate_link_budget_parameters(
     else:
         cn0 = cno_db
 
-    if cn0 is not None and bitrate > 0 and overhead > 0:
-        ebno = cn0 - 10 * np.log10(bitrate / overhead)
+    if cn0 is not None and bitrate > 0 and overhead > 0 and formatting_overhead > 0:
+        ebno = cn0 - 10 * np.log10(bitrate / overhead * formatting_overhead)
     else:
         ebno = np.nan
 
@@ -1295,8 +1377,9 @@ def calculate_link_budget_parameters(
         "Slant Range (km)": slant_range_km,
         "Path Loss (dB)": path_loss,
         "Atmospheric Att (dB)": atm_att,
-        "Pointing Loss (dB)": pointing_loss,
+        "S/C Antenna Loss (dB)": pointing_loss,
         "Off Boresight Angle (°)": off_boresight_angle,
+        "Link Losses (dB)": link_losses_db,
         "Rx Power (dBW)": rx_power,
         "C/(No+Io) (dBHz)": cn0,
         "Eb/No (dB)": ebno,
@@ -1304,7 +1387,8 @@ def calculate_link_budget_parameters(
         "Visible": "YES" if visible else "NO",
         "UL Path Loss (dB)": None,
         "UL Atmospheric Att (dB)": None,
-        "UL Pointing Loss (dB)": None,
+        "UL S/C Antenna Loss (dB)": None,
+        "UL Link Losses (dB)": None,
         "UL Rx Power (dBW)": None,
         "UL C/No (dBHz)": None,
         "UL Eb/No (dB)": None,
@@ -1334,15 +1418,22 @@ def calculate_link_budget_parameters(
         ul_other_att = 0.0 if other_att_ul is None else other_att_ul
         ul_demod_loss = 0.0 if demod_loss_ul is None else demod_loss_ul
 
-        ul_rx_power = eirp_gs - ul_path_loss - atm_att_ul - ul_other_att - ul_pointing_loss
-        ul_cno = ul_rx_power + gt_sat + 228.6 - ul_demod_loss
-        ul_ebno = ul_cno - 10 * np.log10(ul_bitrate / ul_overhead) if ul_bitrate > 0 and ul_overhead > 0 else np.nan
+        ul_rx_power = (
+            eirp_gs - ul_path_loss - atm_att_ul - ul_other_att - ul_pointing_loss - ul_link_losses_db
+        )
+        ul_cno = ul_rx_power + gt_sat + 228.6 - ul_demod_loss - ul_modulation_degradation_db
+        ul_ebno = (
+            ul_cno - 10 * np.log10(ul_bitrate / ul_overhead * ul_formatting_overhead)
+            if ul_bitrate > 0 and ul_overhead > 0 and ul_formatting_overhead > 0
+            else np.nan
+        )
 
         results.update(
             {
                 "UL Path Loss (dB)": ul_path_loss,
                 "UL Atmospheric Att (dB)": atm_att_ul,
-                "UL Pointing Loss (dB)": ul_pointing_loss,
+                "UL S/C Antenna Loss (dB)": ul_pointing_loss,
+                "UL Link Losses (dB)": ul_link_losses_db,
                 "UL Rx Power (dBW)": ul_rx_power,
                 "UL C/No (dBHz)": ul_cno,
                 "UL Eb/No (dB)": ul_ebno,

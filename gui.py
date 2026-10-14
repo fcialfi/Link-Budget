@@ -662,6 +662,9 @@ class LinkBudgetApp:
         self.static_lb_values: dict[str, dict] = {}
         # parameters.json section -> function refilling that static link budget tab.
         self._static_lb_appliers: dict[str, Callable[[dict], None]] = {}
+        # parameters.json section -> function returning that tab's
+        # elevation-independent losses, applied to the pass analysis.
+        self._static_lb_loss_providers: dict[str, Callable[[], dict]] = {}
         # str(tab frame) -> function returning the canvas the mouse wheel scrolls.
         self._wheel_targets: dict[str, Callable[[], tk.Canvas | None]] = {}
         self.current_param_file: str | None = None
@@ -1026,6 +1029,68 @@ class LinkBudgetApp:
             if self.uplink_recalc_button is not None:
                 self.uplink_recalc_button.config(style="TButton")
 
+    def _pass_loss_settings(self) -> dict:
+        """Satellite antenna pattern switch and the losses taken from the
+        static link budget tabs, as keyword arguments of
+        :func:`calculate_link_budget_parameters`.
+
+        Also writes what is applied into the Downlink and Uplink tabs.
+        Inputs of a static tab that cannot be read leave that direction
+        without the extra losses (and say so).
+        """
+
+        apply_pattern = bool(self.apply_pattern_var.get())
+        kwargs: dict = {"apply_antenna_pattern": apply_pattern}
+        directions = (
+            ("Downlink", "downlink", self.include_static_dl_var, self.dl_losses_var, "", "rx", "tx"),
+            ("Uplink", "uplink", self.include_static_ul_var, self.ul_losses_var, "ul_", "tx", "rx"),
+        )
+        for title, key, include_var, text_var, prefix, gs_side, sat_side in directions:
+            if not include_var.get():
+                text_var.set(
+                    "Not included: only the losses of this tab (atmospheric, other attenuations, "
+                    "demodulator loss) are applied, and Eb/No is referred to the information bit rate."
+                )
+                continue
+            provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS[key])
+            try:
+                values = provider() if provider else None
+            except ValueError as exc:
+                values = None
+                text_var.set(f"Not applied: an input of the Static LB · {title} tab is not valid ({exc})")
+            if values is None:
+                continue
+            parts = [
+                ("ionospheric", values["ionospheric_loss_db"]),
+                ("polarisation", values["polarisation_loss_db"]),
+                ("multipath", values["multipath_loss_db"]),
+                (f"GS {gs_side.capitalize()} antenna pointing", values[f"{gs_side}_pointing_loss_db"]),
+            ]
+            # The satellite antenna term is replaced by the pattern when that is applied.
+            if not apply_pattern:
+                parts.append(
+                    (f"S/C {sat_side.capitalize()} antenna pointing", values[f"{sat_side}_pointing_loss_db"])
+                )
+            total = sum(value for _name, value in parts)
+            kwargs[f"{prefix}link_losses_db"] = total
+            kwargs[f"{prefix}modulation_degradation_db"] = values["modulation_degradation_db"]
+            kwargs[f"{prefix}formatting_overhead"] = values["formatting_overhead"]
+            text_var.set(
+                "Link losses: "
+                + " + ".join(f"{name} {value:.2f}" for name, value in parts)
+                + f" = {total:.2f} dB.   Modulation degradation: {values['modulation_degradation_db']:.2f} dB.   "
+                + "Eb/No referred to the transfer frame bit rate (formatting factor "
+                + f"{values['formatting_overhead']:.6g})."
+                + ("   S/C antenna: from the pattern (Orbit & Passes tab)." if apply_pattern else "")
+            )
+        return kwargs
+
+    def _on_pass_losses_changed(self) -> None:
+        """The pattern switch or a loss checkbox changed: show it and flag the budgets."""
+
+        self._pass_loss_settings()
+        self.set_uplink_budget_stale()
+
     # ------------------------------------------------------------------
     # Main Analysis Function
     # ------------------------------------------------------------------
@@ -1089,6 +1154,7 @@ class LinkBudgetApp:
             return
 
         lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+        loss_kwargs = self._pass_loss_settings()
         alt_gs_km = alt_gs_m / 1000.0
 
         ts = load.timescale()
@@ -1172,6 +1238,7 @@ class LinkBudgetApp:
                 uplink_atm_att,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
+                **loss_kwargs,
             )
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
@@ -1179,15 +1246,17 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
-                "Pointing Loss (dB)",
+                "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
+                "Link Losses (dB)",
+                "UL Link Losses (dB)",
                 "Rx Power (dBW)",
                 "C/(No+Io) (dBHz)",
                 "Eb/No (dB)",
                 "Doppler Shift (kHz)",
                 "UL Path Loss (dB)",
                 "UL Atmospheric Att (dB)",
-                "UL Pointing Loss (dB)",
+                "UL S/C Antenna Loss (dB)",
                 "UL Rx Power (dBW)",
                 "UL C/No (dBHz)",
                 "UL Eb/No (dB)",
@@ -1276,6 +1345,7 @@ class LinkBudgetApp:
 
         gs_name = self.gs_var.get()
         lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+        loss_kwargs = self._pass_loss_settings()
         alt_gs_km = alt_gs_m / 1000.0
 
         ts = load.timescale()
@@ -1353,6 +1423,7 @@ class LinkBudgetApp:
                 uplink_atm_att,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
+                **loss_kwargs,
             )
 
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
@@ -1361,15 +1432,17 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
-                "Pointing Loss (dB)",
+                "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
+                "Link Losses (dB)",
+                "UL Link Losses (dB)",
                 "Rx Power (dBW)",
                 "C/(No+Io) (dBHz)",
                 "Eb/No (dB)",
                 "Doppler Shift (kHz)",
                 "UL Path Loss (dB)",
                 "UL Atmospheric Att (dB)",
-                "UL Pointing Loss (dB)",
+                "UL S/C Antenna Loss (dB)",
                 "UL Rx Power (dBW)",
                 "UL C/No (dBHz)",
                 "UL Eb/No (dB)",
@@ -1512,8 +1585,9 @@ class LinkBudgetApp:
             "Slant Range (km)",
             "Path Loss (dB)",
             "Atmospheric Att (dB)",
-            "Pointing Loss (dB)",
+            "S/C Antenna Loss (dB)",
             "Off Boresight Angle (°)",
+            "Link Losses (dB)",
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
@@ -1551,7 +1625,7 @@ class LinkBudgetApp:
 
     def show_antenna_pattern(self):
         popup = tk.Toplevel(self.root)
-        popup.title("Antenna Pattern")
+        popup.title("Satellite Antenna Pattern")
         popup.geometry("600x400")
         popup.configure(bg=PALETTE["bg"])
 
@@ -1559,9 +1633,9 @@ class LinkBudgetApp:
 
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
-        ax.set_xlabel("Angle (degrees)", fontsize=8)
-        ax.set_ylabel("Gain (dB)", fontsize=8)
-        ax.set_title("Antenna Gain Pattern")
+        ax.set_xlabel("Angle from nadir (boresight) [deg]", fontsize=8)
+        ax.set_ylabel("Gain [dBi]", fontsize=8)
+        ax.set_title("Satellite Antenna Gain Pattern")
         ax.tick_params(axis="both", labelsize=8)
         ax.grid(True)
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
@@ -3514,6 +3588,52 @@ class LinkBudgetApp:
             "inputs, link budget table, PFD check, tolerances and method.",
         )
 
+        def _pass_link_losses() -> dict:
+            """This tab's elevation-independent losses, for the pass analysis.
+
+            Raises ValueError (naming the field) when an input is invalid.
+            """
+
+            def opt(key, parser, **kwargs):
+                # Fields that only one direction has count as empty in the other.
+                return _field(key, parser, **kwargs) if key in entries else kwargs.get("default")
+
+            freq_ghz = _parse_required(freq_entry, freq_label)
+            d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+            if iono_mode_var.get() == "s4":
+                iono_kwargs = dict(
+                    ionospheric_s4_ref=_field("iono_s4_ref", _parse_required),
+                    ionospheric_s4_ref_freq_mhz=_field("iono_s4_ref_freq_mhz", _parse_required),
+                )
+            else:
+                iono_kwargs = dict(ionospheric_loss_db=opt("ionospheric_loss_db", _parse_optional, default=0.0))
+            losses = calculations.static_link_losses(
+                freq_ghz,
+                d_gs,
+                polarisation_loss_db=opt("polarisation_loss_db", _parse_optional_or_none),
+                tx_axial_ratio_db=opt("ant_axial_ratio_db", _parse_optional_or_none),
+                rx_axial_ratio_db=opt("rx_axial_ratio_db", _parse_optional_or_none),
+                multipath_loss_db=opt("multipath_loss_db", _parse_optional, default=0.0),
+                rx_depointing_deg=opt("rx_depointing_deg", _parse_optional_or_none),
+                rx_beamwidth_3db_deg=opt("rx_beamwidth_deg", _parse_optional_or_none),
+                **iono_kwargs,
+            )
+            formatting = opt("formatting_overhead", _parse_optional, default=1.0)
+            if formatting <= 0:
+                raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
+            return {
+                "ionospheric_loss_db": losses["ionospheric_loss_db"],
+                "polarisation_loss_db": losses["polarisation_loss_db"],
+                "multipath_loss_db": losses["multipath_loss_db"],
+                "rx_pointing_loss_db": losses["rx_pointing_loss_db"],
+                "tx_pointing_loss_db": opt("tx_pointing_loss_db", _parse_optional, default=0.0),
+                "modulation_degradation_db": opt("modulation_degradation_db", _parse_optional, default=0.0),
+                "formatting_overhead": formatting,
+            }
+
+        self._static_lb_loss_providers[section] = _pass_link_losses
+
+
     def _render_fixed_link_budget_results(self, pages, budget, link_availability_pct, extra_info=None):
         """Render the fixed-elevation results and return them as CSV export rows.
 
@@ -4241,6 +4361,28 @@ class LinkBudgetApp:
         # of the Downlink and Uplink tabs.
         self.selected_pass_var = tk.StringVar(value=NO_PASS_SELECTED)
 
+        def _static_losses_frame(parent, direction, include_var, text_var):
+            frame = ttk.LabelFrame(parent, text="Link Losses from the Static Link Budget", padding=10)
+            frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+            check = ttk.Checkbutton(
+                frame,
+                text=f"Include the losses entered in the Static LB · {direction} tab",
+                variable=include_var,
+                command=self._on_pass_losses_changed,
+            )
+            check.pack(anchor="w")
+            _add_tooltip(
+                check,
+                "The pass analysis then subtracts the same elevation-independent losses as the "
+                "static link budget: ionospheric, polarisation mismatch, multipath and antenna "
+                "pointing, adds the modulation degradation to the demodulator loss, and refers "
+                "Eb/No to the transfer frame bit rate (formatting factor). Atmospheric "
+                "attenuation, EIRP, G/T and the other values of this tab are its own.",
+            )
+            ttk.Label(
+                frame, textvariable=text_var, foreground=PALETTE["text_muted"], wraplength=1000, justify="left"
+            ).pack(anchor="w", pady=(4, 0))
+
         def _selected_pass_label(parent, padx=0):
             row = ttk.Frame(parent)
             row.pack(fill=tk.X, padx=padx, pady=(0, 8))
@@ -4370,6 +4512,36 @@ class LinkBudgetApp:
             justify="left",
         ).pack(side=tk.LEFT, padx=(14, 0))
 
+        antenna_row = ttk.Frame(passes_frame)
+        antenna_row.pack(fill=tk.X, padx=5, pady=(10, 0))
+        self.apply_pattern_var = tk.BooleanVar(value=False)
+        pattern_check = ttk.Checkbutton(
+            antenna_row,
+            text="Apply the satellite antenna pattern",
+            variable=self.apply_pattern_var,
+            command=self._on_pass_losses_changed,
+        )
+        pattern_check.pack(side=tk.LEFT)
+        _add_tooltip(
+            pattern_check,
+            "Satellite antenna gain versus the angle from nadir (boresight), used for both "
+            "directions: at each time step the loss is the peak gain minus the gain towards the "
+            "ground station. Turn it on only when EIRP SAT and G/T SAT are given at the antenna "
+            "boresight. Leave it off when they already hold the values for the worst-case "
+            "geometry (e.g. EIRP from the Tx chain with the antenna gain at low elevation, as in "
+            "the static link budget): the pattern would count that roll-off a second time.",
+        )
+        load_antenna_btn = ttk.Button(
+            antenna_row, text="Load Antenna Pattern...", command=self.load_antenna_pattern_file
+        )
+        load_antenna_btn.pack(side=tk.LEFT, padx=(14, 6))
+        _add_tooltip(
+            load_antenna_btn,
+            "Load the satellite antenna gain pattern from a .csv/.txt file: two columns, angle "
+            "from the antenna boresight (nadir) in degrees and gain in dBi.",
+        )
+        ttk.Button(antenna_row, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(side=tk.LEFT)
+
         contact_frame = ttk.Frame(passes_frame)
         contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
         ttk.Label(contact_frame, text="Contact Windows (UTC Time)", font=bold_font).pack(anchor="w", pady=(0, 4))
@@ -4489,6 +4661,10 @@ class LinkBudgetApp:
             entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
         self.update_link_budget_derived()
 
+        self.dl_losses_var = tk.StringVar(value="")
+        self.include_static_dl_var = tk.BooleanVar(value=True)
+        _static_losses_frame(downlink_tab, "Downlink", self.include_static_dl_var, self.dl_losses_var)
+
         downlink_btn_frame = ttk.LabelFrame(
             downlink_tab, text="Downlink Actions", padding=10
         )
@@ -4505,18 +4681,6 @@ class LinkBudgetApp:
             "Re-computes only the downlink link budget (EIRP, G/T, attenuations, bit rate, ...) for "
             "the passes already found in the Orbit & Passes tab, without re-running the orbit "
             "propagation.",
-        )
-        load_antenna_btn = ttk.Button(
-            downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file
-        )
-        load_antenna_btn.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            load_antenna_btn,
-            "Load a custom ground station antenna gain-vs-angle pattern (angle, gain columns) from "
-            "a .csv/.txt file, used to compute pointing loss.",
-        )
-        ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(
-            side=tk.LEFT, padx=5
         )
 
         downlink_results_container = ttk.Frame(downlink_tab)
@@ -4631,6 +4795,10 @@ class LinkBudgetApp:
         ]:
             entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
+        self.ul_losses_var = tk.StringVar(value="")
+        self.include_static_ul_var = tk.BooleanVar(value=True)
+        _static_losses_frame(uplink_tab, "Uplink", self.include_static_ul_var, self.ul_losses_var)
+
         uplink_actions_frame = ttk.LabelFrame(
             uplink_tab, text="Uplink Actions", padding=10
         )
@@ -4671,6 +4839,10 @@ class LinkBudgetApp:
             self.root.iconphoto(True, icon_image)
 
         self._load_startup_defaults()
+        # Show the losses the pass analysis takes from the static tabs, kept
+        # up to date whenever a tab is opened.
+        self._pass_loss_settings()
+        self.main_tabs.bind("<<NotebookTabChanged>>", lambda _e: self._pass_loss_settings(), add="+")
 
 
 def setup_gui():
