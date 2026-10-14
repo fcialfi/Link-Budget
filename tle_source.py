@@ -1,9 +1,13 @@
 """Download a satellite's TLE from the internet and check it.
 
-Two public sources, both without login or API key, tried in this order:
+Public sources without login or API key, tried in this order until one
+answers:
 
-* SatNOGS DB (db.satnogs.org): JSON API, TLE taken from Space-Track;
-* CelesTrak (celestrak.org): the GP data in TLE format.
+* SatNOGS DB (db.satnogs.org): JSON API, TLE taken from Space-Track; it
+  only knows the satellites with a radio transmitter in its database;
+* CelesTrak (celestrak.org): the GP data in TLE format;
+* N2YO (n2yo.com): the TLE shown on the satellite's web page;
+* TLE API (tle.ivanstanojevic.me): JSON API, TLE taken from CelesTrak.
 
 Only the standard library is used (urllib), so the system proxy settings
 apply; on Windows these are the ones of the Internet options.
@@ -12,12 +16,16 @@ from __future__ import annotations
 
 import datetime
 import math
+import html
 import json
+import re
 import urllib.request
 from dataclasses import dataclass
 
 SATNOGS_URL = "https://db.satnogs.org/api/tle/?norad_cat_id={norad_id}"
 CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
+N2YO_URL = "https://www.n2yo.com/satellite/?s={norad_id}"
+TLE_API_URL = "https://tle.ivanstanojevic.me/api/tle/{norad_id}"
 TIMEOUT_S = 15
 # A TLE older than this gives noticeably wrong pass times: warn the user.
 MAX_AGE_DAYS = 7.0
@@ -100,7 +108,32 @@ def _from_celestrak(norad_id: int) -> Tle:
     return _check(name, lines[-2], lines[-1], norad_id, "CelesTrak")
 
 
-SOURCES = (("SatNOGS", _from_satnogs), ("CelesTrak", _from_celestrak))
+def _from_n2yo(norad_id: int) -> Tle:
+    # The page shows the TLE as text: find the two lines of this satellite in it.
+    raw = _get(N2YO_URL.format(norad_id=norad_id))
+    page = html.unescape(re.sub(r"<[^>]+>", "\n", raw))
+    line1 = re.search(rf"^\s*(1 {norad_id:05d}U.{{60}}\d)\s*$", page, re.MULTILINE)
+    line2 = re.search(rf"^\s*(2 {norad_id:05d} .{{60}}\d)\s*$", page, re.MULTILINE)
+    if not (line1 and line2):
+        raise ValueError(f"no TLE of NORAD {norad_id} on the page")
+    title = re.search(r"<title>\s*(.*?)\s*(?:Satellite details.*)?</title>", raw, re.S | re.I)
+    name = html.unescape(title.group(1)) if title else ""
+    return _check(name, line1.group(1), line2.group(1), norad_id, "N2YO")
+
+
+def _from_tle_api(norad_id: int) -> Tle:
+    item = json.loads(_get(TLE_API_URL.format(norad_id=norad_id)))
+    if "line1" not in item:
+        raise ValueError(item.get("message") or f"no TLE for NORAD {norad_id}")
+    return _check(item.get("name", ""), item["line1"], item["line2"], norad_id, "TLE API (CelesTrak)")
+
+
+SOURCES = (
+    ("SatNOGS", _from_satnogs),
+    ("CelesTrak", _from_celestrak),
+    ("N2YO", _from_n2yo),
+    ("TLE API", _from_tle_api),
+)
 
 
 def fetch_tle(norad_id: int) -> Tle:

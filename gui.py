@@ -824,10 +824,10 @@ class LinkBudgetApp:
                 else:
                     self._clear_tle("TLE: none loaded")
                 if auto:
-                    first_line = str(result["error"]).splitlines()[0]
-                    self.tle_file_var.set(
-                        self.tle_file_var.get() + f"  ·  download failed ({first_line.rstrip(':')})"
-                    )
+                    reasons = "; ".join(
+                        line.lstrip("- ") for line in str(result["error"]).splitlines()[1:]
+                    ) or str(result["error"])
+                    self.tle_file_var.set(self.tle_file_var.get() + f"  ·  download failed: {reasons}")
                     return
                 messagebox.showerror(
                     "TLE Download",
@@ -5244,7 +5244,7 @@ class LinkBudgetApp:
         self.tle_download_button.pack(side=tk.LEFT, padx=(6, 0))
         _add_tooltip(
             self.tle_download_button,
-            "Download the latest TLE of this NORAD ID from SatNOGS (or CelesTrak) and save it in tle.txt.",
+            "Download the latest TLE of this NORAD ID (SatNOGS, CelesTrak, N2YO or TLE API, the first that answers) and save it in the tle.txt of the mission.",
         )
         self.tle_file_var = tk.StringVar(value="TLE: none loaded")
         self.tle_info_label = ttk.Label(

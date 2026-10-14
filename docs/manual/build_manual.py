@@ -427,8 +427,11 @@ def content():
         "<b>TLE Line 1 / Line 2</b>: the satellite elements, filled from tle.txt at startup or with "
         "<b>Load TLE from file</b>. The line below shows the file, the TLE epoch and its age; an "
         "epoch older than 7 days is shown in orange, because the pass times drift.",
-        "<b>NORAD ID</b> and <b>Download TLE</b>: download the latest TLE of the satellite from SatNOGS "
-        "(db.satnogs.org, elements from Space-Track) or, if that fails, from CelesTrak, and save it in tle.txt. "
+        "<b>NORAD ID</b> and <b>Download TLE</b>: download the latest TLE of the satellite and save it in "
+        "tle.txt. The sources are tried in turn until one answers: SatNOGS (db.satnogs.org, elements from "
+        "Space-Track; it only lists satellites with a known radio transmitter), CelesTrak, N2YO (the TLE on "
+        "the satellite's page) and TLE API (tle.ivanstanojevic.me). When all fail, the status line gives the "
+        "reason for each source. "
         "The NORAD ID is read from and saved to the parameters file (key norad_id; AWS is 60543). Without "
         "internet access the TLE already loaded is kept: copy the TLE from a web page into tle.txt instead.",
         "<b>Date</b> (YYYY-MM-DD): the day analysed (00:00–24:00 UTC, 30 s step).",
