@@ -75,7 +75,7 @@ splash = Splash(
     datas=a.datas,
     text_pos=(40, 262),
     text_size=10,
-    text_color='#a9b8d1',
+    text_color='#b8c4d0',
     minify_script=True,
     always_on_top=False,
 )

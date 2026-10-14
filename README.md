@@ -30,6 +30,12 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
    ```
 3. All'avvio l'applicazione carica automaticamente, se presenti nella cartella del progetto (o accanto all'eseguibile), i file `tle.txt` e `parameters.json`, oltre a `ground_stations.txt` -- proprio come le stazioni di terra. Puoi comunque sovrascriverli in qualsiasi momento con i pulsanti **Load TLE from file**, **Load Ground Stations** e **Import Link Budget Parameters**, oppure modificando i campi a mano.
 4. Nella scheda **Orbit & Passes** premi **Start/Refresh Analysis** per calcolare le finestre di contatto, quindi seleziona una finestra dalla lista: le schede **Downlink** e **Uplink** mostrano grafici e tabelle del link budget di quel passaggio.
+   - **Perdite comuni con il link budget statico:** le schede Downlink e Uplink, con la casella *Include the losses entered in the Static LB tab* (attiva di default), sottraggono le stesse perdite indipendenti dall'elevazione del link budget statico della stessa direzione: ionosferica, depolarizzazione e multipath (il puntamento dell'antenna del satellite è dato dal diagramma, quello della stazione è nullo). Aggiungono anche la degradazione di modulazione alla perdita del demodulatore e riferiscono Eb/N0 al bit rate dei transfer frame (fattore di formattazione). Il riquadro mostra i valori applicati. Attenuazione atmosferica, EIRP, G/T e le altre perdite restano quelle della scheda dei passaggi.
+   - **Diagramma d'antenna del satellite:** è il guadagno assoluto (dBi) dell'antenna del satellite in funzione dell'angolo dal nadir (boresight). All'avvio viene letto dal file `Antenna Pattern Default.txt` (due colonne separate da virgola: angolo dal nadir in gradi, guadagno in dBi), cercato come `tle.txt` e `parameters.json`: accanto all'eseguibile, nella cartella di lavoro o, dai sorgenti, nella cartella del progetto; il percorso si può indicare anche con la variabile d'ambiente `ANTENNA_PATTERN_FILE`. Il file del repository contiene un esempio generico (5,6 dBi al nadir, 0,5 dBi a ±65°): va sostituito con il diagramma reale dell'antenna. Si può anche caricare un altro file con **Load Antenna Pattern...** nella scheda Orbit & Passes. Si applica sempre, istante per istante:
+     - **downlink:** EIRP = catena Tx della scheda Static LB · Downlink (potenza − perdite di circuito − perdita VSWR) + guadagno del diagramma verso la stazione. Se quella scheda usa un valore di EIRP, l'EIRP SAT si intende al picco del diagramma e se ne sottrae il calo verso la stazione;
+     - **uplink:** il G/T SAT si intende al picco del diagramma e se ne sottrae il calo;
+     - **stazione di terra:** l'antenna insegue il satellite, quindi il suo puntamento non introduce perdite.
+     Nella scheda Static LB · Downlink la casella *Antenna gain from the satellite antenna pattern at this elevation* legge il guadagno Tx dallo stesso diagramma, all'angolo dal nadir che corrisponde a elevazione e quota inserite (ad esempio 65,4° a 3° e 628 km). Così statico e passaggi usano lo stesso guadagno, e la Tx Antenna Pointing Loss non serve più.
 
 ### Formato dei file di ingresso
 - **Ground stations (`ground_stations.txt`)**: ogni riga non vuota deve avere 4 campi separati da virgola: `nome, latitudine_deg, longitudine_deg, altitudine_m`. Le righe che iniziano con `#` sono commenti. Esempio:
@@ -57,7 +63,7 @@ Questo repository contiene un semplice strumento in Python per l'analisi del lin
 
 ## Spunti per personalizzazioni
 - Modifica la variabile `GROUND_STATIONS` nel file Python per aggiungere nuove stazioni di terra.
-- Adatta la tabella dell'antenna (`ANTENNA_PATTERN_ANGLES` e `ANTENNA_PATTERN_GAINS`) al tuo specifico diagramma.
+- Adatta il diagramma d'antenna del satellite predefinito (`ANTENNA_PATTERN_ANGLES` in gradi dal nadir e `ANTENNA_PATTERN_GAINS` in dBi) al tuo, oppure caricalo da file con **Load Antenna Pattern...**.
 - Per cambiare la durata dell'analisi o l'intervallo di campionamento, modifica i parametri all'inizio della funzione `run_analysis`.
 - Imposta il campo "Spectral Efficiency" nel pannello Baseband per ottenere la larghezza di banda del canale desiderata.
 ## Creare un eseguibile
@@ -88,7 +94,7 @@ Procedura completa su Windows, dalla cartella del progetto aggiornata a `main`. 
    ```
 5. **Prepara la cartella da consegnare:** in `dist\Link-Budget-Tool\`, accanto a `Link-Budget-Tool.exe`, aggiungi:
    - `license.key`
-   - `ground_stations.txt`, `tle.txt`, `parameters.json`
+   - `ground_stations.txt`, `tle.txt`, `parameters.json`, `Antenna Pattern Default.txt`
 
    Poi comprimi l'intera cartella `Link-Budget-Tool` in uno zip.
 6. **Prova prima di consegnare:**
@@ -100,9 +106,9 @@ Se la build fallisce o l'eseguibile non parte, conserva il messaggio d'errore co
 Il file `__main__.py` è predisposto per essere usato come entry point anche quando il pacchetto è incorporato nell'eseguibile, quindi non servono modifiche aggiuntive.
 
 ### File delle ground stations, TLE e parametri
-- **Non** vengono inclusi nel bundle PyInstaller: i file `ground_stations.txt`, `tle.txt` e `parameters.json` devono stare nella stessa cartella dell'eseguibile (e dei file Excel che usi insieme al programma).
+- **Non** vengono inclusi nel bundle PyInstaller: i file `ground_stations.txt`, `tle.txt`, `parameters.json` e `Antenna Pattern Default.txt` devono stare nella stessa cartella dell'eseguibile (e dei file Excel che usi insieme al programma).
 - All'avvio l'applicazione legge quei file e popola automaticamente il menu delle stazioni di terra, i campi TLE e i parametri di link budget; puoi modificarli o sostituirli senza ricostruire l'eseguibile. Un file mancante o non valido viene semplicemente ignorato (i campi restano vuoti, senza bloccare l'avvio).
-- In alternativa puoi specificare un percorso diverso impostando le variabili d'ambiente `GROUND_STATIONS_FILE`, `TLE_FILE` o `PARAMETERS_FILE` prima di avviare il programma.
+- In alternativa puoi specificare un percorso diverso impostando le variabili d'ambiente `GROUND_STATIONS_FILE`, `TLE_FILE`, `PARAMETERS_FILE` o `ANTENNA_PATTERN_FILE` prima di avviare il programma.
 - Dalla GUI puoi comunque sovrascrivere qualsiasi cosa in qualunque momento con i pulsanti **Load Ground Stations**, **Load TLE from file** e **Import Link Budget Parameters** nella sezione "Observation Settings"; i campi vengono aggiornati immediatamente.
 
 ### Licenza a scadenza dell'eseguibile

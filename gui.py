@@ -14,32 +14,47 @@ from typing import Callable
 # ---------------------------------------------------------------------------
 # Defined up here, before the slower imports below, because the startup
 # splash screen needs it immediately.
+# MATLAB-like look: light grey panels, white fields, MATLAB blue accents, a
+# toolstrip-style tab bar under a dark header carrying the logo.
 PALETTE = {
-    "bg": "#eef1f6",
+    "bg": "#f0f0f0",
     "surface": "#ffffff",
-    "surface_alt": "#f7f9fc",
-    "border": "#d7dde6",
-    "header_bg": "#0f2440",
-    "header_fg": "#f5f8ff",
-    "header_fg_muted": "#a9b8d1",
-    "header_hover": "#1b3558",
-    "accent": "#2f6fed",
-    "accent_dark": "#2354bd",
-    "accent_light": "#e8f0fe",
-    "text": "#1f2733",
-    "text_muted": "#5b6472",
+    "surface_alt": "#f7f7f7",
+    "border": "#c8c8c8",
+    "toolstrip": "#e6e6e6",
+    "toolstrip_hover": "#d6d6d6",
+    "header_bg": "#1f2a36",
+    "header_fg": "#ffffff",
+    "header_fg_muted": "#b8c4d0",
+    "header_hover": "#2c3b4b",
+    "accent": "#0072bd",
+    "accent_dark": "#005a96",
+    "accent_light": "#e3f0fa",
+    "text": "#1a1a1a",
+    "text_muted": "#5f5f5f",
     "danger": "#d64545",
     "success": "#2e7d32",
     "danger_dark": "#b23434",
     "row_odd": "#ffffff",
-    "row_even": "#f3f6fb",
-    "selection": "#cfe0fd",
+    "row_even": "#f5f9fd",
+    "selection": "#cfe5f7",
     "warning": "#c77700",
     "warning_on_dark": "#ffb74d",
     "success_light": "#e8f5e9",
     "danger_light": "#fdecec",
     "danger_border": "#f1b5b5",
     "nav_disabled": "#aab3c0",
+}
+
+# MATLAB's default line colour order, for the plots.
+MATLAB_COLORS = {
+    "blue": "#0072BD",
+    "orange": "#D95319",
+    "yellow": "#EDB120",
+    "purple": "#7E2F8E",
+    "green": "#77AC30",
+    "cyan": "#4DBEEE",
+    "red": "#A2142F",
 }
 
 
@@ -199,6 +214,25 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.dates import MinuteLocator
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+# Plots in the MATLAB style: white axes with a full box, light solid grid,
+# bold titles and MATLAB's line colours.
+plt.rcParams.update(
+    {
+        "axes.facecolor": "white",
+        "axes.edgecolor": "#262626",
+        "axes.linewidth": 0.8,
+        "axes.titleweight": "bold",
+        "axes.titlesize": 11,
+        "axes.prop_cycle": plt.cycler(color=list(MATLAB_COLORS.values())),
+        "grid.color": "#dcdcdc",
+        "grid.linestyle": "-",
+        "grid.linewidth": 0.6,
+        "lines.linewidth": 1.6,
+        "legend.fontsize": 8,
+        "legend.framealpha": 0.9,
+    }
+)
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import pandas as pd
@@ -591,6 +625,9 @@ def _stop_for_invalid_license(status) -> None:
 
 
 NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
+# Satellite antenna pattern loaded at startup (next to the executable, in the
+# working directory or next to the source), like tle.txt and parameters.json.
+ANTENNA_PATTERN_FILE = "Antenna Pattern Default.txt"
 
 
 class LinkBudgetApp:
@@ -628,6 +665,11 @@ class LinkBudgetApp:
         self.static_lb_values: dict[str, dict] = {}
         # parameters.json section -> function refilling that static link budget tab.
         self._static_lb_appliers: dict[str, Callable[[dict], None]] = {}
+        # parameters.json section -> function returning that tab's
+        # elevation-independent losses, applied to the pass analysis.
+        self._static_lb_loss_providers: dict[str, Callable[[], dict]] = {}
+        # Functions refreshing the static tabs (e.g. after a new antenna pattern).
+        self._static_lb_refreshers: list[Callable[[], None]] = []
         # str(tab frame) -> function returning the canvas the mouse wheel scrolls.
         self._wheel_targets: dict[str, Callable[[], tk.Canvas | None]] = {}
         self.current_param_file: str | None = None
@@ -827,11 +869,25 @@ class LinkBudgetApp:
         """
 
         tle_path = calculations.resolve_optional_data_file("tle.txt", env_var="TLE_FILE")
+        # (The satellite antenna pattern file is picked up the same way.)
         if tle_path:
             try:
                 self._apply_tle_file(tle_path)
             except Exception as exc:
                 print(f"Warning: could not auto-load default TLE '{tle_path}': {exc}", file=sys.stderr)
+
+        pattern_path = calculations.resolve_optional_data_file(
+            ANTENNA_PATTERN_FILE, env_var="ANTENNA_PATTERN_FILE"
+        )
+        if pattern_path:
+            try:
+                load_antenna_pattern(pattern_path)
+                self.pattern_file_var.set(f"Pattern: {os.path.abspath(pattern_path)}")
+            except Exception as exc:
+                print(
+                    f"Warning: could not auto-load the antenna pattern '{pattern_path}': {exc}",
+                    file=sys.stderr,
+                )
 
         params_path = calculations.resolve_optional_data_file(
             "parameters.json", env_var="PARAMETERS_FILE"
@@ -968,7 +1024,7 @@ class LinkBudgetApp:
         """Mark the analysis as stale so the user must recompute."""
         if not self.analysis_needs_refresh:
             self.analysis_needs_refresh = True
-            self.start_refresh_button.config(style="Red.TButton")
+            self.start_refresh_button.config(style="Accent.TButton")
             self.recalc_button.config(state="disabled")
             self.clear_plot_and_table()
             self.clear_uplink_table()
@@ -982,7 +1038,7 @@ class LinkBudgetApp:
             self.uplink_needs_refresh = True
             self.clear_uplink_table()
             if self.uplink_recalc_button is not None:
-                self.uplink_recalc_button.config(style="Red.TButton")
+                self.uplink_recalc_button.config(style="Accent.TButton")
 
     def set_uplink_budget_fresh(self):
         """Reset the uplink-only link budget stale flag."""
@@ -991,6 +1047,83 @@ class LinkBudgetApp:
             self.uplink_needs_refresh = False
             if self.uplink_recalc_button is not None:
                 self.uplink_recalc_button.config(style="TButton")
+
+    def _pass_loss_settings(self) -> dict:
+        """Values the pass analysis takes from the static link budget tabs,
+        as keyword arguments of :func:`calculate_link_budget_parameters`.
+
+        The satellite antenna pattern is always applied: on the downlink the
+        EIRP is the Tx chain of the Static LB · Downlink tab plus the pattern
+        gain towards the station (or EIRP SAT at the pattern peak when that
+        tab uses an EIRP value); on the uplink G/T SAT is taken at the
+        pattern peak. The ground station antenna tracks the satellite, so
+        it has no pointing loss. Also writes what is applied into the
+        Downlink and Uplink tabs.
+        """
+
+        kwargs: dict = {"apply_antenna_pattern": True}
+        directions = (
+            ("Downlink", "downlink", self.include_static_dl_var, self.dl_losses_var, ""),
+            ("Uplink", "uplink", self.include_static_ul_var, self.ul_losses_var, "ul_"),
+        )
+        for title, key, include_var, text_var, prefix in directions:
+            if title == "Downlink":
+                antenna = (
+                    "EIRP: EIRP SAT at the peak of the satellite antenna pattern, minus the pattern "
+                    "roll-off towards the station."
+                )
+            else:
+                antenna = (
+                    "G/T SAT at the peak of the satellite antenna pattern, minus the pattern roll-off "
+                    "towards the station."
+                )
+            if not include_var.get():
+                text_var.set(
+                    f"{antenna}\nStatic link budget losses not included: only the losses of this tab "
+                    "(atmospheric, other attenuations, demodulator loss); Eb/No referred to the "
+                    "information bit rate."
+                )
+                continue
+            provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS[key])
+            try:
+                values = provider() if provider else None
+            except ValueError as exc:
+                text_var.set(f"{antenna}\nNot applied: an input of the Static LB · {title} tab is not valid ({exc})")
+                continue
+            if values is None:
+                continue
+            if title == "Downlink" and values["tx_chain_dbw"] is not None:
+                kwargs["tx_chain_dbw"] = values["tx_chain_dbw"]
+                antenna = (
+                    f"EIRP: Tx chain of the Static LB · Downlink tab ({values['tx_chain_dbw']:.2f} dBW: "
+                    "power − circuit − VSWR losses) + satellite antenna gain from the pattern at each "
+                    "time step."
+                )
+            parts = [
+                ("ionospheric", values["ionospheric_loss_db"]),
+                ("polarisation", values["polarisation_loss_db"]),
+                ("multipath", values["multipath_loss_db"]),
+            ]
+            total = sum(value for _name, value in parts)
+            kwargs[f"{prefix}link_losses_db"] = total
+            kwargs[f"{prefix}modulation_degradation_db"] = values["modulation_degradation_db"]
+            kwargs[f"{prefix}formatting_overhead"] = values["formatting_overhead"]
+            text_var.set(
+                f"{antenna}\n"
+                + "Link losses: "
+                + " + ".join(f"{name} {value:.2f}" for name, value in parts)
+                + f" = {total:.2f} dB (GS antenna tracking: no pointing loss).   "
+                + f"Modulation degradation: {values['modulation_degradation_db']:.2f} dB.   "
+                + "Eb/No referred to the transfer frame bit rate (formatting factor "
+                + f"{values['formatting_overhead']:.6g})."
+            )
+        return kwargs
+
+    def _on_pass_losses_changed(self) -> None:
+        """A loss checkbox changed: show what is applied and flag the budgets."""
+
+        self._pass_loss_settings()
+        self.set_uplink_budget_stale()
 
     # ------------------------------------------------------------------
     # Main Analysis Function
@@ -1055,6 +1188,7 @@ class LinkBudgetApp:
             return
 
         lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+        loss_kwargs = self._pass_loss_settings()
         alt_gs_km = alt_gs_m / 1000.0
 
         ts = load.timescale()
@@ -1138,6 +1272,7 @@ class LinkBudgetApp:
                 uplink_atm_att,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
+                **loss_kwargs,
             )
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
             for key in [
@@ -1145,15 +1280,19 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
-                "Pointing Loss (dB)",
+                "S/C Antenna Gain (dBi)",
+                "EIRP (dBW)",
+                "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
+                "Link Losses (dB)",
+                "UL Link Losses (dB)",
                 "Rx Power (dBW)",
                 "C/(No+Io) (dBHz)",
                 "Eb/No (dB)",
                 "Doppler Shift (kHz)",
                 "UL Path Loss (dB)",
                 "UL Atmospheric Att (dB)",
-                "UL Pointing Loss (dB)",
+                "UL S/C Antenna Loss (dB)",
                 "UL Rx Power (dBW)",
                 "UL C/No (dBHz)",
                 "UL Eb/No (dB)",
@@ -1242,6 +1381,7 @@ class LinkBudgetApp:
 
         gs_name = self.gs_var.get()
         lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+        loss_kwargs = self._pass_loss_settings()
         alt_gs_km = alt_gs_m / 1000.0
 
         ts = load.timescale()
@@ -1319,6 +1459,7 @@ class LinkBudgetApp:
                 uplink_atm_att,
                 uplink_bitrate_val * 1e6 if uplink_bitrate_val is not None else None,
                 uplink_overhead,
+                **loss_kwargs,
             )
 
             rounding_rules = {"Atmospheric Att (dB)": 3, "UL Atmospheric Att (dB)": 3}
@@ -1327,15 +1468,19 @@ class LinkBudgetApp:
                 "Slant Range (km)",
                 "Path Loss (dB)",
                 "Atmospheric Att (dB)",
-                "Pointing Loss (dB)",
+                "S/C Antenna Gain (dBi)",
+                "EIRP (dBW)",
+                "S/C Antenna Loss (dB)",
                 "Off Boresight Angle (°)",
+                "Link Losses (dB)",
+                "UL Link Losses (dB)",
                 "Rx Power (dBW)",
                 "C/(No+Io) (dBHz)",
                 "Eb/No (dB)",
                 "Doppler Shift (kHz)",
                 "UL Path Loss (dB)",
                 "UL Atmospheric Att (dB)",
-                "UL Pointing Loss (dB)",
+                "UL S/C Antenna Loss (dB)",
                 "UL Rx Power (dBW)",
                 "UL C/No (dBHz)",
                 "UL Eb/No (dB)",
@@ -1408,11 +1553,14 @@ class LinkBudgetApp:
         self.clear_uplink_table()
         self.clear_plot_and_table()
 
+        # Constrained layout leaves room for the twin axis of the middle plot,
+        # whose right-hand label otherwise ran into the Doppler plot.
         fig, (ax1, ax2, ax3) = plt.subplots(
             1,
             3,
-            figsize=(15, 4),
+            figsize=(12, 4),
             gridspec_kw={"width_ratios": [1, 1, 1]},
+            layout="constrained",
         )
 
         tk_bg_color = self.root.cget("bg")
@@ -1423,48 +1571,47 @@ class LinkBudgetApp:
             mpl_bg_color = "#F0F0F0"
         fig.patch.set_facecolor(mpl_bg_color)
 
-        ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color="tab:blue")
-        ax1.set_ylabel("Elevation (°)", color="tab:blue", fontsize=8)
-        ax1.tick_params(axis="both", labelcolor="tab:blue", labelsize=8)
+        ax1.plot(df_pass["Time (UTC)"], df_pass["Elevation (°)"], label="Elevation (°)", color=MATLAB_COLORS["blue"])
+        ax1.set_ylabel("Elevation (°)", color=MATLAB_COLORS["blue"], fontsize=8)
+        ax1.tick_params(axis="both", labelcolor=MATLAB_COLORS["blue"], labelsize=8)
         ax1.set_xlabel("Time (UTC)", fontsize=8)
         ax1.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax1.grid(True, linestyle=":", alpha=0.7)
+        ax1.grid(True)
         ax1.set_title("Elevation Angle")
         fig.autofmt_xdate(rotation=30)
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()
-        ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color="tab:red")
-        ax2_1.set_ylabel("Eb/No (dB)", color="tab:red", fontsize=8)
-        ax2_1.tick_params(axis="both", labelcolor="tab:red", labelsize=8)
+        ax2_1.plot(df_pass["Time (UTC)"], df_pass["Eb/No (dB)"], label="Eb/No (dB)", color=MATLAB_COLORS["orange"])
+        ax2_1.set_ylabel("Eb/No (dB)", color=MATLAB_COLORS["orange"], fontsize=8)
+        ax2_1.tick_params(axis="both", labelcolor=MATLAB_COLORS["orange"], labelsize=8)
         ax2_2.plot(
             df_pass["Time (UTC)"],
             df_pass["C/(No+Io) (dBHz)"],
             label="C/(No+Io) (dBHz)",
-            color="tab:green",
+            color=MATLAB_COLORS["green"],
             linestyle="--",
         )
-        ax2_2.set_ylabel("C/(No+Io) (dBHz)", color="tab:green", fontsize=8)
-        ax2_2.tick_params(axis="both", labelcolor="tab:green", labelsize=8)
+        ax2_2.set_ylabel("C/(No+Io) (dBHz)", color=MATLAB_COLORS["green"], fontsize=8)
+        ax2_2.tick_params(axis="both", labelcolor=MATLAB_COLORS["green"], labelsize=8)
         ax2.set_xlabel("Time (UTC)", fontsize=8)
         ax2.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax2.grid(True, linestyle=":", alpha=0.7)
+        ax2.grid(True)
         ax2.set_title("Link Quality (Eb/No & C/(No+Io))")
         lines, labels = ax2_1.get_legend_handles_labels()
         lines2, labels2 = ax2_2.get_legend_handles_labels()
         ax2.legend(lines + lines2, labels + labels2, loc="best")
 
-        ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color="tab:purple")
+        ax3.plot(df_pass["Time (UTC)"], df_pass["Doppler Shift (kHz)"], color=MATLAB_COLORS["purple"])
         ax3.set_xlabel("Time (UTC)", fontsize=8)
-        ax3.set_ylabel("Doppler (kHz)", color="tab:purple", fontsize=8)
-        ax3.tick_params(axis="both", labelcolor="tab:purple", labelsize=8)
+        ax3.set_ylabel("Doppler (kHz)", color=MATLAB_COLORS["purple"], fontsize=8)
+        ax3.tick_params(axis="both", labelcolor=MATLAB_COLORS["purple"], labelsize=8)
         ax3.xaxis.set_major_locator(MinuteLocator(interval=1))
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        ax3.grid(True, linestyle=":", alpha=0.7)
+        ax3.grid(True)
         ax3.set_title("Doppler Shift")
-        fig.tight_layout()
 
         canvas_plot_widget = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas_plot_widget.draw()
@@ -1476,8 +1623,10 @@ class LinkBudgetApp:
             "Slant Range (km)",
             "Path Loss (dB)",
             "Atmospheric Att (dB)",
-            "Pointing Loss (dB)",
             "Off Boresight Angle (°)",
+            "S/C Antenna Gain (dBi)",
+            "EIRP (dBW)",
+            "Link Losses (dB)",
             "Rx Power (dBW)",
             "C/(No+Io) (dBHz)",
             "Eb/No (dB)",
@@ -1515,7 +1664,7 @@ class LinkBudgetApp:
 
     def show_antenna_pattern(self):
         popup = tk.Toplevel(self.root)
-        popup.title("Antenna Pattern")
+        popup.title("Satellite Antenna Pattern")
         popup.geometry("600x400")
         popup.configure(bg=PALETTE["bg"])
 
@@ -1523,27 +1672,31 @@ class LinkBudgetApp:
 
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.plot(ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, marker="o", linestyle="-")
-        ax.set_xlabel("Angle (degrees)", fontsize=8)
-        ax.set_ylabel("Gain (dB)", fontsize=8)
-        ax.set_title("Antenna Gain Pattern")
+        ax.set_xlabel("Angle from nadir (boresight) [deg]", fontsize=8)
+        ax.set_ylabel("Gain [dBi]", fontsize=8)
+        ax.set_title("Satellite Antenna Gain Pattern")
         ax.tick_params(axis="both", labelsize=8)
-        ax.grid(True, linestyle=":", alpha=0.7)
+        ax.grid(True)
         canvas_popup = FigureCanvasTkAgg(fig, master=popup)
         canvas_popup.draw()
         canvas_popup.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
 
     def load_antenna_pattern_file(self):
-        """Load antenna gain pattern data from a CSV file."""
+        """Load the satellite antenna pattern (angle from nadir, gain in dBi) from a CSV file."""
         file_path = filedialog.askopenfilename(
-            title="Select Antenna Pattern File",
+            title="Select Satellite Antenna Pattern File",
             filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")],
         )
         if not file_path:
             return
         try:
             load_antenna_pattern(file_path)
-            messagebox.showinfo("Success", "Antenna pattern loaded successfully.")
+            self.pattern_file_var.set(f"Pattern: {os.path.abspath(file_path)}")
+            messagebox.showinfo("Success", "Satellite antenna pattern loaded successfully.")
             self.set_analysis_stale()
+            # The static tabs read the Tx antenna gain from the pattern.
+            for refresh in self._static_lb_refreshers:
+                refresh()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load antenna pattern: {e}")
 
@@ -1961,8 +2114,17 @@ class LinkBudgetApp:
                     F(
                         "ant_gain_dbi", "Antenna Gain [dBi]", "", "e.g. 0",
                         "Tx antenna gain towards the receiver. Part of the Tx chain (required "
-                        "there).",
+                        "there)."
+                        + (
+                            " Can be read from the satellite antenna pattern instead (option below)."
+                            if rx_is_ground_station
+                            else ""
+                        ),
                     ),
+                ]
+                # The satellite antenna pattern gives the Tx gain on the downlink only.
+                + ([("gain_source",)] if rx_is_ground_station else [])
+                + [
                     ("eirp_used",),
                     F(
                         "ant_axial_ratio_db", "Tx Antenna Axial Ratio [dB]", "", "e.g. 3",
@@ -2119,6 +2281,8 @@ class LinkBudgetApp:
         # Read-only boxes with values derived from the bit rate and overheads.
         computed_boxes: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
+        gain_pattern_var = tk.BooleanVar(value=False)
+        gain_pattern_text_var = tk.StringVar(value="")
         # The station of this view is its own (saved with its inputs), so
         # changing it here never touches the pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
@@ -2149,7 +2313,7 @@ class LinkBudgetApp:
                 kind = item[0]
                 if kind in (
                     "eirp_mode", "eirp_used", "iono_mode", "iono_used", "framing_mode", "ccsds_options",
-                    "framing_used",
+                    "framing_used", "gain_source",
                 ):
                     # Full-width rows.
                     if c:
@@ -2295,6 +2459,27 @@ class LinkBudgetApp:
                             "window), or the Tx chain below (transmitter power − circuit loss − VSWR "
                             "loss + antenna gain). The fields of the other option are greyed out "
                             "and ignored; the EIRP actually used is shown under the Tx chain.",
+                        ).pack(side=tk.LEFT)
+                    elif kind == "gain_source":
+                        gain_row = ttk.Frame(group_frame)
+                        gain_row.grid(row=r, column=0, columnspan=4, sticky="w", pady=(2, 2))
+                        ttk.Checkbutton(
+                            gain_row,
+                            text="Antenna gain from the satellite antenna pattern at this elevation",
+                            variable=gain_pattern_var,
+                            command=lambda: _refresh_states(),
+                        ).pack(side=tk.LEFT)
+                        _info_icon(
+                            gain_row,
+                            "The satellite antenna pattern (gain versus angle from nadir, loaded in "
+                            "the Orbit & Passes tab) gives the Tx antenna gain towards the ground "
+                            "station: the angle from nadir follows from the elevation and the "
+                            "satellite altitude. The pass analysis uses the same pattern at every "
+                            "time step. The pattern already includes the off-pointing, so the Tx "
+                            "Antenna Pointing Loss is not used.",
+                        ).pack(side=tk.LEFT, padx=(4, 8))
+                        ttk.Label(
+                            gain_row, textvariable=gain_pattern_text_var, foreground=PALETTE["accent_dark"]
                         ).pack(side=tk.LEFT)
                     else:  # eirp_used
                         ttk.Label(
@@ -2635,6 +2820,19 @@ class LinkBudgetApp:
                 box_var.set(text)
                 box_icon.tooltip.text = explanation
 
+        def _pattern_gain():
+            """(angle from nadir, satellite antenna gain) at this view's geometry, or None."""
+
+            try:
+                elevation = float(_field_text("elevation_deg"))
+                altitude = float(_field_text("sat_altitude_km"))
+            except ValueError:
+                return None
+            station = calculations.GROUND_STATIONS.get(station_var.get())
+            gs_alt_km = station[2] / 1000.0 if station else 0.0
+            angle = calculations.off_nadir_angle_deg(elevation, altitude, gs_alt_km)
+            return angle, calculations.satellite_antenna_gain_dbi(angle)
+
         def _refresh_states(_event=None) -> None:
             """Grey out the fields the calculation currently ignores."""
 
@@ -2646,6 +2844,20 @@ class LinkBudgetApp:
             _set_field_enabled(f"panel:{eirp_label}", not chain)
             for key in tx_chain_keys:
                 _set_field_enabled(key, chain)
+            if rx_is_ground_station:
+                # Tx antenna gain read from the satellite antenna pattern.
+                use_pattern = bool(gain_pattern_var.get())
+                gain_pattern_text_var.set("")
+                if use_pattern:
+                    _set_field_enabled("ant_gain_dbi", False)
+                    angle_gain = _pattern_gain()
+                    if angle_gain is None:
+                        gain_pattern_text_var.set("enter Elevation Angle and Satellite Altitude")
+                    else:
+                        angle, gain = angle_gain
+                        _write_computed("ant_gain_dbi", f"{gain:.2f}")
+                        gain_pattern_text_var.set(f"{angle:.1f}° from nadir → {gain:.2f} dBi")
+                _set_field_enabled("tx_pointing_loss_db", not use_pattern)
             # Axial ratios only matter when the polarisation loss is derived from them.
             derive_polarisation = not _field_text("polarisation_loss_db")
             _set_field_enabled("ant_axial_ratio_db", derive_polarisation)
@@ -2681,6 +2893,8 @@ class LinkBudgetApp:
             )
 
         for key in tx_chain_keys + (
+            "elevation_deg",
+            "sat_altitude_km",
             "polarisation_loss_db",
             "rx_depointing_deg",
             f"panel:{eirp_label}",
@@ -2801,6 +3015,8 @@ class LinkBudgetApp:
             if tolerances_out:
                 values["tolerances"] = tolerances_out
             values["eirp_mode"] = eirp_mode_var.get()
+            if rx_is_ground_station:
+                values["ant_gain_from_pattern"] = bool(gain_pattern_var.get())
             values["station"] = station_var.get()
             values["ionospheric_mode"] = iono_mode_var.get()
             if rx_is_ground_station:
@@ -2825,6 +3041,7 @@ class LinkBudgetApp:
                 # whenever a transmitter power was given.
                 mode = "tx_chain" if _format_value(values.get("tx_power_w")) else "eirp"
             eirp_mode_var.set(mode)
+            gain_pattern_var.set(bool(values.get("ant_gain_from_pattern", False)))
             station = values.get("station")
             station_var.set(station if station in calculations.GROUND_STATIONS else self.gs_var.get())
             framing_mode = values.get("framing_mode")
@@ -2861,7 +3078,7 @@ class LinkBudgetApp:
             if not results_state["fresh"] or not win.winfo_exists():
                 return
             results_state["fresh"] = False
-            calc_button.configure(style="Red.TButton")
+            calc_button.configure(style="Tool.Accent.TButton")
             export_button.state(["disabled"])
             pdf_button.state(["disabled"])
             stale_label.pack(anchor="w", before=status_label)
@@ -2884,7 +3101,7 @@ class LinkBudgetApp:
         station_var.trace_add("write", lambda *_args: _refresh_states())
         watched_vars = [
             station_var, eirp_mode_var, iono_mode_var, scint_var, framing_mode_var, ccsds_ocf_var, ccsds_fecf_var,
-            ccsds_pec_var,
+            ccsds_pec_var, gain_pattern_var,
         ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
@@ -3077,6 +3294,15 @@ class LinkBudgetApp:
                     ant_circuit_loss_db = _field("ant_circuit_loss_db", _parse_optional)
                     vswr = _field("vswr", _parse_optional_or_none)
                     ant_gain_dbi = _field("ant_gain_dbi", _parse_optional_or_none)
+                    if rx_is_ground_station and gain_pattern_var.get():
+                        angle_gain = _pattern_gain()
+                        if angle_gain is None:
+                            raise ValueError(
+                                "'Elevation Angle [deg]' and 'Satellite Altitude [km]' are needed for "
+                                "the antenna gain from the pattern."
+                            )
+                        ant_gain_dbi = angle_gain[1]
+                        pointing_loss_db = 0.0  # included in the pattern gain
                     if tx_power_w is None or ant_gain_dbi is None:
                         raise ValueError(
                             "The EIRP source is 'Tx chain': enter Transmitter Power [W] and "
@@ -3256,6 +3482,17 @@ class LinkBudgetApp:
                                     f"{'yes' if ccsds_pec_var.get() else 'no'}",
                                 )
                             )
+                    elif item[0] == "gain_source":
+                        if eirp_mode_var.get() == "tx_chain" and gain_pattern_var.get():
+                            angle_gain = _pattern_gain()
+                            group_items.append(
+                                (
+                                    "Antenna Gain Source",
+                                    f"Satellite antenna pattern ({angle_gain[0]:.1f}° from nadir)"
+                                    if angle_gain
+                                    else "Satellite antenna pattern",
+                                )
+                            )
                     elif item[0] in ("iono_used", "eirp_used", "framing_used", "computed"):
                         continue
                     elif item[0] == "eirp_mode":
@@ -3305,7 +3542,7 @@ class LinkBudgetApp:
             )
             pdf_button.state(["!disabled"])
             results_state["fresh"] = True
-            calc_button.configure(style="TButton")
+            calc_button.configure(style="Tool.TButton")
             if current_page["key"] not in result_pages:
                 _show_page("summary")
 
@@ -3428,17 +3665,35 @@ class LinkBudgetApp:
                 return
             status_var.set(f"PDF report saved to {os.path.abspath(file_path)}")
 
-        calc_button = ttk.Button(button_row, text="Calculate", command=_calculate, style="Red.TButton")
-        calc_button.pack(side=tk.LEFT, padx=(0, 10))
-        _add_tooltip(calc_button, "Red when there are no results yet or the inputs changed since the last calculation.")
-        load_button = ttk.Button(button_row, text="Load...", command=_load)
+        # Toolstrip: groups of large buttons, each with its caption below, as
+        # in the MATLAB toolstrip.
+        def _tool_group(caption: str, first: bool = False) -> ttk.Frame:
+            if not first:
+                ttk.Separator(button_row, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=10)
+            group = ttk.Frame(button_row, style="Toolbar.TFrame")
+            group.pack(side=tk.LEFT, fill=tk.Y)
+            buttons = ttk.Frame(group, style="Toolbar.TFrame")
+            buttons.pack(side=tk.TOP)
+            ttk.Label(
+                group, text=caption, style="ToolCaption.TLabel"
+            ).pack(side=tk.BOTTOM, pady=(4, 0))
+            return buttons
+
+        run_group = _tool_group("RUN", first=True)
+        file_group = _tool_group("FILE")
+        export_group = _tool_group("EXPORT")
+
+        calc_button = ttk.Button(run_group, text="Calculate", command=_calculate, style="Tool.Accent.TButton")
+        calc_button.pack(side=tk.LEFT)
+        _add_tooltip(calc_button, "Blue when there are no results yet or the inputs changed since the last calculation.")
+        load_button = ttk.Button(file_group, text="Load...", command=_load, style="Tool.TButton")
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             load_button,
             f"Load this tab's inputs from the '{section}' section of a parameters JSON file, "
             "and the shared values (blue labels) when the file has them.",
         )
-        save_button = ttk.Button(button_row, text="Save...", command=_save)
+        save_button = ttk.Button(file_group, text="Save...", command=_save, style="Tool.TButton")
         save_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             save_button,
@@ -3447,11 +3702,11 @@ class LinkBudgetApp:
             "the file are kept. Saving into parameters.json makes them load automatically at "
             "startup.",
         )
-        ttk.Button(button_row, text="Reset", command=_reset).pack(side=tk.LEFT, padx=(0, 6))
-        export_button = ttk.Button(button_row, text="Export CSV...", command=_export_csv)
+        ttk.Button(file_group, text="Reset", command=_reset, style="Tool.TButton").pack(side=tk.LEFT)
+        export_button = ttk.Button(export_group, text="Export CSV...", command=_export_csv, style="Tool.TButton")
         export_button.pack(side=tk.LEFT, padx=(0, 6))
         export_button.state(["disabled"])
-        pdf_button = ttk.Button(button_row, text="Export PDF...", command=_export_pdf)
+        pdf_button = ttk.Button(export_group, text="Export PDF...", command=_export_pdf, style="Tool.TButton")
         pdf_button.pack(side=tk.LEFT)
         pdf_button.state(["disabled"])
         _add_tooltip(
@@ -3459,6 +3714,65 @@ class LinkBudgetApp:
             "Create a PDF report (A4) of the last calculation: summary with pass/fail checks, "
             "inputs, link budget table, PFD check, tolerances and method.",
         )
+
+        def _pass_link_losses() -> dict:
+            """This tab's elevation-independent losses, for the pass analysis.
+
+            Raises ValueError (naming the field) when an input is invalid.
+            """
+
+            def opt(key, parser, **kwargs):
+                # Fields that only one direction has count as empty in the other.
+                return _field(key, parser, **kwargs) if key in entries else kwargs.get("default")
+
+            freq_ghz = _parse_required(freq_entry, freq_label)
+            d_gs = _parse_required(self.d_gs_entry, "Antenna Diameter GS [m]")
+            if iono_mode_var.get() == "s4":
+                iono_kwargs = dict(
+                    ionospheric_s4_ref=_field("iono_s4_ref", _parse_required),
+                    ionospheric_s4_ref_freq_mhz=_field("iono_s4_ref_freq_mhz", _parse_required),
+                )
+            else:
+                iono_kwargs = dict(ionospheric_loss_db=opt("ionospheric_loss_db", _parse_optional, default=0.0))
+            losses = calculations.static_link_losses(
+                freq_ghz,
+                d_gs,
+                polarisation_loss_db=opt("polarisation_loss_db", _parse_optional_or_none),
+                tx_axial_ratio_db=opt("ant_axial_ratio_db", _parse_optional_or_none),
+                rx_axial_ratio_db=opt("rx_axial_ratio_db", _parse_optional_or_none),
+                multipath_loss_db=opt("multipath_loss_db", _parse_optional, default=0.0),
+                rx_depointing_deg=opt("rx_depointing_deg", _parse_optional_or_none),
+                rx_beamwidth_3db_deg=opt("rx_beamwidth_deg", _parse_optional_or_none),
+                **iono_kwargs,
+            )
+            formatting = opt("formatting_overhead", _parse_optional, default=1.0)
+            if formatting <= 0:
+                raise ValueError("'Formatting Factor (frame / user data)' must be greater than 0.")
+            tx_chain_dbw = None
+            if eirp_mode_var.get() == "tx_chain":
+                power_w = _field("tx_power_w", _parse_required)
+                if power_w <= 0:
+                    raise ValueError("'Transmitter Power [W]' must be greater than 0.")
+                vswr = _field("vswr", _parse_optional_or_none)
+                tx_chain_dbw = (
+                    10 * math.log10(power_w)
+                    - _field("ant_circuit_loss_db", _parse_optional)
+                    - (calculations.vswr_mismatch_loss_db(vswr) if vswr else 0.0)
+                )
+            return {
+                "tx_chain_dbw": tx_chain_dbw,
+                "ionospheric_loss_db": losses["ionospheric_loss_db"],
+                "polarisation_loss_db": losses["polarisation_loss_db"],
+                "multipath_loss_db": losses["multipath_loss_db"],
+                "rx_pointing_loss_db": losses["rx_pointing_loss_db"],
+                "tx_pointing_loss_db": opt("tx_pointing_loss_db", _parse_optional, default=0.0),
+                "modulation_degradation_db": opt("modulation_degradation_db", _parse_optional, default=0.0),
+                "formatting_overhead": formatting,
+            }
+
+        self._static_lb_loss_providers[section] = _pass_link_losses
+        self._static_lb_refreshers.append(_refresh_states)
+
 
     def _render_fixed_link_budget_results(self, pages, budget, link_availability_pct, extra_info=None):
         """Render the fixed-elevation results and return them as CSV export rows.
@@ -3952,80 +4266,96 @@ class LinkBudgetApp:
             font=subheader_font,
         )
 
+        # Panels as MATLAB uipanels: grey like the window, a thin border and a
+        # dark bold title.
         style.configure(
             "TLabelframe",
-            background=PALETTE["surface"],
+            background=PALETTE["bg"],
             bordercolor=PALETTE["border"],
             relief="solid",
             borderwidth=1,
         )
         style.configure(
             "TLabelframe.Label",
-            background=PALETTE["surface"],
-            foreground=PALETTE["accent_dark"],
+            background=PALETTE["bg"],
+            foreground=PALETTE["text"],
             font=bold_font,
         )
 
         style.configure(
             "TButton",
-            background=PALETTE["surface_alt"],
+            background="#fafafa",
             foreground=PALETTE["text"],
-            padding=(12, 7),
+            padding=(10, 5),
             relief="solid",
             borderwidth=1,
-            bordercolor=PALETTE["border"],
+            bordercolor="#b4b4b4",
+            lightcolor="#fafafa",
+            darkcolor="#fafafa",
             font=default_font,
         )
         style.map(
             "TButton",
-            background=[("active", PALETTE["accent_light"]), ("disabled", PALETTE["surface_alt"])],
+            background=[("active", PALETTE["accent_light"]), ("disabled", PALETTE["bg"])],
             foreground=[("disabled", PALETTE["text_muted"])],
-            bordercolor=[("active", PALETTE["accent"]), ("!active", PALETTE["border"])],
+            bordercolor=[("active", PALETTE["accent"]), ("!active", "#b4b4b4")],
+            lightcolor=[("active", PALETTE["accent_light"])],
+            darkcolor=[("active", PALETTE["accent_light"])],
         )
 
+        # The action that needs running (no results yet, or inputs changed).
         style.configure(
-            "Red.TButton",
-            background=PALETTE["danger"],
+            "Accent.TButton",
+            background=PALETTE["accent"],
             foreground="white",
             font=bold_font,
-            padding=(12, 7),
+            padding=(10, 5),
             relief="flat",
-            borderwidth=0,
+            borderwidth=1,
+            bordercolor=PALETTE["accent_dark"],
+            lightcolor=PALETTE["accent"],
+            darkcolor=PALETTE["accent"],
         )
         style.map(
-            "Red.TButton",
-            background=[("active", PALETTE["danger_dark"]), ("disabled", PALETTE["surface_alt"])],
+            "Accent.TButton",
+            background=[("active", PALETTE["accent_dark"]), ("disabled", PALETTE["bg"])],
             foreground=[("disabled", PALETTE["text_muted"])],
+            lightcolor=[("active", PALETTE["accent_dark"])],
+            darkcolor=[("active", PALETTE["accent_dark"])],
         )
+        # Large toolstrip buttons (static link budget actions); the
+        # "Tool.Accent" style inherits the Accent colours.
+        style.configure("Tool.TButton", padding=(14, 8))
+        style.configure("Tool.Accent.TButton", padding=(14, 8))
 
         style.configure("TNotebook", background=PALETTE["bg"], borderwidth=0)
-        # Main window tabs: a navy tab bar continuing the header, with the
-        # selected tab opening onto the page below.
+        # Main window tabs, as the MATLAB toolstrip tabs: a light grey strip,
+        # the selected tab opening onto the page below with blue text.
         style.configure(
             "Main.TNotebook",
-            background=PALETTE["header_bg"],
+            background=PALETTE["toolstrip"],
             borderwidth=0,
-            tabmargins=(16, 4, 16, 0),
-            bordercolor=PALETTE["header_bg"],
-            lightcolor=PALETTE["header_bg"],
-            darkcolor=PALETTE["header_bg"],
+            tabmargins=(8, 5, 8, 0),
+            bordercolor=PALETTE["border"],
+            lightcolor=PALETTE["toolstrip"],
+            darkcolor=PALETTE["toolstrip"],
         )
         style.configure(
             "Main.TNotebook.Tab",
-            background=PALETTE["header_bg"],
-            foreground=PALETTE["header_fg_muted"],
-            padding=(20, 9),
+            background=PALETTE["toolstrip"],
+            foreground="#3c3c3c",
+            padding=(18, 7),
             font=bold_font,
-            borderwidth=0,
-            bordercolor=PALETTE["header_bg"],
-            lightcolor=PALETTE["header_bg"],
+            borderwidth=1,
+            bordercolor=PALETTE["toolstrip"],
+            lightcolor=PALETTE["toolstrip"],
         )
         style.map(
             "Main.TNotebook.Tab",
-            background=[("selected", PALETTE["bg"]), ("active", PALETTE["header_hover"])],
-            foreground=[("selected", PALETTE["accent_dark"]), ("active", PALETTE["header_fg"])],
+            background=[("selected", PALETTE["bg"]), ("active", PALETTE["toolstrip_hover"])],
+            foreground=[("selected", PALETTE["accent"]), ("active", PALETTE["text"])],
             lightcolor=[("selected", PALETTE["bg"])],
-            bordercolor=[("selected", PALETTE["bg"])],
+            bordercolor=[("selected", PALETTE["border"])],
         )
         # Notebook without tabs, for windows that switch pages from a sidebar.
         style.layout("Pages.TNotebook.Tab", [])
@@ -4042,6 +4372,12 @@ class LinkBudgetApp:
         style.configure("Toolbar.TFrame", background=PALETTE["surface"])
         style.configure("Toolbar.TLabel", background=PALETTE["surface"])
         style.configure("Card.TLabel", background=PALETTE["surface"])
+        style.configure(
+            "ToolCaption.TLabel",
+            background=PALETTE["surface"],
+            foreground=PALETTE["text_muted"],
+            font=(base_font_family, 8),
+        )
         style.configure(
             "PageTitle.TLabel", foreground=PALETTE["accent_dark"], font=(base_font_family, 15, "bold")
         )
@@ -4085,15 +4421,19 @@ class LinkBudgetApp:
             borderwidth=1,
             font=default_font,
         )
+        # Light column headings, as in MATLAB tables.
         style.configure(
             "Treeview.Heading",
-            background=PALETTE["header_bg"],
-            foreground=PALETTE["header_fg"],
+            background=PALETTE["toolstrip"],
+            foreground=PALETTE["text"],
             font=bold_font,
             relief="flat",
-            padding=(6, 6),
+            bordercolor=PALETTE["border"],
+            lightcolor=PALETTE["toolstrip"],
+            darkcolor=PALETTE["border"],
+            padding=(6, 5),
         )
-        style.map("Treeview.Heading", background=[("active", PALETTE["accent_dark"])])
+        style.map("Treeview.Heading", background=[("active", PALETTE["toolstrip_hover"])])
         style.map(
             "Treeview",
             background=[("selected", PALETTE["selection"])],
@@ -4160,6 +4500,28 @@ class LinkBudgetApp:
         # The pass selected in the Orbit & Passes tab, shown above the results
         # of the Downlink and Uplink tabs.
         self.selected_pass_var = tk.StringVar(value=NO_PASS_SELECTED)
+
+        def _static_losses_frame(parent, direction, include_var, text_var):
+            frame = ttk.LabelFrame(parent, text="Link Losses from the Static Link Budget", padding=10)
+            frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+            check = ttk.Checkbutton(
+                frame,
+                text=f"Include the losses entered in the Static LB · {direction} tab",
+                variable=include_var,
+                command=self._on_pass_losses_changed,
+            )
+            check.pack(anchor="w")
+            _add_tooltip(
+                check,
+                "The pass analysis then subtracts the same elevation-independent losses as the "
+                "static link budget: ionospheric, polarisation mismatch, multipath and antenna "
+                "pointing, adds the modulation degradation to the demodulator loss, and refers "
+                "Eb/No to the transfer frame bit rate (formatting factor). Atmospheric "
+                "attenuation, EIRP, G/T and the other values of this tab are its own.",
+            )
+            ttk.Label(
+                frame, textvariable=text_var, foreground=PALETTE["text_muted"], wraplength=1000, justify="left"
+            ).pack(anchor="w", pady=(4, 0))
 
         def _selected_pass_label(parent, padx=0):
             row = ttk.Frame(parent)
@@ -4270,13 +4632,13 @@ class LinkBudgetApp:
             passes_row,
             text="Start/Refresh Analysis",
             command=self.run_analysis,
-            style="Red.TButton",
+            style="Accent.TButton",
         )
         self.start_refresh_button.pack(side=tk.LEFT)
         _add_tooltip(
             self.start_refresh_button,
             "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
-            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
+            "contact windows. Turns blue whenever those inputs change and a fresh run is needed.",
         )
         ttk.Label(
             passes_row,
@@ -4289,6 +4651,33 @@ class LinkBudgetApp:
             wraplength=760,
             justify="left",
         ).pack(side=tk.LEFT, padx=(14, 0))
+
+        antenna_row = ttk.Frame(passes_frame)
+        antenna_row.pack(fill=tk.X, padx=5, pady=(10, 0))
+        ttk.Label(antenna_row, text="Satellite antenna pattern (gain vs angle from nadir):").pack(side=tk.LEFT)
+        _info_icon(
+            antenna_row,
+            "Satellite antenna gain versus the angle from nadir (boresight), applied at every time "
+            "step in both directions. Downlink: EIRP = Tx chain of the Static LB · Downlink tab + "
+            "the pattern gain towards the station (or EIRP SAT at the pattern peak when that tab "
+            "uses an EIRP value). Uplink: G/T SAT at the pattern peak minus the roll-off. The "
+            "ground station antenna tracks the satellite: no pointing loss. At startup the pattern "
+            f"is read from '{ANTENNA_PATTERN_FILE}' (next to the program), if present.",
+        ).pack(side=tk.LEFT, padx=(4, 0))
+        load_antenna_btn = ttk.Button(
+            antenna_row, text="Load Antenna Pattern...", command=self.load_antenna_pattern_file
+        )
+        load_antenna_btn.pack(side=tk.LEFT, padx=(12, 6))
+        _add_tooltip(
+            load_antenna_btn,
+            "Load the satellite antenna gain pattern from a .csv/.txt file: two columns, angle "
+            "from the antenna boresight (nadir) in degrees and gain in dBi.",
+        )
+        ttk.Button(antenna_row, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(side=tk.LEFT)
+        self.pattern_file_var = tk.StringVar(value="Pattern: built-in example (no file loaded)")
+        ttk.Label(passes_frame, textvariable=self.pattern_file_var, foreground=PALETTE["text_muted"]).pack(
+            anchor="w", padx=5, pady=(4, 0)
+        )
 
         contact_frame = ttk.Frame(passes_frame)
         contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
@@ -4409,6 +4798,10 @@ class LinkBudgetApp:
             entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
         self.update_link_budget_derived()
 
+        self.dl_losses_var = tk.StringVar(value="")
+        self.include_static_dl_var = tk.BooleanVar(value=True)
+        _static_losses_frame(downlink_tab, "Downlink", self.include_static_dl_var, self.dl_losses_var)
+
         downlink_btn_frame = ttk.LabelFrame(
             downlink_tab, text="Downlink Actions", padding=10
         )
@@ -4425,18 +4818,6 @@ class LinkBudgetApp:
             "Re-computes only the downlink link budget (EIRP, G/T, attenuations, bit rate, ...) for "
             "the passes already found in the Orbit & Passes tab, without re-running the orbit "
             "propagation.",
-        )
-        load_antenna_btn = ttk.Button(
-            downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file
-        )
-        load_antenna_btn.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            load_antenna_btn,
-            "Load a custom ground station antenna gain-vs-angle pattern (angle, gain columns) from "
-            "a .csv/.txt file, used to compute pointing loss.",
-        )
-        ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(
-            side=tk.LEFT, padx=5
         )
 
         downlink_results_container = ttk.Frame(downlink_tab)
@@ -4551,6 +4932,10 @@ class LinkBudgetApp:
         ]:
             entry.bind("<KeyRelease>", lambda event, edited=entry: self.on_panel_entry_edited(edited))
 
+        self.ul_losses_var = tk.StringVar(value="")
+        self.include_static_ul_var = tk.BooleanVar(value=True)
+        _static_losses_frame(uplink_tab, "Uplink", self.include_static_ul_var, self.ul_losses_var)
+
         uplink_actions_frame = ttk.LabelFrame(
             uplink_tab, text="Uplink Actions", padding=10
         )
@@ -4591,6 +4976,10 @@ class LinkBudgetApp:
             self.root.iconphoto(True, icon_image)
 
         self._load_startup_defaults()
+        # Show the losses the pass analysis takes from the static tabs, kept
+        # up to date whenever a tab is opened.
+        self._pass_loss_settings()
+        self.main_tabs.bind("<<NotebookTabChanged>>", lambda _e: self._pass_loss_settings(), add="+")
 
 
 def setup_gui():

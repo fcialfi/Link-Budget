@@ -1004,3 +1004,86 @@ def test_ccsds_tm_overheads_packet_error_control():
         5, ocf=True, packet_length_bytes=1000, packet_secondary_header_bytes=7, packet_error_control_bytes=2
     )
     assert framing["user_data_bytes"] == pytest.approx(1105 * (1000 - 6 - 7 - 2) / 1000)
+
+
+def test_link_budget_antenna_pattern_switch():
+    # 40° off nadir: the default pattern gives a loss of a few dB.
+    with_pattern = calculations.calculate_link_budget_parameters(**_base_kwargs(pre_off_boresight_angle=40.0))
+    without = calculations.calculate_link_budget_parameters(
+        **_base_kwargs(pre_off_boresight_angle=40.0, apply_antenna_pattern=False)
+    )
+    loss = calculations.antenna_pattern(40.0)
+    assert loss > 1.0
+    assert with_pattern["S/C Antenna Loss (dB)"] == pytest.approx(loss)
+    assert without["S/C Antenna Loss (dB)"] == 0.0
+    assert without["Rx Power (dBW)"] - with_pattern["Rx Power (dBW)"] == pytest.approx(loss)
+
+
+def test_link_budget_static_losses_and_frame_rate_reference():
+    base = calculations.calculate_link_budget_parameters(**_base_kwargs())
+    params = calculations.calculate_link_budget_parameters(
+        **_base_kwargs(link_losses_db=2.5, modulation_degradation_db=0.5, formatting_overhead=1.02)
+    )
+    assert params["Link Losses (dB)"] == pytest.approx(2.5)
+    assert base["Rx Power (dBW)"] - params["Rx Power (dBW)"] == pytest.approx(2.5)
+    assert base["C/(No+Io) (dBHz)"] - params["C/(No+Io) (dBHz)"] == pytest.approx(3.0)
+    # Eb/No referred to coded rate × formatting / overhead.
+    expected = params["C/(No+Io) (dBHz)"] - 10 * np.log10(1e6 / 1.2 * 1.02)
+    assert params["Eb/No (dB)"] == pytest.approx(expected)
+
+
+def test_link_budget_uplink_static_losses():
+    kwargs = _base_kwargs(uplink_freq=2.0 * u.GHz, eirp_gs=30.0, gt_sat=0.5, atm_att_ul=0.4)
+    base = calculations.calculate_link_budget_parameters(**kwargs)
+    params = calculations.calculate_link_budget_parameters(
+        **kwargs, ul_link_losses_db=1.5, ul_modulation_degradation_db=0.2
+    )
+    assert params["UL Link Losses (dB)"] == pytest.approx(1.5)
+    assert base["UL C/No (dBHz)"] - params["UL C/No (dBHz)"] == pytest.approx(1.7)
+
+
+def test_static_link_losses_matches_fixed_budget_terms():
+    losses = calculations.static_link_losses(
+        1.707,
+        3.0,
+        ionospheric_s4_ref=0.3,
+        ionospheric_s4_ref_freq_mhz=calculations.GPS_L1_MHZ,
+        tx_axial_ratio_db=3.0,
+        rx_axial_ratio_db=1.0,
+        multipath_loss_db=0.2,
+        rx_depointing_deg=0.1,
+    )
+    fade = calculations.ionospheric_scintillation_fade_db(0.3, 1707.0, calculations.GPS_L1_MHZ)["fade_db"]
+    assert losses["ionospheric_loss_db"] == pytest.approx(fade)
+    assert losses["polarisation_loss_db"] == pytest.approx(
+        calculations.polarisation_mismatch_loss_db(3.0, 1.0)["co_polar"]
+    )
+    beamwidth = calculations.antenna_beamwidth_3db_deg(1.707, 3.0)
+    assert losses["rx_pointing_loss_db"] == pytest.approx(calculations.antenna_pointing_loss_db(0.1, beamwidth))
+    assert losses["total_db"] == pytest.approx(
+        losses["ionospheric_loss_db"] + losses["polarisation_loss_db"] + 0.2 + losses["rx_pointing_loss_db"]
+    )
+
+
+def test_off_nadir_angle_geometry():
+    # Overhead pass: the station is at nadir.
+    assert calculations.off_nadir_angle_deg(90.0, 628.0) == pytest.approx(0.0, abs=1e-6)
+    # Low elevation from 628 km: about 65°, consistent with the slant range.
+    angle = calculations.off_nadir_angle_deg(3.0, 628.0)
+    r = calculations.EARTH_RADIUS_KM
+    slant = calculations.slant_range_from_elevation(3.0, 628.0)
+    # Law of sines in the Earth centre / station / satellite triangle.
+    assert np.sin(np.radians(angle)) / r == pytest.approx(np.sin(np.radians(93.0)) / (r + 628.0))
+    assert 60.0 < angle < 70.0 and slant > 0
+
+
+def test_link_budget_eirp_from_tx_chain_and_pattern_gain():
+    params = calculations.calculate_link_budget_parameters(
+        **_base_kwargs(pre_off_boresight_angle=40.0, tx_chain_dbw=4.51)
+    )
+    gain = calculations.satellite_antenna_gain_dbi(40.0)
+    assert params["S/C Antenna Gain (dBi)"] == pytest.approx(gain)
+    assert params["EIRP (dBW)"] == pytest.approx(4.51 + gain)
+    # Without the Tx chain, EIRP SAT is taken at the pattern peak.
+    peak = calculations.calculate_link_budget_parameters(**_base_kwargs(pre_off_boresight_angle=40.0))
+    assert peak["EIRP (dBW)"] == pytest.approx(20.0 - calculations.antenna_pattern(40.0))
