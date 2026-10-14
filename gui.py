@@ -22,6 +22,7 @@ PALETTE = {
     "header_bg": "#0f2440",
     "header_fg": "#f5f8ff",
     "header_fg_muted": "#a9b8d1",
+    "header_hover": "#1b3558",
     "accent": "#2f6fed",
     "accent_dark": "#2354bd",
     "accent_light": "#e8f0fe",
@@ -589,6 +590,9 @@ def _stop_for_invalid_license(status) -> None:
     raise SystemExit(1)
 
 
+NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
+
+
 class LinkBudgetApp:
     """Tkinter application for the satellite link budget tool.
 
@@ -619,9 +623,13 @@ class LinkBudgetApp:
         self.uplink_table_frame: ttk.Frame | None = None
         self.uplink_recalc_button: ttk.Button | None = None
         self._mousewheel_stack: list = []
-        # Inputs of the fixed-elevation popups, per parameters.json section,
-        # kept across popup openings and filled from parameters.json.
+        # Inputs of the static (fixed-elevation) link budget tabs, per
+        # parameters.json section, as last saved, calculated or loaded.
         self.static_lb_values: dict[str, dict] = {}
+        # parameters.json section -> function refilling that static link budget tab.
+        self._static_lb_appliers: dict[str, Callable[[dict], None]] = {}
+        # str(tab frame) -> function returning the canvas the mouse wheel scrolls.
+        self._wheel_targets: dict[str, Callable[[], tk.Canvas | None]] = {}
         self.current_param_file: str | None = None
         # Packaged executable only (see licensing.py): stop here with an
         # explanation if the licence is missing, invalid or expired.
@@ -691,8 +699,8 @@ class LinkBudgetApp:
         ``frequency_ghz``. See the README for the full schema and example.
         Missing keys are ignored so the user can provide only the fields
         they need. The optional ``fixed_elevation_downlink`` /
-        ``fixed_elevation_uplink`` sections hold the inputs of the
-        fixed-elevation popups and are used the next time one is opened.
+        ``fixed_elevation_uplink`` sections hold the inputs of the static
+        (fixed-elevation) link budget tabs, which are refilled from them.
         Raises on any parsing problem, mirroring :meth:`_apply_tle_file`.
         """
 
@@ -704,11 +712,15 @@ class LinkBudgetApp:
         for key, entry in field_map.items():
             if key in payload and entry is not None:
                 entry.delete(0, tk.END)
-                entry.insert(0, str(payload[key]))
+                # null leaves the field empty (e.g. C/Io: no interferer).
+                if payload[key] is not None:
+                    entry.insert(0, str(payload[key]))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
             if isinstance(payload.get(section), dict):
                 self.static_lb_values[section] = payload[section]
+                if section in self._static_lb_appliers:
+                    self._static_lb_appliers[section](payload[section])
         self.current_param_file = os.path.abspath(file_path)
 
         if self.param_file_var is not None:
@@ -961,6 +973,7 @@ class LinkBudgetApp:
             self.clear_plot_and_table()
             self.clear_uplink_table()
             self.contact_listbox.delete(0, tk.END)
+            self.selected_pass_var.set(NO_PASS_SELECTED)
 
     def set_uplink_budget_stale(self):
         """Mark the uplink-only link budget as stale."""
@@ -1170,6 +1183,7 @@ class LinkBudgetApp:
             self.on_contact_select(None)
         else:
             self.clear_plot_and_table()
+            self.selected_pass_var.set("no pass above the minimum elevation on this date")
 
         self.analysis_needs_refresh = False
         self.start_refresh_button.config(style="TButton")
@@ -1381,10 +1395,12 @@ class LinkBudgetApp:
         if not selection:
             self.clear_plot_and_table()
             self.clear_uplink_table()
+            self.selected_pass_var.set(NO_PASS_SELECTED)
             return
 
         idx = selection[0]
         start, end, _ = self.contact_windows[idx]
+        self.selected_pass_var.set(self.contact_listbox.get(idx))
         mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
         df_pass = self.df_all[mask].copy()
         self.current_table_df = df_pass
@@ -1553,9 +1569,20 @@ class LinkBudgetApp:
     # ------------------------------------------------------------------
 
     def show_fixed_downlink_link_budget(self):
-        """Open the fixed-elevation preliminary downlink link budget popup."""
+        """Show the static (fixed-elevation) downlink link budget tab."""
 
-        self._open_fixed_link_budget_window(
+        self.main_tabs.select(self.static_dl_tab)
+
+    def show_fixed_uplink_link_budget(self):
+        """Show the static (fixed-elevation) uplink link budget tab."""
+
+        self.main_tabs.select(self.static_ul_tab)
+
+    def _build_static_downlink_view(self, parent):
+        """The fixed-elevation preliminary downlink link budget, in ``parent``."""
+
+        self._build_fixed_link_budget_view(
+            parent,
             "Fixed-Elevation Downlink Link Budget",
             freq_entry=self.freq_entry,
             freq_label="Frequency [GHz]",
@@ -1576,10 +1603,11 @@ class LinkBudgetApp:
             rx_is_ground_station=True,
         )
 
-    def show_fixed_uplink_link_budget(self):
-        """Open the fixed-elevation preliminary uplink link budget popup."""
+    def _build_static_uplink_view(self, parent):
+        """The fixed-elevation preliminary uplink link budget, in ``parent``."""
 
-        self._open_fixed_link_budget_window(
+        self._build_fixed_link_budget_view(
+            parent,
             "Fixed-Elevation Uplink Link Budget",
             freq_entry=self.uplink_freq_entry,
             freq_label="Uplink Frequency [GHz]",
@@ -1600,8 +1628,9 @@ class LinkBudgetApp:
             rx_is_ground_station=False,
         )
 
-    def _open_fixed_link_budget_window(
+    def _build_fixed_link_budget_view(
         self,
+        parent: tk.Widget,
         title: str,
         freq_entry: ttk.Entry,
         freq_label: str,
@@ -1621,55 +1650,39 @@ class LinkBudgetApp:
         spectral_eff_entry: ttk.Entry,
         rx_is_ground_station: bool = True,
     ):
-        """Open a popup computing a TLE-independent, fixed-elevation link budget.
+        """Build, in ``parent`` (a main window tab), a TLE-independent fixed-elevation link budget.
 
         This is the standard preliminary "worst case" check: pick a single
         (typically minimum) elevation angle and satellite altitude, derive
         the slant range purely from that geometry, and verify a link margin
         exists before running the full TLE-based pass analysis. Frequency,
-        G/T, bit rate and the other panel values are reused from the
-        parameters panel so they don't need to be retyped.
+        G/T, bit rate and the other panel values are shared with the pass
+        analysis tab of the same direction so they don't need to be retyped.
 
-        The popup's own inputs are grouped as in a formal static link budget
+        The view's own inputs are grouped as in a formal static link budget
         sheet (geometry, data channel and requirements, transmitter,
         propagation and PFD limit, receiver) plus favourable/adverse
         tolerances for the statistical margins. Each section, and each part
         of the results (summary, link budget, PFD check, link budget with
         tolerances), is a page picked from a sidebar; the action buttons and
-        the status stay visible above the pages. They are remembered for the session, can be
-        saved into / loaded from a parameters JSON file (as the
+        the status stay visible above the pages. The inputs can be saved
+        into / loaded from a parameters JSON file (as the
         ``fixed_elevation_downlink`` / ``fixed_elevation_uplink`` section),
-        and are auto-loaded with ``parameters.json`` at startup.
+        and are filled from ``parameters.json`` at startup and whenever a
+        parameters file is imported.
         """
 
         section = calculations.FIXED_LINK_BUDGET_SECTIONS["downlink" if rx_is_ground_station else "uplink"]
         tx_side, rx_side = ("S/C", "GS") if rx_is_ground_station else ("GS", "S/C")
 
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.configure(bg=PALETTE["bg"])
-        win.geometry("1120x860")
-        win.minsize(860, 520)
+        # The view lives in a tab of the main window for the whole session.
+        win = parent
 
         recap_font_family = _pick_font(["Segoe UI", "Helvetica Neue", "Helvetica", "Arial"])
         direction_text = "Downlink (S/C → GS)" if rx_is_ground_station else "Uplink (GS → S/C)"
 
-        # Layout: a navy header, an action bar (buttons and status), then a
-        # sidebar listing the input and result pages next to the page shown.
-        header = ttk.Frame(win, style="Header.TFrame", padding=(20, 12))
-        header.pack(fill=tk.X)
-        _header_logo(header, recap_font_family).pack(side=tk.LEFT)
-        title_box = ttk.Frame(header, style="Header.TFrame")
-        title_box.pack(side=tk.LEFT, padx=(16, 0))
-        ttk.Label(title_box, text=title, style="Header.TLabel").pack(anchor="w")
-        ttk.Label(
-            title_box,
-            text=(
-                f"{direction_text}  ·  preliminary worst-case check at a fixed elevation, independent of any TLE"
-            ),
-            style="HeaderSub.TLabel",
-        ).pack(anchor="w", pady=(2, 0))
-
+        # Layout: an action bar (buttons and status), then a sidebar listing
+        # the input and result pages next to the page shown.
         action_bar = ttk.Frame(win, style="Toolbar.TFrame", padding=(16, 10))
         action_bar.pack(fill=tk.X)
         button_row = ttk.Frame(action_bar, style="Toolbar.TFrame")
@@ -1781,16 +1794,15 @@ class LinkBudgetApp:
                 widget = widget.master
             return None
 
-        self._bind_scroll_wheel(
-            pages_book,
-            owner=win,
-            target=lambda: pages[current_page["key"]]["canvas"] if current_page["key"] else None,
+        # Mouse-wheel scrolling goes to the page shown while this tab is selected.
+        self._wheel_targets[str(win)] = (
+            lambda: pages[current_page["key"]]["canvas"] if current_page["key"] else None
         )
 
         # Sections in the order of a static link budget sheet. Each item is
         # one of:
         #   ("field", key, label, default text, placeholder, tooltip) -- an
-        #       input of this window. Fields with a real default ("0", the
+        #       input of this view. Fields with a real default ("0", the
         #       minimum elevation, ...) start filled in; fields whose empty
         #       value means "not used" (or "derive it automatically") show a
         #       greyed-out example that is never treated as real input.
@@ -2107,8 +2119,8 @@ class LinkBudgetApp:
         # Read-only boxes with values derived from the bit rate and overheads.
         computed_boxes: dict[str, tuple[tk.StringVar, ttk.Label]] = {}
         eirp_mode_var = tk.StringVar(value="eirp")
-        # The station of this window is its own (saved with its inputs), so
-        # changing it here never touches the main window's pass analysis.
+        # The station of this view is its own (saved with its inputs), so
+        # changing it here never touches the pass analysis.
         station_var = tk.StringVar(value=self.gs_var.get())
         iono_mode_var = tk.StringVar(value="manual")
         framing_mode_var = tk.StringVar(value="manual")
@@ -2118,11 +2130,12 @@ class LinkBudgetApp:
         framing_used_var = tk.StringVar(value="")
         ccsds_option_buttons: list = []
         iono_rows: dict[str, tuple[list, tk.StringVar]] = {}
-        # Tropospheric scintillation is also this window's own choice: the
+        # Tropospheric scintillation is also this view's own choice: the
         # ITU-R P.618 model does not apply to every link (see the results notes).
         scint_var = tk.BooleanVar(value=self.scint_var.get())
         eirp_used_var = tk.StringVar(value="")
-        shared_note = "Shared with the main window."
+        passes_tab = "Downlink" if rx_is_ground_station else "Uplink"
+        shared_note = "Shared with the pass analysis tabs."
         _nav_caption("INPUTS")
         for group_index, (group_title, items) in enumerate(field_groups):
             page_key, nav_text, page_description = input_pages[group_index]
@@ -2165,7 +2178,7 @@ class LinkBudgetApp:
                             "header, optional OCF 4 bytes and FECF 2 bytes, data field) and the "
                             "channel coding (32-bit ASM per RS(255,223) codeblock of 255·I bytes, "
                             "convolutional rate 1/2) give the formatting overhead and the total "
-                            "overhead, filled in below (the overhead also in the main window), and "
+                            f"overhead, filled in below (the overhead also in the {passes_tab} tab), and "
                             "the transfer frame (Eb/No reference) and information bit rates.",
                         ).pack(side=tk.LEFT)
                     elif kind == "ccsds_options":
@@ -2307,7 +2320,7 @@ class LinkBudgetApp:
                         "column. The P.618 method is given for elevations of at least 5° and about "
                         "4–20 GHz: below that (e.g. L/S band at low elevation) it is an "
                         "extrapolation, and ionospheric scintillation dominates instead. Saved with "
-                        "the inputs of this window, independent of the main window's switch.",
+                        "the inputs of this tab, independent of the switch of the pass analysis.",
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
@@ -2334,8 +2347,8 @@ class LinkBudgetApp:
                         gs_cell,
                         "Its location (latitude, longitude, altitude) sets the ITU-R atmospheric "
                         "attenuation; the geometry only uses elevation and altitude. Saved with "
-                        "the inputs of this window and independent of the station selected in the "
-                        "main window (used as the default).",
+                        "the inputs of this tab and independent of the station selected in the "
+                        "Orbit & Passes tab (used as the default).",
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
@@ -2522,7 +2535,7 @@ class LinkBudgetApp:
                 f"  Coding = (RS codeblock {framing['codeblock_bytes']} B + ASM 4 B) / frame {frame} B × 2\n"
                 f"  RS codeblock = frame {frame} B + {framing['codeblock_bytes'] - frame} B check symbols "
                 f"(32 × I); CADU = {framing['codeblock_bytes'] + 4} B; × 2 = convolutional rate 1/2\n"
-                "Computed from the CCSDS framing; also used by the main window."
+                f"Computed from the CCSDS framing; also used by the {passes_tab} tab."
             )
             bitrate_text = (
                 f"Coded (channel) bit rate of the transmitter: {coded_kbps:.1f} kbit/s.\n"
@@ -2761,7 +2774,7 @@ class LinkBudgetApp:
             return str(value).strip()
 
         def _collect_values() -> dict:
-            """Current popup inputs as a JSON-friendly dict (empty fields omitted)."""
+            """Current inputs as a JSON-friendly dict (empty fields omitted)."""
 
             values: dict = {}
             for key, entry in entries.items():
@@ -2799,7 +2812,7 @@ class LinkBudgetApp:
             return values
 
         def _apply_values(values: dict) -> None:
-            """Fill the popup from ``values``; anything missing goes back to its default."""
+            """Fill the inputs from ``values``; anything missing goes back to its default."""
 
             for key in field_widgets:
                 _set_field_enabled(key, True)  # disabled entries ignore edits
@@ -2859,7 +2872,7 @@ class LinkBudgetApp:
 
         _apply_values(self.static_lb_values.get(section, {}))
 
-        # Any edit of an input marks the results as out of date: the popup's
+        # Any edit of an input marks the results as out of date: the view's
         # own fields, the shared panel fields (also when edited in the main
         # window), the station, the EIRP source and the tolerances.
         for _label, entry_widget, _colour in field_widgets.values():
@@ -2875,19 +2888,16 @@ class LinkBudgetApp:
         ] + [
             self._linked_var(panel_entry) for _label, panel_entry in panel_specs
         ]
-        # The shared variables outlive this window: their traces are removed on close.
-        traces = [(var, var.trace_add("write", _mark_stale)) for var in watched_vars]
+        for var in watched_vars:
+            var.trace_add("write", _mark_stale)
 
-        def _on_close():
-            _remember_values()
-            for var, trace_id in traces:
-                try:
-                    var.trace_remove("write", trace_id)
-                except tk.TclError:
-                    pass
-            win.destroy()
+        # A parameters file loaded from the Orbit & Passes tab (or at
+        # startup) refills this view.
+        def _apply_loaded_values(values: dict) -> None:
+            _apply_values(values)
+            _mark_stale()
 
-        win.protocol("WM_DELETE_WINDOW", _on_close)
+        self._static_lb_appliers[section] = _apply_loaded_values
 
         _nav_caption("RESULTS")
         result_pages = {
@@ -2901,6 +2911,7 @@ class LinkBudgetApp:
         for key, nav_text in result_pages.items():
             _add_page(key, nav_text)
             _set_page_enabled(key, False)
+        _show_page("geometry")
 
         # Bottom of the sidebar: the key result of the last calculation, and
         # what the blue labels mean.
@@ -2923,7 +2934,10 @@ class LinkBudgetApp:
         verdict_card.pack(fill=tk.X)
         tk.Label(
             sidebar_footer,
-            text="Blue labels: fields shared with the main window (editing them here changes them there too).",
+            text=(
+                "Blue labels: fields shared with the pass analysis tabs (editing them here "
+                "changes them there too)."
+            ),
             bg=PALETTE["surface"], fg=PALETTE["accent"], font=(recap_font_family, 8),
             anchor="w", justify="left", wraplength=200,
         ).pack(fill=tk.X, pady=(10, 0))
@@ -3207,7 +3221,7 @@ class LinkBudgetApp:
                 "tolerances_ignored": bool(tolerances) and required_ebno is None,
                 "ccsds_framing": ccsds_framing,
             }
-            # Inputs actually used, in the same sections as this window (CSV and PDF).
+            # Inputs actually used, in the same sections as this view (CSV and PDF).
             input_groups = []
             for group_title, items in field_groups:
                 group_items = []
@@ -3421,15 +3435,15 @@ class LinkBudgetApp:
         load_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             load_button,
-            f"Load this window's inputs from the '{section}' section of a parameters JSON file, "
-            "and the parameters panel values shown in this window when the file has them.",
+            f"Load this tab's inputs from the '{section}' section of a parameters JSON file, "
+            "and the shared values (blue labels) when the file has them.",
         )
         save_button = ttk.Button(button_row, text="Save...", command=_save)
         save_button.pack(side=tk.LEFT, padx=(0, 6))
         _add_tooltip(
             save_button,
-            f"Save this window's inputs as the '{section}' section of a JSON file, together "
-            "with the parameters panel values shown in this window; the other keys already in "
+            f"Save this tab's inputs as the '{section}' section of a JSON file, together "
+            "with the shared values (blue labels); the other keys already in "
             "the file are kept. Saving into parameters.json makes them load automatically at "
             "startup.",
         )
@@ -3449,7 +3463,7 @@ class LinkBudgetApp:
     def _render_fixed_link_budget_results(self, pages, budget, link_availability_pct, extra_info=None):
         """Render the fixed-elevation results and return them as CSV export rows.
 
-        ``pages`` maps the result pages of the popup ("summary",
+        ``pages`` maps the result pages of the static view ("summary",
         "link_budget", optionally "pfd", "tolerance_results") to the frames
         to fill: the summary (overall verdict, key results checked against
         their requirements, notes and the static-budget info), the
@@ -3859,8 +3873,8 @@ class LinkBudgetApp:
     def on_panel_entry_edited(self, entry: ttk.Entry) -> None:
         """React to an edit of a parameters panel field, wherever it was typed.
 
-        Shared by the main window and the fixed-elevation popups (which edit
-        the same fields), so both refresh the derived baseband values and
+        Shared by the pass analysis tabs and the static link budget tabs
+        (which edit the same fields), so both refresh the derived baseband values and
         flag the uplink budget for recalculation in the same way.
         """
 
@@ -3985,6 +3999,34 @@ class LinkBudgetApp:
         )
 
         style.configure("TNotebook", background=PALETTE["bg"], borderwidth=0)
+        # Main window tabs: a navy tab bar continuing the header, with the
+        # selected tab opening onto the page below.
+        style.configure(
+            "Main.TNotebook",
+            background=PALETTE["header_bg"],
+            borderwidth=0,
+            tabmargins=(16, 4, 16, 0),
+            bordercolor=PALETTE["header_bg"],
+            lightcolor=PALETTE["header_bg"],
+            darkcolor=PALETTE["header_bg"],
+        )
+        style.configure(
+            "Main.TNotebook.Tab",
+            background=PALETTE["header_bg"],
+            foreground=PALETTE["header_fg_muted"],
+            padding=(20, 9),
+            font=bold_font,
+            borderwidth=0,
+            bordercolor=PALETTE["header_bg"],
+            lightcolor=PALETTE["header_bg"],
+        )
+        style.map(
+            "Main.TNotebook.Tab",
+            background=[("selected", PALETTE["bg"]), ("active", PALETTE["header_hover"])],
+            foreground=[("selected", PALETTE["accent_dark"]), ("active", PALETTE["header_fg"])],
+            lightcolor=[("selected", PALETTE["bg"])],
+            bordercolor=[("selected", PALETTE["bg"])],
+        )
         # Notebook without tabs, for windows that switch pages from a sidebar.
         style.layout("Pages.TNotebook.Tab", [])
         style.configure(
@@ -4091,46 +4133,49 @@ class LinkBudgetApp:
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
-        canvas_frame = ttk.Frame(self.root)
-        canvas_frame.grid(row=1, column=0, sticky="nsew")
-        canvas_frame.grid_rowconfigure(0, weight=1)
-        canvas_frame.grid_columnconfigure(0, weight=1)
+        # Main tabs: the orbit and station set-up, the TLE-based pass analyses
+        # and the static (fixed-elevation) link budgets.
+        self.main_tabs = ttk.Notebook(self.root, style="Main.TNotebook")
+        self.main_tabs.grid(row=1, column=0, sticky="nsew")
 
-        canvas = tk.Canvas(canvas_frame, bg=PALETTE["bg"], highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar_y = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
-        scrollbar_x = ttk.Scrollbar(canvas_frame, orient="horizontal", command=canvas.xview)
-        scrollbar_y.grid(row=0, column=1, sticky="ns")
-        scrollbar_x.grid(row=1, column=0, sticky="ew")
-        canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+        def _scroll_tab(text: str) -> ttk.Frame:
+            """Add a vertically scrollable tab; return the frame for its content."""
 
-        def _on_shift_mousewheel(event):
-            if sys.platform == "darwin":
-                canvas.xview_scroll(-1 * event.delta, "units")
-            else:
-                canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+            container, body, tab_canvas = self._make_scrollable_frame(self.main_tabs)
+            self.main_tabs.add(container, text=text)
+            self._wheel_targets[str(container)] = lambda: tab_canvas
+            content = ttk.Frame(body, padding=15)
+            content.pack(fill=tk.BOTH, expand=True)
+            return content
+
+        def _wheel_target():
+            selected = self.main_tabs.select()
+            target = self._wheel_targets.get(selected)
+            return target() if target else None
 
         # Base of the mouse-wheel stack: never popped, so any scrollable
         # popup's wheel binding reverts to this one when the popup closes.
-        self._bind_scroll_wheel(canvas)
-        if sys.platform == "darwin":
-            canvas.bind_all("<Shift-Mousewheel>", _on_shift_mousewheel)
-        else:
-            canvas.bind_all("<Shift-MouseWheel>", _on_shift_mousewheel)
+        self._bind_scroll_wheel(self.main_tabs, target=_wheel_target)
 
-        scrollable_frame = ttk.Frame(canvas)
-        canvas_window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=canvas.winfo_width())
+        # The pass selected in the Orbit & Passes tab, shown above the results
+        # of the Downlink and Uplink tabs.
+        self.selected_pass_var = tk.StringVar(value=NO_PASS_SELECTED)
 
-        def _on_canvas_configure(event):
-            canvas.itemconfig(canvas_window_id, width=event.width)
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _selected_pass_label(parent, padx=0):
+            row = ttk.Frame(parent)
+            row.pack(fill=tk.X, padx=padx, pady=(0, 8))
+            ttk.Label(row, text="Pass:", font=bold_font).pack(side=tk.LEFT)
+            ttk.Label(
+                row, textvariable=self.selected_pass_var, foreground=PALETTE["accent_dark"], font=bold_font
+            ).pack(side=tk.LEFT, padx=(6, 0))
+            ttk.Label(
+                row, text="(select it in the Orbit & Passes tab)", foreground=PALETTE["text_muted"]
+            ).pack(side=tk.LEFT, padx=(8, 0))
 
-        canvas.bind("<Configure>", _on_canvas_configure)
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-        main_frame = ttk.Frame(scrollable_frame, padding=15)
-        main_frame.pack(fill="both", expand=True)
-        main_frame.grid_columnconfigure(0, weight=1)
+        setup_tab = _scroll_tab("Orbit & Passes")
+        downlink_tab = _scroll_tab("Downlink")
+        uplink_tab = _scroll_tab("Uplink")
+        main_frame = setup_tab
 
         # --- TLE Section ---
         tle_frame = ttk.LabelFrame(main_frame, text="TLE Parameters", padding=10)
@@ -4216,21 +4261,63 @@ class LinkBudgetApp:
             row=4, column=0, sticky="w", padx=5, pady=(4, 0)
         )
 
-        param_tabs = ttk.Notebook(main_frame)
-        param_tabs.pack(fill=tk.BOTH, pady=5, expand=True)
+        # --- Pass analysis (shared by the Downlink and Uplink tabs) ---
+        passes_frame = ttk.LabelFrame(main_frame, text="Pass Analysis", padding=10)
+        passes_frame.pack(fill=tk.X, pady=5)
+        passes_row = ttk.Frame(passes_frame)
+        passes_row.pack(fill=tk.X, padx=5)
+        self.start_refresh_button = ttk.Button(
+            passes_row,
+            text="Start/Refresh Analysis",
+            command=self.run_analysis,
+            style="Red.TButton",
+        )
+        self.start_refresh_button.pack(side=tk.LEFT)
+        _add_tooltip(
+            self.start_refresh_button,
+            "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
+            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
+        )
+        ttk.Label(
+            passes_row,
+            text=(
+                "Finds the passes over the ground station on the chosen date, with the downlink and "
+                "uplink link budgets along each pass. Select a pass below: the Downlink and Uplink "
+                "tabs show its results."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=760,
+            justify="left",
+        ).pack(side=tk.LEFT, padx=(14, 0))
 
-        downlink_tab = ttk.Frame(param_tabs)
-        param_tabs.add(downlink_tab, text="Downlink")
+        contact_frame = ttk.Frame(passes_frame)
+        contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
+        ttk.Label(contact_frame, text="Contact Windows (UTC Time)", font=bold_font).pack(anchor="w", pady=(0, 4))
+        self.contact_listbox = tk.Listbox(
+            contact_frame,
+            height=6,
+            exportselection=False,
+            bg=PALETTE["surface"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["accent"],
+            selectforeground="white",
+            activestyle="none",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["accent"],
+            font=default_font,
+        )
+        self.contact_listbox.pack(fill=tk.X, expand=True)
+        self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
 
-        uplink_tab = ttk.Frame(param_tabs)
-        param_tabs.add(uplink_tab, text="Uplink")
 
         param_container = ttk.Frame(downlink_tab)
         param_container.pack(fill=tk.X, expand=False, padx=5, pady=5)
         param_container.grid_columnconfigure(0, weight=1)
         param_container.grid_columnconfigure(1, weight=1)
         param_container.grid_columnconfigure(2, weight=1)
-        param_container.grid_columnconfigure(3, weight=1)
         param_container.grid_rowconfigure(0, weight=1)
         param_container.grid_rowconfigure(1, weight=1)
 
@@ -4246,6 +4333,11 @@ class LinkBudgetApp:
         ttk.Label(sat_frame, text="C/Io [dBHz]").grid(row=2, column=0, sticky="w", padx=5, pady=2)
         self.CIo_entry = ttk.Entry(sat_frame, width=15)
         self.CIo_entry.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        _add_tooltip(
+            self.CIo_entry,
+            "Carrier to interference density ratio C/Io, combined with C/No into C/(No+Io). "
+            "Leave empty when there is no interferer: the link budget then uses C/No alone.",
+        )
         sat_frame.grid_columnconfigure(1, weight=1)
 
         # Ground Station Parameters frame
@@ -4261,7 +4353,7 @@ class LinkBudgetApp:
 
         # Atmospheric Attenuations frame
         atm_frame = ttk.LabelFrame(param_container, text="Atmospheric Attenuations", padding=10)
-        atm_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 10), pady=5)
+        atm_frame.grid(row=0, column=2, sticky="nsew", pady=5)
         ttk.Label(atm_frame, text="Link Availability [%]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.LA_entry = ttk.Entry(atm_frame, width=15)
         self.LA_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
@@ -4291,7 +4383,7 @@ class LinkBudgetApp:
 
         # Baseband Parameters frame
         baseband_frame = ttk.LabelFrame(param_container, text="Baseband Parameters", padding=10)
-        baseband_frame.grid(row=0, column=3, sticky="nsew", pady=5)
+        baseband_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(0, 5))
         ttk.Label(baseband_frame, text="Coded Bit Rate [Mbps]").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.bitrate_entry = ttk.Entry(baseband_frame, width=15)
         self.bitrate_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
@@ -4321,18 +4413,6 @@ class LinkBudgetApp:
             downlink_tab, text="Downlink Actions", padding=10
         )
         downlink_btn_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
-        self.start_refresh_button = ttk.Button(
-            downlink_btn_frame,
-            text="Start/Refresh Analysis",
-            command=self.run_analysis,
-            style="Red.TButton",
-        )
-        self.start_refresh_button.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            self.start_refresh_button,
-            "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
-            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
-        )
         self.recalc_button = ttk.Button(
             downlink_btn_frame,
             text="Calculate DL Link Budget",
@@ -4343,7 +4423,8 @@ class LinkBudgetApp:
         _add_tooltip(
             self.recalc_button,
             "Re-computes only the downlink link budget (EIRP, G/T, attenuations, bit rate, ...) for "
-            "the contact windows already found above, without re-running the orbit propagation.",
+            "the passes already found in the Orbit & Passes tab, without re-running the orbit "
+            "propagation.",
         )
         load_antenna_btn = ttk.Button(
             downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file
@@ -4357,54 +4438,22 @@ class LinkBudgetApp:
         ttk.Button(downlink_btn_frame, text="Show Antenna Gain", command=self.show_antenna_pattern).pack(
             side=tk.LEFT, padx=5
         )
-        fixed_dl_btn = ttk.Button(
-            downlink_btn_frame,
-            text="Fixed-Elevation Link Budget...",
-            command=self.show_fixed_downlink_link_budget,
-        )
-        fixed_dl_btn.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            fixed_dl_btn,
-            "Preliminary worst-case downlink budget at a single fixed elevation angle, with "
-            "slant range from geometry (elevation + satellite altitude) instead of a TLE. "
-            "Shows Clear Sky and Rain Faded conditions side by side.",
-        )
 
         downlink_results_container = ttk.Frame(downlink_tab)
         downlink_results_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
 
-        btn_frame = ttk.Frame(downlink_results_container)
-        btn_frame.pack(fill=tk.X, pady=(0, 10))
-        ttk.Button(btn_frame, text="Export Table CSV", command=self.export_table_csv).pack(
-            side=tk.LEFT, padx=5
+        ttk.Button(downlink_btn_frame, text="Export Table CSV", command=self.export_table_csv).pack(
+            side=tk.RIGHT, padx=5
         )
-        ttk.Button(btn_frame, text="Exit", command=self.exit_app).pack(side=tk.RIGHT, padx=5)
 
-        contact_frame = ttk.LabelFrame(
-            downlink_results_container, text="Contact Windows (UTC Time)", padding=10
-        )
-        contact_frame.pack(fill=tk.X, pady=(0, 5))
-        self.contact_listbox = tk.Listbox(
-            contact_frame,
-            height=6,
-            exportselection=False,
-            bg=PALETTE["surface"],
-            fg=PALETTE["text"],
-            selectbackground=PALETTE["accent"],
-            selectforeground="white",
-            activestyle="none",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-            highlightcolor=PALETTE["accent"],
-            font=default_font,
-        )
-        self.contact_listbox.pack(fill=tk.X, expand=True)
-        self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
+        _selected_pass_label(downlink_results_container)
 
-        self.plot_frame = ttk.Frame(downlink_results_container)
-        self.plot_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        # Fixed height: the plots are often drawn while this tab is hidden
+        # (a pass selected in the Orbit & Passes tab), and a canvas sized
+        # by its content would collapse there.
+        self.plot_frame = ttk.Frame(downlink_results_container, height=400)
+        self.plot_frame.pack(fill=tk.X, pady=(0, 5))
+        self.plot_frame.pack_propagate(False)
 
         downlink_results_frame = ttk.LabelFrame(
             downlink_results_container, text="Downlink Results", padding=10
@@ -4512,23 +4561,22 @@ class LinkBudgetApp:
             command=self.calculate_ul_link_budget,
         )
         self.uplink_recalc_button.pack(side=tk.LEFT, padx=5)
-        fixed_ul_btn = ttk.Button(
-            uplink_actions_frame,
-            text="Fixed-Elevation Link Budget...",
-            command=self.show_fixed_uplink_link_budget,
-        )
-        fixed_ul_btn.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            fixed_ul_btn,
-            "Preliminary worst-case uplink budget at a single fixed elevation angle, with "
-            "slant range from geometry (elevation + satellite altitude) instead of a TLE. "
-            "Shows Clear Sky and Rain Faded conditions side by side.",
-        )
+
+        _selected_pass_label(uplink_tab, padx=5)
 
         uplink_results_frame = ttk.LabelFrame(uplink_tab, text="Uplink Results", padding=10)
         uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
         self.uplink_table_frame = ttk.Frame(uplink_results_frame)
         self.uplink_table_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Static (fixed-elevation) link budgets, after the panels whose
+        # fields they share.
+        self.static_dl_tab = ttk.Frame(self.main_tabs)
+        self.main_tabs.add(self.static_dl_tab, text="Static LB · Downlink")
+        self._build_static_downlink_view(self.static_dl_tab)
+        self.static_ul_tab = ttk.Frame(self.main_tabs)
+        self.main_tabs.add(self.static_ul_tab, text="Static LB · Uplink")
+        self._build_static_uplink_view(self.static_ul_tab)
 
         # Window icon, also inherited by every popup window.
         icon_path = _asset_path(ICON_FILE)
