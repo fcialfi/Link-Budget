@@ -11,6 +11,7 @@ Run it again whenever the GUI layout changes, then rebuild the manual.
 """
 
 import os
+import time
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -108,6 +109,18 @@ def main() -> None:
     app.main_tabs.select(ul)
     static_page(ul, "Receiver (S/C)")
     shot("static_ul_rx")
+
+    # Statistics over a few days.
+    app.main_tabs.select(tabs[-1])
+    app.gs_var.set("Svalbard")
+    app.stats_days_var.set("7")
+    app.compute_statistics()
+    while "disabled" in app.stats_button.state():
+        root.update()
+        time.sleep(0.1)
+    root.update()
+    scroll(0); shot("statistics")
+    scroll(1.0); shot("statistics_tables")
 
     # A mission not launched yet: custom orbit and synthetic TLE.
     app.select_satellite("EPS-Sterna")

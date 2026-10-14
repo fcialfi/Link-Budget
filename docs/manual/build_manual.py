@@ -462,6 +462,32 @@ def content():
         "<b>Load Antenna Pattern…</b> loads another file for the session and <b>Show Antenna Gain</b> plots it. The line below "
         "the buttons shows which pattern is in use."))
 
+    story += H1("Statistics tab")
+    story += FIG("statistics", "Statistics over 7 days: summary and data volume per day.")
+    story.append(P(
+        "The <b>Statistics</b> tab adds up the pass analysis over several days, for the satellite, ground "
+        "station, minimum elevation and horizon mask of the Orbit &amp; Passes tab and the link budget of the "
+        "Downlink tab (same models: antenna pattern, atmospheric attenuation and G/T at each elevation, losses "
+        "of the Static LB · Downlink tab). Enter the <b>Start Date</b> and the number of <b>Days</b> (about a "
+        "second per day) and press <b>Compute Statistics</b>."))
+    story += BUL([
+        "<b>Usable minutes</b>: samples in contact whose margin, Eb/No minus the <b>Required Eb/No</b>, is at "
+        "least the <b>Required Margin</b>; when these fields are empty the values of the Static LB · Downlink "
+        "tab are used.",
+        "<b>Data volume</b>: the information bit rate (coded bit rate / overhead) over the usable minutes, in "
+        "MB of 10^6 bytes.",
+        "<b>Gaps</b>: time from the end of a contact to the start of the next one; the longest gap matters "
+        "for the data latency. A gap counts for the day the next contact starts.",
+        "<b>Data Generated On Board</b> (optional, MB/day): the backlog left on board at the end of each day, "
+        "and whether the downlink keeps up with the production.",
+        "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
+    ])
+    story += FIG("statistics_tables", "Per-day and per-pass tables.")
+    story.append(P(
+        "The tables give each day (contacts, contact and usable minutes, volume, longest gap, backlog) and each "
+        "pass (times, maximum elevation, minutes, volume, minimum margin; a pass with no usable minute is "
+        "shown in orange). <b>Export CSV…</b> writes the summary and both tables."))
+
     # 5 -------------------------------------------------------------------
     story += H1("Downlink tab")
     story += FIG("downlink_params", "Downlink tab: parameters and link losses.")

@@ -40,6 +40,7 @@ a = Analysis(
         'licensing',
         'version',
         'tle_source',
+        'pass_statistics',
         'missions',
         'reportlab',
         'cryptography.exceptions',
