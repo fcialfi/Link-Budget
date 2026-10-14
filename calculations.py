@@ -13,7 +13,13 @@ import astropy.units as u
 import json
 import os
 from scipy.interpolate import interp1d
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:  # annotations only
+    from skyfield.positionlib import ICRF as ToposAt
+    from skyfield.sgp4lib import EarthSatellite as Satellite
+    from skyfield.timelib import Time
+    from skyfield.toposlib import GeographicPosition as GroundStation
 
 # Minimum elevation angle (degrees) for visibility calculations
 MIN_ELEVATION_DEG = 5.0
@@ -206,8 +212,6 @@ def load_antenna_pattern(file_path: str) -> None:
     is updated accordingly.
     """
 
-    global ANTENNA_PATTERN_ANGLES, ANTENNA_PATTERN_GAINS, PATTERN_INTERP, MAX_ANTENNA_GAIN
-
     rows = []
     with open(file_path, "r", encoding="utf-8-sig") as f:
         for line in f:
@@ -306,7 +310,7 @@ def antenna_pattern(angle_deg: float | np.ndarray) -> float | np.ndarray:
 
 
 def calculate_doppler_shift(
-    topocentric: "ToposAt",  # type: ignore
+    topocentric: "ToposAt",
     freq: u.Quantity,
 ) -> float:
     """Compute Doppler shift in kHz for the given topocentric position.
@@ -1453,9 +1457,9 @@ def calculate_fixed_elevation_link_budget(
 
 
 def prepare_topocentric_data(
-    sat: "Satellite",  # type: ignore
-    gs: "GroundStation",  # type: ignore
-    times: "Time",  # type: ignore
+    sat: "Satellite",
+    gs: "GroundStation",
+    times: "Time",
     freq: u.Quantity,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Pre-compute geometry values for a sequence of times.
@@ -1502,9 +1506,9 @@ def prepare_topocentric_data(
 
 
 def calculate_link_budget_parameters(
-    t_sky: "Time",  # type: ignore
-    sat: "Satellite",  # type: ignore
-    gs: "GroundStation",  # type: ignore
+    t_sky: "Time",
+    sat: "Satellite",
+    gs: "GroundStation",
     freq: u.Quantity,
     p: float,
     d_gs: float,
