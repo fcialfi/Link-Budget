@@ -1221,6 +1221,14 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        flows = payload.get("downlink_data_kbps")
+        if isinstance(flows, dict) and hasattr(self, "stats_instrument_var"):
+            for key, var in (
+                ("instruments", self.stats_instrument_var),
+                ("hktm", self.stats_hktm_var),
+                ("other", self.stats_other_var),
+            ):
+                var.set("" if flows.get(key) is None else f"{flows[key]:g}")
         if "norad_id" in payload:
             self.norad_var.set("" if payload["norad_id"] is None else str(payload["norad_id"]))
 
@@ -1316,6 +1324,7 @@ class LinkBudgetApp:
             return
 
         self.current_gs_file = os.path.abspath(file_path)
+        self._refresh_statistics_stations()
         if self.gs_file_var is not None:
             self.gs_file_var.set(f"Ground stations: {self.current_gs_file}")
         if self.gs_menu is not None:
@@ -1732,72 +1741,97 @@ class LinkBudgetApp:
     # ------------------------------------------------------------------
 
     def _build_statistics_tab(self, parent) -> None:
-        """Contacts, usable minutes, data volume and gaps over several days."""
+        """Contacts, usable minutes, data volume, memory and gaps over several days and stations."""
 
         bold_font = tkfont.nametofont("TkDefaultFont").copy()
         bold_font.configure(weight="bold")
         ttk.Label(
             parent,
             text=(
-                "Adds up the pass analysis over several days, for the satellite, ground station, minimum "
-                "elevation and horizon mask of the Orbit & Passes tab and the link budget of the Downlink "
-                "tab. A minute is usable when the margin, Eb/No minus the Required Eb/No, is at least the "
-                "Required Margin; the data volume is the information bit rate (coded bit rate / overhead) "
-                "over the usable minutes."
+                "Adds up the pass analysis over several days and ground stations, for the satellite, minimum "
+                "elevation and horizon masks of the Orbit & Passes tab and the link budget of the Downlink tab. "
+                "A minute is usable when the margin, Eb/No minus the Required Eb/No, is at least the Required "
+                "Margin; with several stations the best one is used. Without on-board data the volume is the "
+                "downlink capacity (information bit rate over the usable minutes); with the rates of the data "
+                "sent on this downlink (instruments, HKTM, other) the on-board memory is simulated: downloaded "
+                "volume, memory occupation and data latency. The uplink (telecommands) is not included."
             ),
             foreground=PALETTE["text_muted"],
             wraplength=1100,
             justify="left",
         ).pack(anchor="w", pady=(0, 10))
 
-        inputs = ttk.LabelFrame(parent, text="Period and Requirements", padding=10)
+        inputs = ttk.LabelFrame(parent, text="Period, Stations and Data", padding=10)
         inputs.pack(fill=tk.X)
         self.stats_start_var = tk.StringVar(value=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         self.stats_days_var = tk.StringVar(value="7")
         self.stats_ebno_var = tk.StringVar(value="")
         self.stats_margin_var = tk.StringVar(value="")
-        self.stats_onboard_var = tk.StringVar(value="")
+        self.stats_instrument_var = tk.StringVar(value="")
+        self.stats_hktm_var = tk.StringVar(value="")
+        self.stats_other_var = tk.StringVar(value="")
         fields = (
-            ("Start Date (YYYY-MM-DD)", self.stats_start_var, 12, "First day of the period (UTC)."),
-            ("Days", self.stats_days_var, 6, "Number of days, 1 to 366. About a second per day."),
-            (
-                "Required Eb/No [dB]",
-                self.stats_ebno_var,
-                8,
-                "Empty: the Required Eb/No of the Static LB · Downlink tab.",
-            ),
-            (
-                "Required Margin [dB]",
-                self.stats_margin_var,
-                8,
-                "Minimum margin for a usable minute. Empty: the Required Nominal Margin of the Static LB · "
-                "Downlink tab.",
-            ),
-            (
-                "Data Generated On Board [MB/day]",
-                self.stats_onboard_var,
-                10,
-                "Optional: user data produced on board each day. The statistics then give the backlog left "
-                "on board at the end of each day.",
-            ),
+            ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
+            ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
+            ("Required Eb/No [dB]", self.stats_ebno_var,
+             "Empty: the Required Eb/No of the Static LB · Downlink tab."),
+            ("Required Margin [dB]", self.stats_margin_var,
+             "Minimum margin of a usable minute. Empty: the Required Nominal Margin of the Static LB · "
+             "Downlink tab."),
+            ("Instrument Data [kbps]", self.stats_instrument_var,
+             "Optional: orbit-average rate of the data produced by the instruments (all instruments, after "
+             "on-board compression), stored on board and sent on this downlink."),
+            ("HKTM Rate [kbps]", self.stats_hktm_var,
+             "Optional: housekeeping telemetry stored on board and sent on this downlink."),
+            ("Other Data [kbps]", self.stats_other_var,
+             "Optional: anything else sent on this downlink band (e.g. ancillary data). The uplink "
+             "(telecommands) is not part of the volume."),
         )
-        for col, (label, var, width, tip) in enumerate(fields):
-            ttk.Label(inputs, text=label).grid(row=0, column=col, sticky="w", padx=(0, 12))
-            entry = ttk.Entry(inputs, textvariable=var, width=width)
-            entry.grid(row=1, column=col, sticky="w", padx=(0, 12), pady=(2, 0))
+        grid = ttk.Frame(inputs)
+        grid.pack(side=tk.LEFT, anchor="n")
+        for k, (label, var, tip) in enumerate(fields):
+            row, col = divmod(k, 2)
+            ttk.Label(grid, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 6), pady=2)
+            entry = ttk.Entry(grid, textvariable=var, width=12)
+            entry.grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 18), pady=2)
             _add_tooltip(entry, tip)
+
+        station_box = ttk.Frame(inputs)
+        station_box.pack(side=tk.LEFT, anchor="n", padx=(10, 0))
+        ttk.Label(station_box, text="Ground Stations (select one or more)").pack(anchor="w")
+        self.stats_station_list = tk.Listbox(
+            station_box,
+            selectmode=tk.MULTIPLE,
+            height=6,
+            width=24,
+            exportselection=False,
+            bg=PALETTE["surface"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["accent"],
+            selectforeground="white",
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+        )
+        self.stats_station_list.pack(anchor="w", pady=(2, 0))
+        _add_tooltip(
+            self.stats_station_list,
+            "The stations of the network. Each one uses its horizon mask and antenna diameter "
+            "(ground_stations.txt); at each instant the best station is used.",
+        )
+        self._refresh_statistics_stations()
+
         buttons = ttk.Frame(inputs)
-        buttons.grid(row=0, column=len(fields), rowspan=2, sticky="e", padx=(12, 0))
+        buttons.pack(side=tk.RIGHT, anchor="n")
         self.stats_button = ttk.Button(
             buttons, text="Compute Statistics", style="Accent.TButton", command=self.compute_statistics
         )
-        self.stats_button.pack(side=tk.LEFT)
+        self.stats_button.pack(fill=tk.X)
         self.stats_export_button = ttk.Button(
             buttons, text="Export CSV...", width=14, command=self.export_statistics_csv
         )
-        self.stats_export_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.stats_export_button.pack(fill=tk.X, pady=(6, 0))
         self.stats_export_button.state(["disabled"])
-        inputs.grid_columnconfigure(len(fields), weight=1)
 
         self.stats_progress = ttk.Progressbar(parent, mode="determinate", maximum=1.0)
         self.stats_progress.pack(fill=tk.X, pady=(10, 0))
@@ -1809,9 +1843,9 @@ class LinkBudgetApp:
         summary_frame = ttk.LabelFrame(parent, text="Summary", padding=10)
         summary_frame.pack(fill=tk.X, pady=(10, 0))
         self.stats_summary_var = tk.StringVar(value="No statistics yet: press Compute Statistics.")
-        ttk.Label(summary_frame, textvariable=self.stats_summary_var, justify="left", font=bold_font).pack(
-            anchor="w"
-        )
+        ttk.Label(
+            summary_frame, textvariable=self.stats_summary_var, justify="left", font=bold_font, wraplength=1100
+        ).pack(anchor="w")
 
         self.stats_plot_frame = ttk.Frame(parent, height=320)
         self.stats_plot_frame.pack(fill=tk.X, pady=(10, 0))
@@ -1840,15 +1874,31 @@ class LinkBudgetApp:
 
         self.stats_day_table = _table(
             day_frame,
-            ("Date", "Contacts", "Contact [min]", "Usable [min]", "Volume [MB]", "Max Gap [min]", "Backlog [MB]"),
-            (110, 90, 120, 120, 120, 120, 120),
+            ("Date", "Contacts", "Contact [min]", "Usable [min]", "Capacity [MB]", "Downloaded [MB]",
+             "Max Gap [min]", "On Board [MB]"),
+            (100, 80, 105, 105, 110, 125, 110, 115),
         )
         self.stats_pass_table = _table(
             pass_frame,
-            ("Start (UTC)", "End", "Max El [deg]", "Contact [min]", "Usable [min]", "Volume [MB]", "Min Margin [dB]"),
-            (140, 90, 110, 120, 120, 120, 130),
+            ("Start (UTC)", "End", "Stations", "Max El [deg]", "Contact [min]", "Usable [min]",
+             "Capacity [MB]", "Downloaded [MB]", "Min Margin [dB]"),
+            (135, 65, 150, 95, 100, 95, 105, 120, 115),
         )
         self.stats_result = None
+
+    def _refresh_statistics_stations(self) -> None:
+        """Fill the station list of the Statistics tab, keeping the selection."""
+
+        if not hasattr(self, "stats_station_list"):
+            return
+        selected = {self.stats_station_list.get(i) for i in self.stats_station_list.curselection()}
+        if not selected:
+            selected = {self.gs_var.get()}
+        self.stats_station_list.delete(0, tk.END)
+        for k, name in enumerate(calculations.GROUND_STATIONS):
+            self.stats_station_list.insert(tk.END, name)
+            if name in selected:
+                self.stats_station_list.selection_set(k)
 
     def _statistics_inputs(self) -> dict:
         """Everything the statistics need, read from the window (main thread only).
@@ -1860,10 +1910,9 @@ class LinkBudgetApp:
         days = int(self.stats_days_var.get().strip())
         if not 1 <= days <= 366:
             raise ValueError("Days must be between 1 and 366.")
-        gs_name = self.gs_var.get()
-        if gs_name not in calculations.GROUND_STATIONS:
-            raise ValueError("Select a ground station in the Orbit & Passes tab.")
-        lat, lon, alt_m = calculations.GROUND_STATIONS[gs_name]
+        names = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
+        if not names:
+            raise ValueError("Select at least one ground station.")
         if self.current_sat is not None and self.current_sat.custom_orbit:
             orbit = self._custom_orbit()
             when = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
@@ -1880,53 +1929,64 @@ class LinkBudgetApp:
             tle1, tle2 = self.tle1_entry.get().strip(), self.tle2_entry.get().strip()
         if not (tle1 and tle2):
             raise ValueError("No TLE: load or download one in the Orbit & Passes tab.")
-        _path, mask = self._station_mask(gs_name)
+
+        def _number(entry_or_var, label, optional=False):
+            text = entry_or_var.get().strip()
+            if not text:
+                if optional:
+                    return None
+                raise ValueError(f"'{label}' is empty.")
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"'{label}' is not a number.") from None
+
+        stations = []
+        for name in names:
+            lat, lon, alt_m = calculations.GROUND_STATIONS[name]
+            _path, mask = self._station_mask(name)
+            stations.append({"name": name, "lat": lat, "lon": lon, "alt_m": alt_m, "mask": mask})
         inputs = {
             "start": start,
             "days": days,
-            "station": gs_name,
-            "lat": lat,
-            "lon": lon,
-            "alt_m": alt_m,
+            "stations": stations,
             "tle": (tle1, tle2),
             "min_el": self._min_elevation(),
-            "mask": mask,
             "budget": None,
         }
         if not self.link_budget_enabled:
             return inputs
 
-        def _number(entry, label, optional=False):
-            text = entry.get().strip()
-            if not text:
-                if optional:
-                    return None
-                raise ValueError(f"'{label}' is empty (Downlink tab).")
-            try:
-                return float(text)
-            except ValueError:
-                raise ValueError(f"'{label}' is not a number (Downlink tab).") from None
-
-        d_gs = calculations.GROUND_STATION_DIAMETERS.get(gs_name) or _number(self.d_gs_entry, "Antenna Diameter GS")
         provider = self._static_lb_loss_providers.get(calculations.FIXED_LINK_BUDGET_SECTIONS["downlink"])
         static_values = provider() if provider else {}
         required_ebno = self.stats_ebno_var.get().strip() or static_values.get("required_ebno_db")
         required_margin = self.stats_margin_var.get().strip() or static_values.get("required_margin_db")
         if required_ebno in (None, ""):
             raise ValueError("Enter the Required Eb/No (here or in the Static LB · Downlink tab).")
-        cio = _number(self.CIo_entry, "C/Io", optional=True)
-        onboard = self.stats_onboard_var.get().strip()
-        bitrate = _number(self.bitrate_entry, "Coded Bit Rate") * 1e6
-        overhead = _number(self.overhead_entry, "Overhead")
+        default_d_gs = _number(self.d_gs_entry, "Antenna Diameter GS (Downlink tab)")
+        gt_gs = _number(self.gt_gs_entry, "G/T GS (Downlink tab)")
+        for station in stations:
+            station["d_gs"] = calculations.GROUND_STATION_DIAMETERS.get(station["name"]) or default_d_gs
+            station["gt_gs"] = gt_gs + self._gt_scaling_db(station["d_gs"])
+        cio = _number(self.CIo_entry, "C/Io (Downlink tab)", optional=True)
+        bitrate = _number(self.bitrate_entry, "Coded Bit Rate (Downlink tab)") * 1e6
+        overhead = _number(self.overhead_entry, "Overhead (Downlink tab)")
+        flows = {
+            "instruments": _number(self.stats_instrument_var, "Instrument Data [kbps]", optional=True),
+            "HKTM": _number(self.stats_hktm_var, "HKTM Rate [kbps]", optional=True),
+            "other": _number(self.stats_other_var, "Other Data [kbps]", optional=True),
+        }
+        if any(v is not None and v < 0 for v in flows.values()):
+            raise ValueError("The on-board data rates must be positive.")
+        given = {name: value for name, value in flows.items() if value}
+        generated_bps = sum(given.values()) * 1e3 if given else None
         inputs["budget"] = {
-            "freq_ghz": _number(self.freq_entry, "Frequency"),
-            "p": 100.0 - _number(self.LA_entry, "Link Availability"),
-            "d_gs": d_gs,
+            "freq_ghz": _number(self.freq_entry, "Frequency (Downlink tab)"),
+            "p": 100.0 - _number(self.LA_entry, "Link Availability (Downlink tab)"),
             "other_att": _number(self.other_att_entry, "Other Attenuations", optional=True) or 0.0,
-            "eirp_sat": _number(self.eirp_sat_entry, "EIRP SAT"),
-            "gt_gs": _number(self.gt_gs_entry, "G/T GS") + self._gt_scaling_db(d_gs),
+            "eirp_sat": _number(self.eirp_sat_entry, "EIRP SAT (Downlink tab)"),
             "gt_model": self._gt_model(),
-            "demod_loss": _number(self.demod_loss_entry, "Demodulator Loss"),
+            "demod_loss": _number(self.demod_loss_entry, "Demodulator Loss (Downlink tab)"),
             "bitrate": bitrate,
             "overhead": overhead,
             "cisat_lin": 10 ** (cio / 10.0) if cio is not None else None,
@@ -1935,7 +1995,8 @@ class LinkBudgetApp:
             "required_ebno": float(required_ebno),
             "required_margin": float(required_margin) if required_margin not in (None, "") else 0.0,
             "info_bitrate_bps": bitrate / overhead,
-            "onboard_mb_per_day": float(onboard) if onboard else None,
+            "generated_bps": generated_bps,
+            "flows_kbps": given,
         }
         return inputs
 
@@ -1945,45 +2006,47 @@ class LinkBudgetApp:
 
         ts = load.timescale()
         sat = EarthSatellite(*inputs["tle"], "SAT", ts)
-        gs = wgs84.latlon(inputs["lat"], inputs["lon"], elevation_m=inputs["alt_m"])
         budget = inputs["budget"]
         step_s = 30
         freq = (budget["freq_ghz"] if budget else 1.0) * u.GHz
-        if budget:
-            alt_km = inputs["alt_m"] / 1000.0
-            grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
-                inputs["lat"], inputs["lon"], budget["freq_ghz"], budget["p"], budget["d_gs"], alt_km,
-                include_scintillation=budget["scintillation"],
-            )
-            model = budget["gt_model"]
-            if model is None:
-                gt_grid = np.full_like(attenuation, budget["gt_gs"])
-            else:
-                sky_ref = calculations.gt_reference_sky_noise_k(
-                    inputs["lat"], inputs["lon"], budget["freq_ghz"], budget["d_gs"], alt_km,
-                    model["ref_elevation_deg"],
+        stations = []
+        for st in inputs["stations"]:
+            gs = wgs84.latlon(st["lat"], st["lon"], elevation_m=st["alt_m"])
+            entry = {"name": st["name"], "gs": gs, "mask": st["mask"], "alt_km": st["alt_m"] / 1000.0}
+            if budget:
+                grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
+                    st["lat"], st["lon"], budget["freq_ghz"], budget["p"], st["d_gs"], entry["alt_km"],
+                    include_scintillation=budget["scintillation"],
                 )
-                gt_grid = calculations.ground_station_gt_dbk(
-                    budget["gt_gs"], model["tsys_ref_k"], sky_ref,
-                    calculations.sky_noise_temperature_k(attenuation), model["radome_loss_db"],
-                )
+                model = budget["gt_model"]
+                if model is None:
+                    gt_grid = np.full_like(attenuation, st["gt_gs"])
+                else:
+                    sky_ref = calculations.gt_reference_sky_noise_k(
+                        st["lat"], st["lon"], budget["freq_ghz"], st["d_gs"], entry["alt_km"],
+                        model["ref_elevation_deg"],
+                    )
+                    gt_grid = calculations.ground_station_gt_dbk(
+                        st["gt_gs"], model["tsys_ref_k"], sky_ref,
+                        calculations.sky_noise_temperature_k(attenuation), model["radome_loss_db"],
+                    )
+                entry.update(grid=grid, attenuation=attenuation, gt_grid=gt_grid, d_gs=st["d_gs"])
+            stations.append(entry)
 
-        def day_samples(day_start):
-            times = [day_start + timedelta(seconds=step_s * i) for i in range(86400 // step_s)]
-            sky_times = ts.from_datetimes(times)
+        def station_samples(st, day_start, times, sky_times):
+            gs = st["gs"]
             altitudes, slant_ranges, dopplers, off_boresight = prepare_topocentric_data(sat, gs, sky_times, freq)
             azimuth = calculations.topocentric_azimuth_deg(sat, gs, sky_times)
-            required = np.maximum(inputs["min_el"], calculations.mask_elevation_deg(azimuth, inputs["mask"]))
+            required = np.maximum(inputs["min_el"], calculations.mask_elevation_deg(azimuth, st["mask"]))
             visible = altitudes >= required
             margin = None
             if budget:
                 margin = np.full(len(times), np.nan)
-                atm = calculations.interpolate_vs_elevation(altitudes, grid, attenuation)
-                gt = calculations.interpolate_vs_elevation(altitudes, grid, gt_grid)
-                alt_km = inputs["alt_m"] / 1000.0
+                atm = calculations.interpolate_vs_elevation(altitudes, st["grid"], st["attenuation"])
+                gt = calculations.interpolate_vs_elevation(altitudes, st["grid"], st["gt_grid"])
                 for i in np.flatnonzero(visible):
                     params = calculate_link_budget_parameters(
-                        sky_times[i], sat, gs, freq, budget["p"], budget["d_gs"], alt_km,
+                        sky_times[i], sat, gs, freq, budget["p"], st["d_gs"], st["alt_km"],
                         budget["eirp_sat"], float(gt[i]), budget["demod_loss"], budget["bitrate"],
                         budget["overhead"], budget["cisat_lin"], budget["other_att"], float(atm[i]),
                         altitudes[i], slant_ranges[i], dopplers[i], off_boresight[i],
@@ -1991,6 +2054,12 @@ class LinkBudgetApp:
                     )
                     margin[i] = params["Eb/No (dB)"] - budget["required_ebno"]
             return pass_statistics.DaySamples(day_start, np.asarray(altitudes), visible, margin)
+
+        def day_samples(day_start):
+            times = [day_start + timedelta(seconds=step_s * i) for i in range(86400 // step_s)]
+            sky_times = ts.from_datetimes(times)
+            per_station = {st["name"]: station_samples(st, day_start, times, sky_times) for st in stations}
+            return pass_statistics.combine_stations(per_station)
 
         return day_samples, step_s
 
@@ -2005,7 +2074,8 @@ class LinkBudgetApp:
         self.stats_button.state(["disabled"])
         self.stats_export_button.state(["disabled"])
         state = {"done": 0, "total": inputs["days"]}
-        self.stats_status_var.set(f"Computing {inputs['days']} days for {inputs['station']}...")
+        names = ", ".join(st["name"] for st in inputs["stations"])
+        self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
         def _progress(done, total):
             state["done"] = done
@@ -2022,7 +2092,7 @@ class LinkBudgetApp:
                     progress=_progress,
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
-                    onboard_mb_per_day=budget["onboard_mb_per_day"] if budget else None,
+                    generated_bps=budget["generated_bps"] if budget else None,
                 )
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
@@ -2052,9 +2122,11 @@ class LinkBudgetApp:
         budget = inputs["budget"]
         sat_name = self.current_sat.name if self.current_sat else "satellite"
         end = inputs["start"] + timedelta(days=inputs["days"] - 1)
+        names = " + ".join(st["name"] for st in inputs["stations"])
+        masks = [st["name"] for st in inputs["stations"] if st["mask"] is not None]
         self.stats_status_var.set(
-            f"{sat_name} over {inputs['station']}, {inputs['start']} to {end}, min elevation {inputs['min_el']:g}°"
-            + (", horizon mask" if inputs["mask"] is not None else "")
+            f"{sat_name} over {names}, {inputs['start']} to {end}, min elevation {inputs['min_el']:g}°"
+            + (f", horizon mask of {', '.join(masks)}" if masks else "")
             + ("" if budget else "  ·  contact analysis only (no link budget parameters)")
         )
 
@@ -2069,17 +2141,28 @@ class LinkBudgetApp:
         if budget:
             lines.append(
                 f"Usable time (margin ≥ {s['min_margin_db']:g} dB): {s['usable_min_per_day']:.1f} min/day    "
-                f"Data volume at {s['info_bitrate_bps'] / 1e6:.3f} Mbps: {s['volume_mb_per_day_mean']:.0f} MB/day "
-                f"(min {s['volume_mb_per_day_min']:.0f}, max {s['volume_mb_per_day_max']:.0f}), "
-                f"total {s['volume_mb_total'] / 1000:.2f} GB"
+                f"Downlink capacity at {s['info_bitrate_bps'] / 1e6:.3f} Mbps: "
+                f"{s['capacity_mb_per_day_mean']:.0f} MB/day (min {s['capacity_mb_per_day_min']:.0f}, "
+                f"max {s['capacity_mb_per_day_max']:.0f})"
             )
-            if "onboard_mb_per_day" in s:
+            if "generated_bps" in s:
+                parts = [f"{name} {value:g} kbps" for name, value in budget["flows_kbps"].items()]
+                keeps_up = s["capacity_mb_per_day_mean"] >= s["generated_mb_per_day"]
                 lines.append(
-                    f"Generated on board: {s['onboard_mb_per_day']:.0f} MB/day    "
-                    f"Backlog at the end: {s['final_backlog_mb']:.0f} MB (max {s['max_backlog_mb']:.0f} MB)\n"
-                    + ("✓ the downlink keeps up" if s["volume_mb_per_day_mean"] >= s["onboard_mb_per_day"] else
-                       f"✗ the backlog grows by about "
-                       f"{s['onboard_mb_per_day'] - s['volume_mb_per_day_mean']:.0f} MB/day: the downlink does not keep up")
+                    f"Generated on board: {s['generated_mb_per_day']:.0f} MB/day ({' + '.join(parts)}"
+                    + (f" = {s['generated_bps'] / 1e3:g} kbps" if len(parts) > 1 else "")
+                    + ")    "
+                    f"Downloaded: {s['downloaded_mb_per_day_mean']:.0f} MB/day"
+                )
+                lines.append(
+                    f"On board: max {s['max_on_board_mb']:.0f} MB, {s['final_on_board_mb']:.0f} MB at the end    "
+                    f"Data latency: mean {_fmt(s['mean_latency_min'])} min, max {_fmt(s['max_latency_min'])} min    "
+                    + ("✓ the downlink keeps up" if keeps_up else "✗ the memory keeps filling: the downlink does not keep up")
+                )
+            else:
+                lines.append(
+                    "Downloaded = capacity (no on-board data given: enter the instrument, HKTM and other data "
+                    "rates for the memory, the actual volume and the latency)."
                 )
         self.stats_summary_var.set("\n".join(lines))
 
@@ -2090,7 +2173,8 @@ class LinkBudgetApp:
             self.stats_day_table.insert(
                 "", "end", tags=tags,
                 values=(day.date, day.contacts, _fmt(day.contact_min), _fmt(day.usable_min),
-                        _fmt(day.volume_mb, 0), _fmt(day.max_gap_min), _fmt(day.backlog_mb, 0)),
+                        _fmt(day.capacity_mb, 0), _fmt(day.downloaded_mb, 0), _fmt(day.max_gap_min),
+                        _fmt(day.on_board_mb, 0)),
             )
         for i, record in enumerate(result.passes):
             tags = ["evenrow" if i % 2 == 0 else "oddrow"]
@@ -2098,9 +2182,10 @@ class LinkBudgetApp:
                 tags.append("warn")
             self.stats_pass_table.insert(
                 "", "end", tags=tags,
-                values=(record.start.strftime("%Y-%m-%d %H:%M"), record.end.strftime("%H:%M"),
+                values=(record.start.strftime("%Y-%m-%d %H:%M"), record.end.strftime("%H:%M"), record.stations,
                         _fmt(record.max_elevation_deg), _fmt(record.contact_min), _fmt(record.usable_min),
-                        _fmt(record.volume_mb, 0), _fmt(record.min_margin_db, 2)),
+                        _fmt(record.capacity_mb, 0), _fmt(record.downloaded_mb, 0),
+                        _fmt(record.min_margin_db, 2)),
             )
 
         for widget in self.stats_plot_frame.winfo_children():
@@ -2108,8 +2193,15 @@ class LinkBudgetApp:
         fig, ax = plt.subplots(figsize=(12, 3.2), layout="constrained")
         dates = [d.date for d in result.days]
         if budget:
-            ax.bar(dates, [d.volume_mb for d in result.days], color=MATLAB_COLORS["blue"], label="Volume [MB]")
-            ax.set_ylabel("Volume [MB/day]", fontsize=8, color=MATLAB_COLORS["blue"])
+            ax.bar(dates, [d.capacity_mb for d in result.days], color=MATLAB_COLORS["blue"], alpha=0.35,
+                   label="Capacity [MB]")
+            ax.bar(dates, [d.downloaded_mb for d in result.days], width=0.5, color=MATLAB_COLORS["blue"],
+                   label="Downloaded [MB]")
+            if result.days[0].on_board_mb is not None:
+                ax.plot(dates, [d.on_board_mb for d in result.days], "s--", color=MATLAB_COLORS["purple"],
+                        label="On board at end of day [MB]")
+            ax.set_ylabel("MB", fontsize=8)
+            ax.legend(fontsize=7, loc="upper left")
         else:
             ax.bar(dates, [d.contact_min for d in result.days], color=MATLAB_COLORS["blue"])
             ax.set_ylabel("Contact [min/day]", fontsize=8, color=MATLAB_COLORS["blue"])
@@ -2117,11 +2209,12 @@ class LinkBudgetApp:
         gap_ax.plot(dates, [d.max_gap_min if d.max_gap_min is not None else np.nan for d in result.days],
                     "o-", color=MATLAB_COLORS["orange"])
         gap_ax.set_ylabel("Max gap [min]", fontsize=8, color=MATLAB_COLORS["orange"])
+        gap_ax.set_ylim(bottom=0)
         for axis in (ax, gap_ax):
             axis.tick_params(axis="both", labelsize=8)
         ax.tick_params(axis="x", labelrotation=30)
         ax.grid(True, axis="y")
-        ax.set_title("Data volume and longest gap per day" if budget else "Contact time and longest gap per day",
+        ax.set_title("Data per day and longest gap" if budget else "Contact time and longest gap per day",
                      fontsize=9)
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
@@ -2150,17 +2243,17 @@ class LinkBudgetApp:
                 for key, value in result.summary.items():
                     writer.writerow([key, value])
                 writer.writerow([])
-                writer.writerow(["Date", "Contacts", "Contact [min]", "Usable [min]", "Volume [MB]",
-                                 "Max Gap [min]", "Backlog [MB]"])
+                writer.writerow(["Date", "Contacts", "Contact [min]", "Usable [min]", "Capacity [MB]",
+                                 "Downloaded [MB]", "Max Gap [min]", "On Board [MB]"])
                 for d in result.days:
-                    writer.writerow([d.date, d.contacts, d.contact_min, d.usable_min, d.volume_mb,
-                                     d.max_gap_min, d.backlog_mb])
+                    writer.writerow([d.date, d.contacts, d.contact_min, d.usable_min, d.capacity_mb,
+                                     d.downloaded_mb, d.max_gap_min, d.on_board_mb])
                 writer.writerow([])
-                writer.writerow(["Start (UTC)", "End (UTC)", "Max El [deg]", "Contact [min]", "Usable [min]",
-                                 "Volume [MB]", "Min Margin [dB]"])
+                writer.writerow(["Start (UTC)", "End (UTC)", "Stations", "Max El [deg]", "Contact [min]",
+                                 "Usable [min]", "Capacity [MB]", "Downloaded [MB]", "Min Margin [dB]"])
                 for p in result.passes:
-                    writer.writerow([p.start.isoformat(), p.end.isoformat(), p.max_elevation_deg, p.contact_min,
-                                     p.usable_min, p.volume_mb, p.min_margin_db])
+                    writer.writerow([p.start.isoformat(), p.end.isoformat(), p.stations, p.max_elevation_deg,
+                                     p.contact_min, p.usable_min, p.capacity_mb, p.downloaded_mb, p.min_margin_db])
         except OSError as exc:
             messagebox.showerror("Export Statistics", f"Could not write the file: {exc}")
             return
@@ -4920,6 +5013,18 @@ class LinkBudgetApp:
             orbit = self._custom_orbit_for_file()
             if orbit is not None:
                 panel_values["orbit"] = orbit
+            flows = {}
+            for key, var in (
+                ("instruments", self.stats_instrument_var),
+                ("hktm", self.stats_hktm_var),
+                ("other", self.stats_other_var),
+            ):
+                try:
+                    flows[key] = float(var.get()) if var.get().strip() else None
+                except ValueError:
+                    flows[key] = None
+            if any(value is not None for value in flows.values()):
+                panel_values["downlink_data_kbps"] = flows
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values

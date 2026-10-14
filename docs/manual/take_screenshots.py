@@ -113,6 +113,9 @@ def main() -> None:
     # Statistics over a few days.
     app.main_tabs.select(tabs[-1])
     app.gs_var.set("Svalbard")
+    stations = app.stats_station_list
+    stations.selection_clear(0, "end")
+    stations.selection_set(list(stations.get(0, "end")).index("Svalbard"))
     app.stats_days_var.set("7")
     app.compute_statistics()
     while "disabled" in app.stats_button.state():

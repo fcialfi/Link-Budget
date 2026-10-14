@@ -463,30 +463,42 @@ def content():
         "the buttons shows which pattern is in use."))
 
     story += H1("Statistics tab")
-    story += FIG("statistics", "Statistics over 7 days: summary and data volume per day.")
+    story += FIG("statistics", "Statistics over 7 days: summary and data per day.")
     story.append(P(
-        "The <b>Statistics</b> tab adds up the pass analysis over several days, for the satellite, ground "
-        "station, minimum elevation and horizon mask of the Orbit &amp; Passes tab and the link budget of the "
+        "The <b>Statistics</b> tab adds up the pass analysis over several days and ground stations, for the "
+        "satellite, minimum elevation and horizon masks of the Orbit &amp; Passes tab and the link budget of the "
         "Downlink tab (same models: antenna pattern, atmospheric attenuation and G/T at each elevation, losses "
-        "of the Static LB · Downlink tab). Enter the <b>Start Date</b> and the number of <b>Days</b> (about a "
-        "second per day) and press <b>Compute Statistics</b>."))
+        "of the Static LB · Downlink tab). Enter the <b>Start Date</b> and the number of <b>Days</b>, select one "
+        "or more <b>Ground Stations</b> (about a second per day and station) and press <b>Compute "
+        "Statistics</b>."))
     story += BUL([
+        "<b>Station network</b>: the satellite is in contact when any selected station sees it (above the "
+        "minimum elevation and that station's horizon mask); at each instant the station with the best margin "
+        "is used. Each station uses its own antenna diameter (G/T scaling) and mask; the pass table gives the "
+        "stations of each contact.",
         "<b>Usable minutes</b>: samples in contact whose margin, Eb/No minus the <b>Required Eb/No</b>, is at "
         "least the <b>Required Margin</b>; when these fields are empty the values of the Static LB · Downlink "
         "tab are used.",
-        "<b>Data volume</b>: the information bit rate (coded bit rate / overhead) over the usable minutes, in "
-        "MB of 10^6 bytes.",
-        "<b>Gaps</b>: time from the end of a contact to the start of the next one; the longest gap matters "
-        "for the data latency. A gap counts for the day the next contact starts.",
-        "<b>Data Generated On Board</b> (optional, MB/day): the backlog left on board at the end of each day, "
-        "and whether the downlink keeps up with the production.",
+        "<b>Capacity</b>: the information bit rate (coded bit rate / overhead) over the usable minutes, in MB "
+        "of 10^6 bytes: what the link could download.",
+        "<b>On-board data</b>: the rates in kbps of what is sent on this downlink band, <b>Instrument Data</b>, "
+        "<b>HKTM</b> and <b>Other Data</b> (the uplink, telecommands, is not included). With them the on-board "
+        "memory is simulated, starting empty: it fills at the total rate and empties at the downlink rate "
+        "during the usable minutes. This gives the volume actually <b>downloaded</b>, the data <b>on board</b> "
+        "at the end of each day and its maximum, and the <b>data latency</b> (time from generation to "
+        "arrival on ground, first in first out; mean and maximum). The downlink keeps up when the mean "
+        "capacity is at least the data generated per day. The rates are read from and saved to the parameters "
+        "file (downlink_data_kbps).",
+        "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
+        "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
     ])
     story += FIG("statistics_tables", "Per-day and per-pass tables.")
     story.append(P(
-        "The tables give each day (contacts, contact and usable minutes, volume, longest gap, backlog) and each "
-        "pass (times, maximum elevation, minutes, volume, minimum margin; a pass with no usable minute is "
-        "shown in orange). <b>Export CSV…</b> writes the summary and both tables."))
+        "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "
+        "gap, data on board) and each pass (times, stations, maximum elevation, minutes, capacity, downloaded "
+        "volume, minimum margin; a pass with no usable minute is shown in orange). <b>Export CSV…</b> writes "
+        "the summary and both tables."))
 
     # 5 -------------------------------------------------------------------
     story += H1("Downlink tab")
