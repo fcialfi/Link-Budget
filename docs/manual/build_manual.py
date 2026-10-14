@@ -31,7 +31,7 @@ IMG = os.path.join(HERE, "img")
 OUT = os.path.join(ROOT, "docs", "Link_Budget_Tool_User_Manual.pdf")
 LOGO = os.path.join(ROOT, "assets", "exostaff_logo.png")
 sys.path.insert(0, ROOT)
-from version import APP_VERSION  # noqa: E402
+from version import APP_AUTHOR, APP_VERSION  # noqa: E402
 
 TITLE = "Satellite Link Budget Tool"
 SUBTITLE = "User Manual"
@@ -218,6 +218,7 @@ def _cover(canv, doc):
     lines = [
         f"Software version {APP_VERSION}",
         ISSUE,
+        f"Author: {APP_AUTHOR}",
         datetime.date.today().strftime("%d %B %Y"),
     ]
     for i, line in enumerate(lines):
@@ -357,7 +358,8 @@ def content():
     story += H1("Main window")
     story += FIG("orbit_passes", "Figure 1 – Main window, Orbit &amp; Passes tab.")
     story.append(P(
-        "The header shows the program version, the project name, the licence and the <b>Exit</b> button. "
+        "The header shows the program version, the project name, the licence and the <b>About</b> (version, "
+        "author and licence; also F1) and <b>Exit</b> buttons. "
         "Below it, the tabs:"))
     story += TABLE([
         ["Tab", "Content"],
@@ -642,7 +644,7 @@ def content():
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     doc = ManualDoc(OUT, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm,
-                    bottomMargin=2.2 * cm, title=f"{TITLE} – {SUBTITLE}", author="Exostaff",
+                    bottomMargin=2.2 * cm, title=f"{TITLE} – {SUBTITLE}", author=APP_AUTHOR,
                     subject=f"Version {APP_VERSION}")
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="body")
     doc.addPageTemplates([
