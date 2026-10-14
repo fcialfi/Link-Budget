@@ -1,0 +1,75 @@
+{
+  "default": "AWS",
+  "satellites": [
+    {
+      "name": "AWS",
+      "norad_id": 60543,
+      "description": "Arctic Weather Satellite"
+    },
+    {
+      "name": "EPS-Sterna",
+      "description": "constellation, not launched yet",
+      "custom_orbit": true
+    },
+    {
+      "name": "Metop-B",
+      "norad_id": 38771,
+      "description": "EPS"
+    },
+    {
+      "name": "Metop-C",
+      "norad_id": 43689,
+      "description": "EPS"
+    },
+    {
+      "name": "Metop-SGA1",
+      "norad_id": 65159,
+      "description": "EPS Second Generation"
+    },
+    {
+      "name": "Sentinel-3A",
+      "norad_id": 41335,
+      "description": "Copernicus"
+    },
+    {
+      "name": "Sentinel-3B",
+      "norad_id": 43437,
+      "description": "Copernicus"
+    },
+    {
+      "name": "Sentinel-6A",
+      "norad_id": 46984,
+      "description": "Copernicus, Michael Freilich"
+    },
+    {
+      "name": "Jason-3",
+      "norad_id": 41240,
+      "description": "ocean altimetry"
+    },
+    {
+      "name": "Meteosat-9",
+      "norad_id": 28912,
+      "description": "MSG-2, geostationary"
+    },
+    {
+      "name": "Meteosat-10",
+      "norad_id": 38552,
+      "description": "MSG-3, geostationary"
+    },
+    {
+      "name": "Meteosat-11",
+      "norad_id": 40732,
+      "description": "MSG-4, geostationary"
+    },
+    {
+      "name": "Meteosat-12",
+      "norad_id": 54743,
+      "description": "MTG-I1, geostationary"
+    },
+    {
+      "name": "MTG-S1",
+      "norad_id": 64723,
+      "description": "Meteosat-13 / Sentinel-4A, geostationary"
+    }
+  ]
+}

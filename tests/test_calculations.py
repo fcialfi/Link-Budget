@@ -827,7 +827,7 @@ def test_extract_json_section():
 
 
 def test_repository_parameters_file_has_valid_fixed_elevation_section():
-    path = os.path.join(os.path.dirname(calculations.__file__), "parameters.json")
+    path = os.path.join(os.path.dirname(calculations.__file__), "missions", "AWS", "parameters.json")
     with open(path, encoding="utf-8") as f:
         section = calculations.extract_json_section(json.load(f), "fixed_elevation_downlink")
     assert section["elevation_deg"] == 3.0

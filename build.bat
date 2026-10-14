@@ -7,8 +7,9 @@ rem   1. creates the .venv the first time and installs the requirements and
 rem      PyInstaller into it (later runs only add what is missing);
 rem   2. deletes the old build and dist folders and runs PyInstaller;
 rem   3. copies the data files next to the executable;
-rem   4. zips the folder as dist\Link-Budget-Tool_<version>.zip (version from
-rem      version.py).
+rem   4. only with "build.bat zip": zips the folder as
+rem      dist\Link-Budget-Tool_<version>.zip (version from version.py), to
+rem      deliver it. Without the argument no zip is made.
 rem The licence file (license.key) is per customer: add it to the folder or
 rem the zip yourself (see README).
 
@@ -32,23 +33,33 @@ echo === Building %APP% %VERSION%
 
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
+if exist dist (
+    echo.
+    echo The old dist folder could not be deleted: some of its files are in use.
+    echo Close %APP%.exe ^(also in Task Manager^) and any window open on dist, then run build.bat again.
+    goto :error
+)
 %PY% -m PyInstaller --noconfirm gui.spec || goto :error
 
 echo === Copying the data files
-for %%f in ("ground_stations.txt" "tle.txt" "parameters.json" "Antenna Pattern Default.txt") do (
+for %%f in ("ground_stations.txt" "satellites.json" "Antenna Pattern Default.txt") do (
     if exist %%f (
         copy /y %%f "dist\%APP%\" >nul || goto :error
     ) else (
         echo WARNING: %%f not found, not copied
     )
 )
-
-echo === Creating dist\%APP%_%VERSION%.zip
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\%APP%' -DestinationPath 'dist\%APP%_%VERSION%.zip' -Force" || goto :error
+rem The mission folders: parameters, antenna pattern and last TLE of each satellite.
+xcopy /e /i /y /q missions "dist\%APP%\missions" >nul || goto :error
 
 echo.
-echo Done: dist\%APP%\%APP%.exe and dist\%APP%_%VERSION%.zip
-echo Remember to add the customer's license.key next to the executable.
+echo Done: dist\%APP%\%APP%.exe
+if /i not "%~1"=="zip" goto :done
+echo === Creating dist\%APP%_%VERSION%.zip
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\%APP%' -DestinationPath 'dist\%APP%_%VERSION%.zip' -Force" || goto :error
+echo Done: dist\%APP%_%VERSION%.zip
+echo Remember to add the customer's license.key to the zip.
+:done
 pause
 exit /b 0
 
