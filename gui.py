@@ -449,6 +449,30 @@ class _TreeviewRowTooltip:
             self._tip = None
 
 
+class _TreeviewHeadingTooltip(_TreeviewRowTooltip):
+    """Hover tooltip over the column headings of a ``ttk.Treeview``.
+
+    ``texts`` maps column ids to their text (e.g. the full name and unit
+    of an abbreviated heading).
+    """
+
+    def _on_motion(self, event):
+        column = None
+        if self.tree.identify_region(event.x, event.y) == "heading":
+            index = int(self.tree.identify_column(event.x).lstrip("#") or 0) - 1
+            shown = self.tree["displaycolumns"]
+            columns = self.tree["columns"] if shown in ("#all", ("#all",)) else shown
+            if 0 <= index < len(columns):
+                column = columns[index]
+        if column == self._row:
+            return
+        self._hide()
+        self._row = column
+        if column and self.texts.get(column):
+            x, y = event.x_root + 14, event.y_root + 16
+            self._after_id = self.tree.after(self.delay, lambda: self._show(column, x, y))
+
+
 def _set_entry_text(entry: ttk.Entry, text: str) -> None:
     """Replace an entry's text, keeping a placeholder entry's hint consistent."""
 
@@ -2724,40 +2748,84 @@ class LinkBudgetApp:
         canvas_plot_widget.draw()
         canvas_plot_widget.get_tk_widget().pack(side=tk.LEFT, anchor="nw", fill=tk.BOTH, expand=True)
 
-        display_columns = [
-            "Time (UTC)",
-            "Elevation (°)",
-            "Azimuth (°)",
-            "Slant Range (km)",
-            "Path Loss (dB)",
-            "Atmospheric Att (dB)",
-            "G/T GS (dB/K)",
-            "Off Boresight Angle (°)",
-            "S/C Antenna Gain (dBi)",
-            "EIRP (dBW)",
-            "Link Losses (dB)",
-            "Rx Power (dBW)",
-            "C/(No+Io) (dBHz)",
-            "Eb/No (dB)",
-            "Doppler Shift (kHz)",
-            "PFD (dBW/m²/4kHz)",
-            "PFD Limit (dBW/m²/4kHz)",
-            "PFD Margin (dB)",
+        # Columns of the pass table: (data column, short heading, group, description).
+        column_specs = [
+            ("Time (UTC)", "Time UTC", None, "Time of the sample (UTC); the date is in the pass name."),
+            ("Elevation (°)", "El [°]", "Geometry", "Elevation of the satellite seen from the station."),
+            ("Azimuth (°)", "Az [°]", "Geometry", "Azimuth of the satellite, from North clockwise."),
+            ("Slant Range (km)", "Range [km]", "Geometry", "Distance station–satellite."),
+            ("Off Boresight Angle (°)", "Nadir Ang. [°]", "Geometry",
+             "Angle from the satellite antenna boresight (nadir) towards the station."),
+            ("Doppler Shift (kHz)", "Doppler [kHz]", "Geometry", "Doppler shift of the downlink carrier."),
+            ("Path Loss (dB)", "FSL [dB]", "Link Budget", "Free space loss."),
+            ("Atmospheric Att (dB)", "Atm. [dB]", "Link Budget",
+             "ITU-R atmospheric attenuation at this elevation."),
+            ("G/T GS (dB/K)", "G/T [dB/K]", "Link Budget", "Ground station G/T at this elevation."),
+            ("S/C Antenna Gain (dBi)", "S/C Gain [dBi]", "Link Budget",
+             "Satellite antenna gain towards the station, from the pattern."),
+            ("EIRP (dBW)", "EIRP [dBW]", "Link Budget", "Satellite EIRP towards the station."),
+            ("Link Losses (dB)", "Losses [dB]", "Link Budget",
+             "Ionospheric, polarisation and multipath losses of the Static LB · Downlink tab."),
+            ("Rx Power (dBW)", "Rx Pwr [dBW]", "Link Budget", "Received power."),
+            ("C/(No+Io) (dBHz)", "C/(N0+I0) [dBHz]", "Link Budget",
+             "Carrier to noise (and interference) density ratio."),
+            ("Eb/No (dB)", "Eb/N0 [dB]", "Link Budget", "Energy per bit to noise density ratio."),
+            ("PFD (dBW/m²/4kHz)", "PFD [dBW/m²]", "PFD", "Power flux density at the ground in 4 kHz."),
+            ("PFD Limit (dBW/m²/4kHz)", "PFD Limit", "PFD",
+             "ITU RR Art. 21 limit at this elevation, dBW/m² in 4 kHz."),
+            ("PFD Margin (dB)", "PFD Mgn [dB]", "PFD", "Limit − PFD; negative: the limit is exceeded."),
         ]
-        display_columns = [c for c in display_columns if c == "Time (UTC)" or c in df_pass.columns]
-        table = ttk.Treeview(self.table_frame, columns=display_columns, show="headings")
+        column_specs = [c for c in column_specs if c[0] == "Time (UTC)" or c[0] in df_pass.columns]
+        groups = [g for g in ("Geometry", "Link Budget", "PFD") if any(c[2] == g for c in column_specs)]
+        if not hasattr(self, "_table_group_vars"):
+            self._table_group_vars = {g: tk.BooleanVar(value=True) for g in ("Geometry", "Link Budget", "PFD")}
+
+        toggles = ttk.Frame(self.table_frame)
+        toggles.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(toggles, text="Columns:").pack(side=tk.LEFT)
+        for group in groups:
+            ttk.Checkbutton(
+                toggles, text=group, variable=self._table_group_vars[group], command=lambda: _show_columns()
+            ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(
+            toggles, text="(hover a heading for its full name)", foreground=PALETTE["text_muted"]
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
+        columns = [c[0] for c in column_specs]
+        table = ttk.Treeview(self.table_frame, columns=columns, show="headings")
         table.tag_configure("evenrow", background=PALETTE["row_even"])
         table.tag_configure("oddrow", background=PALETTE["row_odd"])
-        for col in display_columns:
-            table.heading(col, text=col)
-            if col == "Time (UTC)":
-                table.column(col, anchor="center", width=120)
-            else:
-                table.column(col, anchor="center", width=100)
-        for i, (_, row) in enumerate(df_pass.iterrows()):
-            formatted_time = row["Time (UTC)"].strftime("%Y-%m-%d %H:%M:%S")
-            values = [formatted_time] + [row.get(col, "") for col in display_columns[1:]]
-            table.insert("", "end", values=values, tags=("evenrow" if i % 2 == 0 else "oddrow",))
+        table.tag_configure("fail", foreground=PALETTE["danger"])
+        rows = []
+        for _, row in df_pass.iterrows():
+            values = [row["Time (UTC)"].strftime("%H:%M:%S")]
+            for col in columns[1:]:
+                value = row.get(col, "")
+                values.append(f"{value:.2f}" if isinstance(value, (int, float)) and value == value else value)
+            rows.append(values)
+        heading_font = tkfont.nametofont("TkHeadingFont")
+        body_font = tkfont.nametofont("TkDefaultFont")
+        for k, (col, short, _group, _text) in enumerate(column_specs):
+            table.heading(col, text=short)
+            widest = max([heading_font.measure(short)] + [body_font.measure(str(r[k])) for r in rows])
+            table.column(col, anchor="center", width=widest + 18, minwidth=40, stretch=False)
+        margin_index = columns.index("PFD Margin (dB)") if "PFD Margin (dB)" in columns else None
+        for i, values in enumerate(rows):
+            tags = ["evenrow" if i % 2 == 0 else "oddrow"]
+            if margin_index is not None:
+                try:
+                    if float(values[margin_index]) < 0:
+                        tags.append("fail")
+                except ValueError:
+                    pass
+            table.insert("", "end", values=values, tags=tuple(tags))
+        _TreeviewHeadingTooltip(table, {c[0]: f"{c[0]}: {c[3]}" for c in column_specs})
+
+        def _show_columns():
+            shown = [c[0] for c in column_specs if c[2] is None or self._table_group_vars[c[2]].get()]
+            table.configure(displaycolumns=shown)
+
+        _show_columns()
         table_vscroll = ttk.Scrollbar(self.table_frame, orient=tk.VERTICAL, command=table.yview)
         table_hscroll = ttk.Scrollbar(self.table_frame, orient=tk.HORIZONTAL, command=table.xview)
         table.configure(yscrollcommand=table_vscroll.set, xscrollcommand=table_hscroll.set)

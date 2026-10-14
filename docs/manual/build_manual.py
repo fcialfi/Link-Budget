@@ -536,7 +536,9 @@ def content():
         "The plots show elevation, Eb/No and C/(No+Io), and Doppler shift along the pass; the table gives every "
         "30 s step. <b>Calculate DL Link Budget</b> recomputes the budget with new parameters without repeating "
         "the orbit propagation; <b>Export Table CSV</b> saves the table (with project and pass on the first "
-        "lines). Main columns:"))
+        "lines). The table uses short headings (hover a heading for its full name and unit) and the "
+        "<b>Columns</b> switches above it show or hide the Geometry, Link Budget and PFD groups; samples above "
+        "the PFD limit are in red. Main columns (full names, as in the CSV export):"))
     story += TABLE([
         ["Column", "Meaning"],
         ["Off Boresight Angle (°)", "Angle from the satellite nadir to the station."],
