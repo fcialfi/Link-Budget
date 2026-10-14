@@ -463,14 +463,16 @@ class ReportContext:
     logo_path: Optional[str] = None
 
 
-# Colours matching the application theme.
-_NAVY = "#0f2440"
-_ACCENT = "#2f6fed"
-_TEXT = "#1f2733"
-_MUTED = "#5b6472"
-_BORDER = "#d7dde6"
-_ROW_ALT = "#f3f6fb"
-_GROUP_BG = "#e8f0fe"
+# Colours matching the application's MATLAB-like theme.
+_HEADER = "#1f2a36"    # page header band (dark, for the light logo artwork)
+_TITLE = "#005a96"     # titles and section headings (MATLAB blue, dark)
+_ACCENT = "#0072bd"    # MATLAB blue
+_TEXT = "#1a1a1a"
+_MUTED = "#5f5f5f"
+_BORDER = "#c8c8c8"
+_HEAD_BG = "#e6e6e6"   # table column headings, as in MATLAB tables
+_ROW_ALT = "#f5f9fd"
+_GROUP_BG = "#e3f0fa"
 _PASS = "#2e7d32"
 _FAIL = "#d64545"
 
@@ -555,10 +557,10 @@ def build_static_report_pdf(
     base = ParagraphStyle("base", fontName="Helvetica", fontSize=9, leading=12, textColor=color(_TEXT))
     styles = {
         "title": ParagraphStyle("title", parent=base, fontName="Helvetica-Bold", fontSize=18, leading=22,
-                                textColor=color(_NAVY)),
+                                textColor=color(_TITLE)),
         "subtitle": ParagraphStyle("subtitle", parent=base, fontSize=10, leading=14, textColor=color(_MUTED)),
         "h1": ParagraphStyle("h1", parent=base, fontName="Helvetica-Bold", fontSize=12, leading=15,
-                             textColor=color(_NAVY), spaceBefore=10, spaceAfter=5),
+                             textColor=color(_TITLE), spaceBefore=10, spaceAfter=5),
         "body": base,
         "small": ParagraphStyle("small", parent=base, fontSize=8, leading=10.5, textColor=color(_MUTED)),
         "cell": ParagraphStyle("cell", parent=base, fontSize=8.5, leading=10.5),
@@ -566,9 +568,11 @@ def build_static_report_pdf(
                                     leading=10.5),
         "cell_right": ParagraphStyle("cell_right", parent=base, fontSize=8.5, leading=10.5, alignment=TA_RIGHT),
         "head": ParagraphStyle("head", parent=base, fontName="Helvetica-Bold", fontSize=8.5, leading=10.5,
-                               textColor=colors.white),
+                               textColor=color(_TEXT)),
         "head_right": ParagraphStyle("head_right", parent=base, fontName="Helvetica-Bold", fontSize=8.5,
-                                     leading=10.5, textColor=colors.white, alignment=TA_RIGHT),
+                                     leading=10.5, textColor=color(_TEXT), alignment=TA_RIGHT),
+        "group": ParagraphStyle("group", parent=base, fontName="Helvetica-Bold", fontSize=8.5, leading=10.5,
+                                textColor=color(_TITLE)),
         "verdict": ParagraphStyle("verdict", parent=base, fontName="Helvetica-Bold", fontSize=10, leading=13),
     }
 
@@ -597,7 +601,8 @@ def build_static_report_pdf(
             ("BOX", (0, 0), (-1, -1), 0.6, color(_BORDER)),
         ]
         if header_rows:
-            style.append(("BACKGROUND", (0, 0), (-1, header_rows - 1), color(_NAVY)))
+            style.append(("BACKGROUND", (0, 0), (-1, header_rows - 1), color(_HEAD_BG)))
+            style.append(("LINEBELOW", (0, header_rows - 1), (-1, header_rows - 1), 0.8, color(_MUTED)))
         return style
 
     story: list = []
@@ -669,7 +674,7 @@ def build_static_report_pdf(
         for title, items in input_groups:
             style.append(("SPAN", (0, len(data)), (-1, len(data))))
             style.append(("BACKGROUND", (0, len(data)), (-1, len(data)), color(_GROUP_BG)))
-            data.append([P(title, "cell_bold"), "", "", ""])
+            data.append([P(title, "group"), "", "", ""])
             for k in range(0, len(items), 2):
                 pair = list(items[k:k + 2]) + [("", "")] * (2 - len(items[k:k + 2]))
                 data.append([P(pair[0][0]), P(pair[0][1], "cell_bold"), P(pair[1][0]), P(pair[1][1], "cell_bold")])
@@ -687,7 +692,7 @@ def build_static_report_pdf(
             current_group = row.group
             style.append(("SPAN", (0, len(data)), (-1, len(data))))
             style.append(("BACKGROUND", (0, len(data)), (-1, len(data)), color(_GROUP_BG)))
-            data.append([P(row.group, "cell_bold"), "", ""])
+            data.append([P(row.group, "group"), "", ""])
         label_style = "cell_bold" if row.emphasis else "cell"
         cells = [P(row.label, label_style)]
         for value in (row.clear, row.rain):
@@ -804,8 +809,11 @@ def build_static_report_pdf(
 
         def _decorate(self, total: int):
             self.saveState()
-            self.setFillColor(color(_NAVY))
+            self.setFillColor(color(_HEADER))
             self.rect(0, page_h - 11 * mm, page_w, 11 * mm, stroke=0, fill=1)
+            # MATLAB-blue rule under the band.
+            self.setFillColor(color(_ACCENT))
+            self.rect(0, page_h - 11.6 * mm, page_w, 0.6 * mm, stroke=0, fill=1)
             text_x = margin_x
             if logo is not None:
                 image, aspect = logo
