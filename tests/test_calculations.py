@@ -1,3 +1,4 @@
+import math
 """Unit tests for the pure calculation logic in ``calculations.py``.
 
 These tests avoid the Tkinter GUI entirely and focus on the numerical core
@@ -46,7 +47,7 @@ def test_load_ground_stations_missing_file(tmp_path):
 def test_load_ground_stations_wrong_field_count(tmp_path):
     gs_file = tmp_path / "ground_stations.txt"
     gs_file.write_text("OnlyThreeFields, 1.0, 2.0\n")
-    with pytest.raises(ValueError, match="4 comma-separated fields"):
+    with pytest.raises(ValueError, match="4 or 5 comma-separated fields"):
         calculations.load_ground_stations(str(gs_file))
 
 
@@ -1102,3 +1103,44 @@ def test_link_budget_eirp_from_tx_chain_and_pattern_gain():
     # Without the Tx chain, EIRP SAT is taken at the pattern peak.
     peak = calculations.calculate_link_budget_parameters(**_base_kwargs(pre_off_boresight_angle=40.0))
     assert peak["EIRP (dBW)"] == pytest.approx(20.0 - calculations.antenna_pattern(40.0))
+
+
+# --------------------------------------------------------------------------
+# Ground station G/T versus elevation and antenna diameter
+# --------------------------------------------------------------------------
+
+
+def test_sky_noise_temperature():
+    assert calculations.sky_noise_temperature_k(0.0) == pytest.approx(2.7)
+    # 0.7 dB of attenuation (L-band, 3° elevation at Svalbard): about 43 K.
+    assert calculations.sky_noise_temperature_k(0.7) == pytest.approx(43.2, abs=0.1)
+    assert calculations.sky_noise_temperature_k(100.0) == pytest.approx(275.0)
+
+
+def test_ground_station_gt_follows_the_sky_noise():
+    # Reference: 9.9 dB/K with 120 K of system noise, of which 25 K of sky.
+    assert calculations.ground_station_gt_dbk(9.9, 120.0, 25.0, 25.0) == pytest.approx(9.9)
+    lower = calculations.ground_station_gt_dbk(9.9, 120.0, 25.0, 41.0, radome_loss_db=0.25)
+    assert lower == pytest.approx(9.9 - 10 * math.log10(136.0 / 120.0) - 0.25)
+
+
+def test_gt_diameter_scaling():
+    assert calculations.gt_diameter_scaling_db(2.4, 3.0) == pytest.approx(-1.938, abs=1e-3)
+    assert calculations.gt_diameter_scaling_db(3.0, 3.0) == 0.0
+    assert calculations.gt_diameter_scaling_db(2.4, None) == 0.0
+
+
+def test_interpolate_vs_elevation():
+    grid = np.array([5.0, 10.0, 90.0])
+    values = np.array([1.0, 0.5, 0.1])
+    assert calculations.interpolate_vs_elevation(7.5, grid, values) == pytest.approx(0.75)
+    assert calculations.interpolate_vs_elevation(1.0, grid, values) == pytest.approx(1.0)
+    assert list(calculations.interpolate_vs_elevation(np.array([5.0, 90.0]), grid, values)) == [1.0, 0.1]
+
+
+def test_ground_station_file_with_diameter(tmp_path):
+    gs_file = tmp_path / "ground_stations.txt"
+    gs_file.write_text("A,1.0,2.0,3\nB,4.0,5.0,6,2.4\n")
+    stations, diameters = calculations._read_ground_stations(str(gs_file))
+    assert stations["B"] == (4.0, 5.0, 6.0)
+    assert diameters == {"B": 2.4}
