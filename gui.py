@@ -465,6 +465,13 @@ def _format_checked(value: float, status: str | None, digits: int = 2) -> str:
     return text
 
 
+def _project_slug(project: str) -> str:
+    """File name prefix from a project name ("AWS L-band" -> "AWS_L-band_"), or ""."""
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", project.strip()).strip("_")
+    return f"{slug}_" if slug else ""
+
+
 def _header_logo(parent, font_family: str) -> tk.Label:
     """The company logo at the left of a navy window header ("LB" badge if missing)."""
 
@@ -757,6 +764,9 @@ class LinkBudgetApp:
                 # null leaves the field empty (e.g. C/Io: no interferer).
                 if payload[key] is not None:
                     entry.insert(0, str(payload[key]))
+
+        if "project_name" in payload:
+            self.project_var.set(str(payload["project_name"] or ""))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
             if isinstance(payload.get(section), dict):
@@ -1579,7 +1589,6 @@ class LinkBudgetApp:
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax1.grid(True)
         ax1.set_title("Elevation Angle")
-        fig.autofmt_xdate(rotation=30)
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()
@@ -1612,6 +1621,10 @@ class LinkBudgetApp:
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax3.grid(True)
         ax3.set_title("Doppler Shift")
+        # Rotated time labels, set on the axes: fig.autofmt_xdate() would call
+        # subplots_adjust, which the constrained layout does not allow.
+        for ax in (ax1, ax2, ax3):
+            ax.tick_params(axis="x", labelrotation=30)
 
         canvas_plot_widget = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas_plot_widget.draw()
@@ -3511,6 +3524,9 @@ class LinkBudgetApp:
                             label_text = item[1] if item[0] == "panel" else entry_labels[key]
                             group_items.append((label_text, text))
                 input_groups.append((group_title, group_items))
+            project = self.project_var.get().strip()
+            if project:
+                export_rows.append(("Project", project, "", ""))
             for group_title, group_items in input_groups:
                 for label_text, text in group_items:
                     export_rows.append((f"Input: {group_title}", label_text, text, ""))
@@ -3538,6 +3554,7 @@ class LinkBudgetApp:
                     link_availability_pct=link_availability,
                     input_groups=input_groups,
                     logo_path=_asset_path(LOGO_FILE),
+                    project=self.project_var.get().strip(),
                 ),
             )
             pdf_button.state(["!disabled"])
@@ -3574,6 +3591,9 @@ class LinkBudgetApp:
                         panel_values[key] = float(text)
                     except ValueError:
                         panel_values[key] = text
+            project = self.project_var.get().strip()
+            if project:
+                panel_values["project_name"] = project
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values
@@ -3582,7 +3602,8 @@ class LinkBudgetApp:
                 messagebox.showerror("Save Error", f"Unable to save the parameters: {exc}", parent=win)
                 return
             status_var.set(
-                f"Saved to {os.path.abspath(file_path)} (section '{section}' and the panel values above)"
+                f"Saved to {os.path.abspath(file_path)} (section '{section}', the shared values and the "
+                "project name)"
             )
 
         def _load():
@@ -3643,7 +3664,10 @@ class LinkBudgetApp:
             file_path = filedialog.asksaveasfilename(
                 parent=win,
                 title="Export Fixed-Elevation Link Budget Report",
-                initialfile=f"static_link_budget_{direction_slug}_{datetime.now():%Y%m%d}.pdf",
+                initialfile=(
+                    _project_slug(self.project_var.get())
+                    + f"static_link_budget_{direction_slug}_{datetime.now():%Y%m%d}.pdf"
+                ),
                 defaultextension=".pdf",
                 filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
             )
@@ -4460,14 +4484,32 @@ class LinkBudgetApp:
             text="Orbit prediction & downlink/uplink budget analysis",
             style="HeaderSub.TLabel",
         ).pack(anchor="w")
+        # Right of the header: the project name above the licence.
+        header_right = ttk.Frame(header, style="Header.TFrame")
+        header_right.pack(side=tk.RIGHT, fill=tk.Y)
+        self.project_var = tk.StringVar(value="")
+        project_header_var = tk.StringVar(value="")
+
+        def _show_project(*_args):
+            project = self.project_var.get().strip()
+            project_header_var.set(f"Project: {project}" if project else "")
+            self.root.title(f"Satellite Link Budget Tool – {project}" if project else "Satellite Link Budget Tool")
+
+        self.project_var.trace_add("write", _show_project)
+        ttk.Label(
+            header_right,
+            textvariable=project_header_var,
+            style="Header.TLabel",
+            font=(base_font_family, 12, "bold"),
+        ).pack(side=tk.TOP, anchor="e")
         license_text = self.license_status.summary()
         if license_text:
             ttk.Label(
-                header,
+                header_right,
                 text=license_text,
                 style="HeaderSub.TLabel",
                 foreground=PALETTE["warning_on_dark"] if self.license_status.expiring_soon else None,
-            ).pack(side=tk.RIGHT, anchor="s")
+            ).pack(side=tk.BOTTOM, anchor="e")
 
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=1)
@@ -4538,6 +4580,18 @@ class LinkBudgetApp:
         downlink_tab = _scroll_tab("Downlink")
         uplink_tab = _scroll_tab("Uplink")
         main_frame = setup_tab
+
+        # --- Project ---
+        project_frame = ttk.LabelFrame(main_frame, text="Project", padding=10)
+        project_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(project_frame, text="Project Name").pack(side=tk.LEFT, padx=5)
+        project_entry = ttk.Entry(project_frame, textvariable=self.project_var, width=40)
+        project_entry.pack(side=tk.LEFT, padx=(6, 12))
+        ttk.Label(
+            project_frame,
+            text="Shown in the window header and in the reports; saved in the parameters file.",
+            foreground=PALETTE["text_muted"],
+        ).pack(side=tk.LEFT)
 
         # --- TLE Section ---
         tle_frame = ttk.LabelFrame(main_frame, text="TLE Parameters", padding=10)
