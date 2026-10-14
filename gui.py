@@ -590,6 +590,9 @@ def _stop_for_invalid_license(status) -> None:
     raise SystemExit(1)
 
 
+NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
+
+
 class LinkBudgetApp:
     """Tkinter application for the satellite link budget tool.
 
@@ -968,6 +971,7 @@ class LinkBudgetApp:
             self.clear_plot_and_table()
             self.clear_uplink_table()
             self.contact_listbox.delete(0, tk.END)
+            self.selected_pass_var.set(NO_PASS_SELECTED)
 
     def set_uplink_budget_stale(self):
         """Mark the uplink-only link budget as stale."""
@@ -1177,6 +1181,7 @@ class LinkBudgetApp:
             self.on_contact_select(None)
         else:
             self.clear_plot_and_table()
+            self.selected_pass_var.set("no pass above the minimum elevation on this date")
 
         self.analysis_needs_refresh = False
         self.start_refresh_button.config(style="TButton")
@@ -1388,10 +1393,12 @@ class LinkBudgetApp:
         if not selection:
             self.clear_plot_and_table()
             self.clear_uplink_table()
+            self.selected_pass_var.set(NO_PASS_SELECTED)
             return
 
         idx = selection[0]
         start, end, _ = self.contact_windows[idx]
+        self.selected_pass_var.set(self.contact_listbox.get(idx))
         mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
         df_pass = self.df_all[mask].copy()
         self.current_table_df = df_pass
@@ -2125,7 +2132,7 @@ class LinkBudgetApp:
         # ITU-R P.618 model does not apply to every link (see the results notes).
         scint_var = tk.BooleanVar(value=self.scint_var.get())
         eirp_used_var = tk.StringVar(value="")
-        passes_tab = "Downlink Passes" if rx_is_ground_station else "Uplink Passes"
+        passes_tab = "Downlink" if rx_is_ground_station else "Uplink"
         shared_note = "Shared with the pass analysis tabs."
         _nav_caption("INPUTS")
         for group_index, (group_title, items) in enumerate(field_groups):
@@ -2339,7 +2346,7 @@ class LinkBudgetApp:
                         "Its location (latitude, longitude, altitude) sets the ITU-R atmospheric "
                         "attenuation; the geometry only uses elevation and altitude. Saved with "
                         "the inputs of this tab and independent of the station selected in the "
-                        "Orbit & Station tab (used as the default).",
+                        "Orbit & Passes tab (used as the default).",
                     ).pack(side=tk.LEFT, padx=(4, 0))
                     r, c = (r, 1) if c == 0 else (r + 1, 0)
                     continue
@@ -2882,7 +2889,7 @@ class LinkBudgetApp:
         for var in watched_vars:
             var.trace_add("write", _mark_stale)
 
-        # A parameters file loaded from the Orbit & Station tab (or at
+        # A parameters file loaded from the Orbit & Passes tab (or at
         # startup) refills this view.
         def _apply_loaded_values(values: dict) -> None:
             _apply_values(values)
@@ -4148,9 +4155,24 @@ class LinkBudgetApp:
         # popup's wheel binding reverts to this one when the popup closes.
         self._bind_scroll_wheel(self.main_tabs, target=_wheel_target)
 
-        setup_tab = _scroll_tab("Orbit & Station")
-        downlink_tab = _scroll_tab("Downlink Passes")
-        uplink_tab = _scroll_tab("Uplink Passes")
+        # The pass selected in the Orbit & Passes tab, shown above the results
+        # of the Downlink and Uplink tabs.
+        self.selected_pass_var = tk.StringVar(value=NO_PASS_SELECTED)
+
+        def _selected_pass_label(parent, padx=0):
+            row = ttk.Frame(parent)
+            row.pack(fill=tk.X, padx=padx, pady=(0, 8))
+            ttk.Label(row, text="Pass:", font=bold_font).pack(side=tk.LEFT)
+            ttk.Label(
+                row, textvariable=self.selected_pass_var, foreground=PALETTE["accent_dark"], font=bold_font
+            ).pack(side=tk.LEFT, padx=(6, 0))
+            ttk.Label(
+                row, text="(select it in the Orbit & Passes tab)", foreground=PALETTE["text_muted"]
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+        setup_tab = _scroll_tab("Orbit & Passes")
+        downlink_tab = _scroll_tab("Downlink")
+        uplink_tab = _scroll_tab("Uplink")
         main_frame = setup_tab
 
         # --- TLE Section ---
@@ -4236,6 +4258,58 @@ class LinkBudgetApp:
         ttk.Label(obs_frame, textvariable=self.param_file_var, foreground=PALETTE["text_muted"]).grid(
             row=4, column=0, sticky="w", padx=5, pady=(4, 0)
         )
+
+        # --- Pass analysis (shared by the Downlink and Uplink tabs) ---
+        passes_frame = ttk.LabelFrame(main_frame, text="Pass Analysis", padding=10)
+        passes_frame.pack(fill=tk.X, pady=5)
+        passes_row = ttk.Frame(passes_frame)
+        passes_row.pack(fill=tk.X, padx=5)
+        self.start_refresh_button = ttk.Button(
+            passes_row,
+            text="Start/Refresh Analysis",
+            command=self.run_analysis,
+            style="Red.TButton",
+        )
+        self.start_refresh_button.pack(side=tk.LEFT)
+        _add_tooltip(
+            self.start_refresh_button,
+            "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
+            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
+        )
+        ttk.Label(
+            passes_row,
+            text=(
+                "Finds the passes over the ground station on the chosen date, with the downlink and "
+                "uplink link budgets along each pass. Select a pass below: the Downlink and Uplink "
+                "tabs show its results."
+            ),
+            foreground=PALETTE["text_muted"],
+            wraplength=760,
+            justify="left",
+        ).pack(side=tk.LEFT, padx=(14, 0))
+
+        contact_frame = ttk.Frame(passes_frame)
+        contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
+        ttk.Label(contact_frame, text="Contact Windows (UTC Time)", font=bold_font).pack(anchor="w", pady=(0, 4))
+        self.contact_listbox = tk.Listbox(
+            contact_frame,
+            height=6,
+            exportselection=False,
+            bg=PALETTE["surface"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["accent"],
+            selectforeground="white",
+            activestyle="none",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+            highlightcolor=PALETTE["accent"],
+            font=default_font,
+        )
+        self.contact_listbox.pack(fill=tk.X, expand=True)
+        self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
+
 
         param_container = ttk.Frame(downlink_tab)
         param_container.pack(fill=tk.X, expand=False, padx=5, pady=5)
@@ -4332,18 +4406,6 @@ class LinkBudgetApp:
             downlink_tab, text="Downlink Actions", padding=10
         )
         downlink_btn_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
-        self.start_refresh_button = ttk.Button(
-            downlink_btn_frame,
-            text="Start/Refresh Analysis",
-            command=self.run_analysis,
-            style="Red.TButton",
-        )
-        self.start_refresh_button.pack(side=tk.LEFT, padx=5)
-        _add_tooltip(
-            self.start_refresh_button,
-            "Re-propagates the orbit for the full day (TLE, date, ground station) and finds all "
-            "contact windows. Turns red whenever those inputs change and a fresh run is needed.",
-        )
         self.recalc_button = ttk.Button(
             downlink_btn_frame,
             text="Calculate DL Link Budget",
@@ -4354,7 +4416,8 @@ class LinkBudgetApp:
         _add_tooltip(
             self.recalc_button,
             "Re-computes only the downlink link budget (EIRP, G/T, attenuations, bit rate, ...) for "
-            "the contact windows already found above, without re-running the orbit propagation.",
+            "the passes already found in the Orbit & Passes tab, without re-running the orbit "
+            "propagation.",
         )
         load_antenna_btn = ttk.Button(
             downlink_btn_frame, text="Load Antenna Pattern", command=self.load_antenna_pattern_file
@@ -4376,31 +4439,14 @@ class LinkBudgetApp:
             side=tk.RIGHT, padx=5
         )
 
-        contact_frame = ttk.LabelFrame(
-            downlink_results_container, text="Contact Windows (UTC Time)", padding=10
-        )
-        contact_frame.pack(fill=tk.X, pady=(0, 5))
-        self.contact_listbox = tk.Listbox(
-            contact_frame,
-            height=6,
-            exportselection=False,
-            bg=PALETTE["surface"],
-            fg=PALETTE["text"],
-            selectbackground=PALETTE["accent"],
-            selectforeground="white",
-            activestyle="none",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-            highlightcolor=PALETTE["accent"],
-            font=default_font,
-        )
-        self.contact_listbox.pack(fill=tk.X, expand=True)
-        self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
+        _selected_pass_label(downlink_results_container)
 
-        self.plot_frame = ttk.Frame(downlink_results_container)
-        self.plot_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        # Fixed height: the plots are often drawn while this tab is hidden
+        # (a pass selected in the Orbit & Passes tab), and a canvas sized
+        # by its content would collapse there.
+        self.plot_frame = ttk.Frame(downlink_results_container, height=400)
+        self.plot_frame.pack(fill=tk.X, pady=(0, 5))
+        self.plot_frame.pack_propagate(False)
 
         downlink_results_frame = ttk.LabelFrame(
             downlink_results_container, text="Downlink Results", padding=10
@@ -4508,6 +4554,8 @@ class LinkBudgetApp:
             command=self.calculate_ul_link_budget,
         )
         self.uplink_recalc_button.pack(side=tk.LEFT, padx=5)
+
+        _selected_pass_label(uplink_tab, padx=5)
 
         uplink_results_frame = ttk.LabelFrame(uplink_tab, text="Uplink Results", padding=10)
         uplink_results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
