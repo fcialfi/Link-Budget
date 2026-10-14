@@ -1030,10 +1030,16 @@ class LinkBudgetApp:
             return False
         inclination = float(tle.line2[8:16])
         kind = "sun-synchronous" if orbit["inclination_deg"] is None else "inclination given"
+        # Kept in the mission folder, like the TLE downloaded for a launched satellite.
+        tle.name = f"{tle.name} (synthetic, LTAN {self.orbit_ltan_var.get().strip()})"
+        saved = ""
+        if self.tle_file_path:
+            error = self._save_tle(tle, self.tle_file_path)
+            saved = f" (not saved: {error})" if error else f", saved in {self.tle_file_path}"
         self._set_tle_lines(
             tle.line1,
             tle.line2,
-            f"Synthetic TLE: mean altitude {orbit['altitude_km']:g} km, e = {orbit['eccentricity']:g}, "
+            f"Synthetic TLE{saved}: mean altitude {orbit['altitude_km']:g} km, e = {orbit['eccentricity']:g}, "
             f"i = {inclination:.3f}° ({kind}), LTAN {self.orbit_ltan_var.get().strip()}, "
             f"epoch {when:%Y-%m-%d}, nodal period {1440.0 / float(tle.line2[52:63]):.3f} min",
             show_age=False,
