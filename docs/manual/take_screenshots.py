@@ -117,17 +117,32 @@ def main() -> None:
     stations.selection_clear(0, "end")
     stations.selection_set(list(stations.get(0, "end")).index("Svalbard"))
     app.stats_days_var.set("7")
+    app.stats_instrument_var.set("100")
+    app.stats_hktm_var.set("4")
+    app.stats_latency_var.set("100")
+    app.stats_latency_pct_var.set("90")
     app.compute_statistics()
     while "disabled" in app.stats_button.state():
         root.update()
         time.sleep(0.1)
     root.update()
     scroll(0); shot("statistics")
+    scroll(0.24); shot("statistics_plots")
     scroll(1.0); shot("statistics_tables")
 
     # A mission not launched yet: custom orbit and synthetic TLE.
     app.select_satellite("EPS-Sterna")
     app.main_tabs.select(tabs[0]); scroll(0); shot("custom_orbit", height=460)
+    before = set(root.winfo_children())
+    app.show_constellation()
+    root.update()
+    (popup,) = [w for w in root.winfo_children() if w not in before and isinstance(w, tk.Toplevel)]
+    popup.geometry("1100x720+0+0")
+    root.update(); root.after(500); root.update()
+    grab_kwargs = {"xdisplay": os.environ["DISPLAY"]} if os.environ.get("DISPLAY") else {}
+    x, y = popup.winfo_rootx(), popup.winfo_rooty()
+    ImageGrab.grab(bbox=(x, y, x + 1100, y + 720), **grab_kwargs).save(os.path.join(IMG, "constellation.png"))
+    print("saved constellation")
     root.destroy()
 
 
