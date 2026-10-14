@@ -11,7 +11,7 @@
   "other_attenuations_db": 0.0,
   "uplink_other_attenuations_db": 0.5,
   "bitrate_mbps": 3.57,
-  "rolloff": 0.45,
+  "rolloff": 1.0,
   "demod_loss_db": 1.0,
   "demod_loss_sat_db": 1.0,
   "overhead": 2.31493,
