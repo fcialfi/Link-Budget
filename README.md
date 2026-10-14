@@ -174,5 +174,5 @@ Limiti: è un deterrente, non una protezione dalla copia. L'ultima data vista vi
 - Lo spec `gui.spec` include esplicitamente `astropy.tests.runner` e `pytest` per evitare l'errore `ModuleNotFoundError: No module named 'astropy.tests.runner'` durante l'esecuzione del binario.
 - Per eliminare l'avviso `WARNING: Hidden import "scipy.special._cdflib" not found!`, lo spec esclude il modulo opzionale `_cdflib` e forza l'inclusione degli altri moduli compilati di `scipy.special`.
 
-## License
-This project is released under the [MIT License](LICENSE).
+## Licenza
+Software proprietario, tutti i diritti riservati: vedi [LICENSE](LICENSE). L'uso dell'eseguibile richiede una licenza cliente valida (`license.key`).

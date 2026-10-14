@@ -24,6 +24,7 @@
 - User manual (PDF) with screenshots.
 
 ### Quality
+- Proprietary licence (LICENSE), replacing the MIT licence of the repository.
 - Pass analysis moved out of the window into `link_core.py`, used by the window, the statistics and the new command line tool `lbtool.py`.
 - Regression tests on a frozen AWS case, validation kit against StatPro (`validation/`), tests on GitHub Actions at every change.
 
