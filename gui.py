@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sys
+import threading
 from typing import Callable
 
 from version import APP_AUTHOR, APP_VERSION
@@ -245,6 +246,7 @@ plt.rcParams.update(
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import pandas as pd
+import numpy as np
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 from skyfield.api import load, EarthSatellite, wgs84
@@ -255,6 +257,8 @@ import json
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
 import calculations
+import tle_source
+import missions
 import licensing
 import static_report
 
@@ -281,6 +285,12 @@ from calculations import (
 )
 
 _splash_tick(_SPLASH_ROOT, _SPLASH_PROGRESS)
+
+
+def _format_optional(value, default: str) -> str:
+    """``value`` as entry text, or ``default`` when it is missing (None)."""
+
+    return default if value is None else f"{value:g}" if isinstance(value, (int, float)) else str(value)
 
 
 def _get_optional_float(entry: ttk.Entry) -> float | None:
@@ -666,6 +676,13 @@ class LinkBudgetApp:
         self.gs_menu: ttk.Combobox | None = None
         self.gs_file_var: tk.StringVar | None = None
         self.tle_file_var: tk.StringVar | None = None
+        self.tle_file_path: str | None = None
+        self.tle_info_label: ttk.Label | None = None
+        # Satellite catalogue (satellites.json) and the satellite selected.
+        self.catalogue: missions.Catalogue | None = None
+        self.current_sat: missions.Satellite | None = None
+        # False for a satellite without link budget parameters: contact analysis only.
+        self.link_budget_enabled = True
         self.param_file_var: tk.StringVar | None = None
         self.uplink_bitrate_entry: ttk.Entry | None = None
         self.uplink_rolloff_entry: ttk.Entry | None = None
@@ -727,13 +744,320 @@ class LinkBudgetApp:
             if not (tle1.startswith("1 ") and tle2.startswith("2 ")):
                 raise ValueError("TLE lines must start with '1 ' and '2 '.")
 
+        self.tle_file_path = os.path.abspath(file_path)
+        self._set_tle_lines(tle1, tle2, f"TLE: {self.tle_file_path}")
+
+    def _set_tle_lines(self, tle1: str, tle2: str, origin: str, show_age: bool = True) -> None:
+        """Fill the TLE entries and show where the TLE comes from and its age."""
+
         self.tle1_entry.delete(0, tk.END)
         self.tle1_entry.insert(0, tle1)
         self.tle2_entry.delete(0, tk.END)
         self.tle2_entry.insert(0, tle2)
         if self.tle_file_var is not None:
-            self.tle_file_var.set(f"TLE: {os.path.abspath(file_path)}")
+            text, old = origin, False
+            try:
+                if not show_age:
+                    raise ValueError("synthetic TLE: no age")
+                age = tle_source.age_days(tle1)
+                text += f"  ·  epoch {tle_source.epoch(tle1):%Y-%m-%d %H:%M} UTC ({age:.1f} days old)"
+                old = age > tle_source.MAX_AGE_DAYS
+                if old:
+                    text += " – old TLE, download a new one: the pass times may be off"
+            except ValueError:
+                pass
+            self.tle_file_var.set(text)
+            if self.tle_info_label is not None:
+                self.tle_info_label.configure(
+                    foreground=PALETTE["warning"] if old else PALETTE["text_muted"]
+                )
         self.set_analysis_stale()
+
+    def download_tle(self, auto: bool = False):
+        """Download the TLE of the NORAD ID from the internet and save it in tle.txt.
+
+        The download runs in a thread so that the window does not freeze
+        while waiting for the server (up to a few tens of seconds). With
+        ``auto`` (download on satellite selection) an error is shown in the
+        TLE status line instead of a dialog.
+        """
+
+        text = self.norad_var.get().strip()
+        try:
+            norad_id = int(text)
+            if norad_id <= 0:
+                raise ValueError
+        except ValueError:
+            if not auto:
+                messagebox.showerror(
+                    "TLE Download", "Enter the NORAD catalogue number of the satellite (e.g. 60543)."
+                )
+            return
+        target_path = self.tle_file_path or os.path.join(os.getcwd(), "tle.txt")
+
+        self.tle_download_button.state(["disabled"])
+        self.tle_file_var.set(f"Downloading the TLE of NORAD {norad_id}...")
+        result: dict = {}
+
+        def _work():
+            try:
+                result["tle"] = tle_source.fetch_tle(norad_id)
+            except Exception as exc:
+                result["error"] = exc
+
+        worker = threading.Thread(target=_work, daemon=True)
+        worker.start()
+
+        def _poll():
+            if worker.is_alive():
+                self.root.after(150, _poll)
+                return
+            self.tle_download_button.state(["!disabled"])
+            if self.norad_var.get().strip() != text:
+                # Another satellite was selected meanwhile: just keep the file.
+                if "tle" in result:
+                    self._save_tle(result["tle"], target_path)
+                return
+            if "error" in result:
+                if os.path.isfile(target_path):
+                    self._apply_tle_file(target_path)
+                else:
+                    self._clear_tle("TLE: none loaded")
+                if auto:
+                    first_line = str(result["error"]).splitlines()[0]
+                    self.tle_file_var.set(
+                        self.tle_file_var.get() + f"  ·  download failed ({first_line.rstrip(':')})"
+                    )
+                    return
+                messagebox.showerror(
+                    "TLE Download",
+                    f"{result['error']}\n\nThe TLE already loaded is kept. Without internet access, "
+                    "copy the TLE from a web page (e.g. db.satnogs.org or n2yo.com) into tle.txt "
+                    "and load it with \"Load TLE from file\".",
+                )
+                return
+            tle = result["tle"]
+            origin = f"TLE of {tle.name or norad_id}: downloaded from {tle.source}"
+            error = self._save_tle(tle, target_path)
+            if error:
+                origin += f" (not saved: {error})"
+            else:
+                self.tle_file_path = os.path.abspath(target_path)
+                origin += f", saved in {self.tle_file_path}"
+            self._set_tle_lines(tle.line1, tle.line2, origin)
+
+        self.root.after(150, _poll)
+
+    @staticmethod
+    def _save_tle(tle, path: str) -> str | None:
+        """Write ``tle`` to ``path`` (creating its folder); return the error text, if any."""
+
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(tle.text())
+        except OSError as exc:
+            return str(exc)
+        return None
+
+    def _clear_tle(self, status: str) -> None:
+        """Empty the TLE entries (no TLE for the selected satellite yet)."""
+
+        self.tle1_entry.delete(0, tk.END)
+        self.tle2_entry.delete(0, tk.END)
+        self.tle_file_var.set(status)
+        if self.tle_info_label is not None:
+            self.tle_info_label.configure(foreground=PALETTE["text_muted"])
+        self.set_analysis_stale()
+
+    # ------------------------------------------------------------------
+    # Satellite selection (satellites.json and the missions folders)
+    # ------------------------------------------------------------------
+
+    def _load_catalogue(self, path: str) -> None:
+        """Read the satellite catalogue and select its default satellite."""
+
+        self.catalogue = missions.load_catalogue(path)
+        labels = [sat.label for sat in self.catalogue.satellites]
+        self.satellite_combo.configure(values=labels)
+        self.satellite_frame_rows["select"].grid()
+        default = self.catalogue.default or self.catalogue.satellites[0].name
+        self.select_satellite(default)
+
+    def _on_satellite_chosen(self, _event=None) -> None:
+        index = self.satellite_combo.current()
+        if self.catalogue is not None and index >= 0:
+            self.select_satellite(self.catalogue.satellites[index].name)
+
+    def select_satellite(self, name: str) -> None:
+        """Make ``name`` the current satellite: its parameters, orbit and TLE.
+
+        With ``missions/<name>/parameters.json`` the link budget parameters
+        are loaded; without it only the contact analysis is available. A
+        launched satellite uses its TLE (the copy kept in the mission
+        folder, downloaded again when older than a day); a custom-orbit one
+        a synthetic TLE built from the orbit section.
+        """
+
+        sat = self.catalogue.find(name) if self.catalogue else None
+        if sat is None:
+            return
+        self.current_sat = sat
+        self.satellite_combo.set(sat.label)
+        self.norad_var.set("" if sat.norad_id is None else str(sat.norad_id))
+        self.df_all = pd.DataFrame()
+        self.contact_windows.clear()
+
+        params_path = self.catalogue.parameters_path(sat)
+        orbit = {}
+        if params_path:
+            try:
+                self._apply_parameters_file(params_path)
+                with open(params_path, "r", encoding="utf-8") as f:
+                    orbit = json.load(f).get("orbit") or {}
+                self._set_link_budget_enabled(True)
+                self.mission_status_var.set(f"Link budget parameters: {params_path}")
+            except Exception as exc:
+                self._set_link_budget_enabled(False)
+                self.mission_status_var.set(f"Parameters not valid ({exc}): contact analysis only.")
+        else:
+            self.current_param_file = self.catalogue.mission_file(sat, missions.PARAMETERS_FILE)
+            self._set_link_budget_enabled(False)
+            self.mission_status_var.set(
+                f"No link budget parameters for {sat.name}: contact analysis only. To add the link budget, "
+                f"put a parameters.json in {self.catalogue.mission_dir(sat)} (e.g. a copy of the AWS one)."
+            )
+        if not params_path or self.project_var.get().strip() == "":
+            self.project_var.set(sat.name)
+        # Sat-norad from the catalogue wins over the one in the parameters.
+        self.norad_var.set("" if sat.norad_id is None else str(sat.norad_id))
+
+        pattern_path = self.catalogue.mission_file(sat, missions.PATTERN_FILE)
+        if not os.path.isfile(pattern_path):
+            pattern_path = calculations.resolve_optional_data_file(ANTENNA_PATTERN_FILE)
+        if pattern_path:
+            try:
+                load_antenna_pattern(pattern_path)
+                self.pattern_file_var.set(f"Pattern: {os.path.abspath(pattern_path)}")
+            except Exception as exc:
+                self.pattern_file_var.set(f"Pattern not loaded: {exc}")
+
+        self.tle_file_path = self.catalogue.mission_file(sat, missions.TLE_FILE)
+        if sat.custom_orbit:
+            self.orbit_alt_var.set(_format_optional(orbit.get("altitude_km"), "628"))
+            self.orbit_ecc_var.set(_format_optional(orbit.get("eccentricity"), "0"))
+            self.orbit_argp_var.set(_format_optional(orbit.get("arg_perigee_deg"), "0"))
+            self.orbit_inc_var.set(_format_optional(orbit.get("inclination_deg"), ""))
+            planes = orbit.get("ltan") or ["22:20"]
+            planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
+            self.orbit_ltan_combo.configure(values=planes)
+            self.orbit_ltan_var.set(planes[0])
+            self.satellite_frame_rows["orbit"].grid()
+            self.tle_download_button.state(["disabled"])
+            self.generate_custom_tle(show_errors=False)
+        else:
+            self.satellite_frame_rows["orbit"].grid_remove()
+            self.tle_download_button.state(["!disabled"])
+            age = None
+            if os.path.isfile(self.tle_file_path):
+                try:
+                    self._apply_tle_file(self.tle_file_path)
+                    age = tle_source.age_days(self.tle1_entry.get().strip())
+                except Exception as exc:
+                    self._clear_tle(f"TLE file not valid: {exc}")
+            else:
+                self._clear_tle(f"No TLE of {sat.name} saved yet")
+            if age is None or age > 1.0:
+                self.download_tle(auto=True)
+        self.set_analysis_stale()
+
+    def _set_link_budget_enabled(self, enabled: bool) -> None:
+        """Enable the link budget tabs, or leave only the contact analysis."""
+
+        self.link_budget_enabled = enabled
+        if not enabled:
+            self.main_tabs.select(0)
+        for tab_id in self.main_tabs.tabs()[1:]:
+            self.main_tabs.tab(tab_id, state="normal" if enabled else "disabled")
+        if enabled:
+            self.contact_mode_var.set("")
+        else:
+            self.contact_mode_var.set(
+                "Contact analysis only: the passes are listed with their duration and maximum elevation."
+            )
+
+    def _custom_orbit(self) -> dict:
+        """The custom orbit inputs; raise ValueError when one is not valid."""
+
+        altitude = float(self.orbit_alt_var.get())
+        ltan = tle_source.ltan_hours(self.orbit_ltan_var.get())
+        inclination_text = self.orbit_inc_var.get().strip()
+        inclination = float(inclination_text) if inclination_text else None
+        eccentricity = float(self.orbit_ecc_var.get().strip() or 0.0)
+        arg_perigee = float(self.orbit_argp_var.get().strip() or 0.0)
+        return {
+            "altitude_km": altitude,
+            "ltan_h": ltan,
+            "inclination_deg": inclination,
+            "eccentricity": eccentricity,
+            "arg_perigee_deg": arg_perigee,
+        }
+
+    def generate_custom_tle(self, show_errors: bool = True) -> bool:
+        """Build the synthetic TLE of the custom orbit, with epoch at the analysed date."""
+
+        try:
+            orbit = self._custom_orbit()
+            try:
+                day = datetime.strptime(self.date_entry.get().strip(), "%Y-%m-%d")
+            except ValueError:
+                day = datetime.now(timezone.utc)
+            when = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+            name = self.current_sat.name if self.current_sat else "CUSTOM ORBIT"
+            tle = tle_source.synthetic_tle(
+                orbit["altitude_km"],
+                orbit["ltan_h"],
+                when,
+                orbit["inclination_deg"],
+                name=name.upper(),
+                eccentricity=orbit["eccentricity"],
+                arg_perigee_deg=orbit["arg_perigee_deg"],
+            )
+        except ValueError as exc:
+            if show_errors:
+                messagebox.showerror("Custom Orbit", f"Invalid orbit: {exc}")
+            self._clear_tle(f"Custom orbit not valid: {exc}")
+            return False
+        inclination = float(tle.line2[8:16])
+        kind = "sun-synchronous" if orbit["inclination_deg"] is None else "inclination given"
+        self._set_tle_lines(
+            tle.line1,
+            tle.line2,
+            f"Synthetic TLE: mean altitude {orbit['altitude_km']:g} km, e = {orbit['eccentricity']:g}, "
+            f"i = {inclination:.3f}° ({kind}), LTAN {self.orbit_ltan_var.get().strip()}, "
+            f"epoch {when:%Y-%m-%d}, nodal period {1440.0 / float(tle.line2[52:63]):.3f} min",
+            show_age=False,
+        )
+        return True
+
+    def _custom_orbit_for_file(self) -> dict | None:
+        """The custom orbit as saved in parameters.json, or None for a launched satellite."""
+
+        if not (self.current_sat and self.current_sat.custom_orbit):
+            return None
+        try:
+            orbit = self._custom_orbit()
+        except ValueError:
+            return None
+        ltan = self.orbit_ltan_var.get().strip()
+        planes = [ltan] + [p for p in self.orbit_ltan_combo.cget("values") if p != ltan]
+        return {
+            "altitude_km": orbit["altitude_km"],
+            "eccentricity": orbit["eccentricity"],
+            "arg_perigee_deg": orbit["arg_perigee_deg"],
+            "inclination_deg": orbit["inclination_deg"],
+            "ltan": planes,
+        }
 
     def load_tle_from_file(self):
         """Let the user pick a TLE file and populate the GUI fields."""
@@ -776,6 +1100,8 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        if "norad_id" in payload:
+            self.norad_var.set("" if payload["norad_id"] is None else str(payload["norad_id"]))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
             if isinstance(payload.get(section), dict):
@@ -896,9 +1222,12 @@ class LinkBudgetApp:
                 else "Ground stations: built-in list (ground_stations.txt not found)"
             )
 
+        catalogue_path = calculations.resolve_optional_data_file(
+            missions.CATALOGUE_FILE, env_var="SATELLITES_FILE"
+        )
         tle_path = calculations.resolve_optional_data_file("tle.txt", env_var="TLE_FILE")
         # (The satellite antenna pattern file is picked up the same way.)
-        if tle_path:
+        if tle_path and not catalogue_path:
             try:
                 self._apply_tle_file(tle_path)
             except Exception as exc:
@@ -917,6 +1246,14 @@ class LinkBudgetApp:
                     file=sys.stderr,
                 )
 
+        if catalogue_path:
+            try:
+                self._load_catalogue(catalogue_path)
+                return
+            except Exception as exc:
+                print(f"Warning: could not load the satellite list '{catalogue_path}': {exc}", file=sys.stderr)
+
+        # Without satellites.json: a single tle.txt and parameters.json, as before.
         params_path = calculations.resolve_optional_data_file(
             "parameters.json", env_var="PARAMETERS_FILE"
         )
@@ -1171,6 +1508,10 @@ class LinkBudgetApp:
         widgets. The method updates instance state and returns ``None``.
         """
 
+        if self.current_sat is not None and self.current_sat.custom_orbit:
+            # The synthetic TLE has its epoch at the analysed day.
+            if not self.generate_custom_tle():
+                return
         tle1 = self.tle1_entry.get().strip()
         tle2 = self.tle2_entry.get().strip()
         gs_name = self.gs_var.get()
@@ -1184,6 +1525,10 @@ class LinkBudgetApp:
             obs_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         except ValueError:
             messagebox.showerror("Error", "Invalid date format. Please use YYYY-MM-DD.")
+            return
+
+        if not self.link_budget_enabled:
+            self._run_contact_analysis(tle1, tle2, gs_name, obs_date)
             return
 
         try:
@@ -1356,6 +1701,49 @@ class LinkBudgetApp:
         self.start_refresh_button.config(style="TButton")
         self.recalc_button.config(state="!disabled")
 
+    def _run_contact_analysis(self, tle1: str, tle2: str, gs_name: str, obs_date) -> None:
+        """Passes of a satellite without link budget parameters: geometry only."""
+
+        lat_gs, lon_gs, alt_gs_m = calculations.GROUND_STATIONS[gs_name]
+        ts = load.timescale()
+        try:
+            sat = EarthSatellite(tle1, tle2, "SAT", ts)
+        except Exception as e:
+            messagebox.showerror("TLE Error", f"Invalid TLE data: {e}.")
+            return
+        gs = wgs84.latlon(lat_gs, lon_gs, elevation_m=alt_gs_m)
+        start_time = datetime(obs_date.year, obs_date.month, obs_date.day, tzinfo=timezone.utc)
+        times = [start_time + timedelta(seconds=30 * i) for i in range(2880)]
+        sky_times = ts.from_datetimes(times)
+        altitudes, slant_ranges, _, _ = prepare_topocentric_data(sat, gs, sky_times, 1.0 * u.GHz)
+        self.df_all = pd.DataFrame(
+            {
+                "Time (UTC)": times,
+                "Elevation (°)": np.round(altitudes, 2),
+                "Slant Range (km)": np.round(slant_ranges, 2),
+            }
+        )
+        self.contact_windows.clear()
+        visible = altitudes >= MIN_ELEVATION_DEG
+        start = None
+        for i, now_visible in enumerate(visible):
+            if now_visible and start is None:
+                start = times[i]
+            elif not now_visible and start is not None:
+                self.contact_windows.append((start, times[i], _classify_pass_direction(sat, ts, start, times[i])))
+                start = None
+        if start is not None:
+            self.contact_windows.append((start, times[-1], _classify_pass_direction(sat, ts, start, times[-1])))
+        self.atm_label_var.set("")
+        self.display_contacts(self.contact_windows)
+        self.selected_pass_var.set(
+            f"{len(self.contact_windows)} passes above {MIN_ELEVATION_DEG:g}° (contact analysis only)"
+            if self.contact_windows
+            else "no pass above the minimum elevation on this date"
+        )
+        self.analysis_needs_refresh = False
+        self.start_refresh_button.config(style="TButton")
+
     # ------------------------------------------------------------------
     # Recalculate Link Budget Function
     # ------------------------------------------------------------------
@@ -1372,6 +1760,8 @@ class LinkBudgetApp:
         All configuration values are taken from the GUI widgets and no
         value is returned.
         """
+        if not self.link_budget_enabled:
+            return
         if self.df_all.empty:
             messagebox.showwarning("Warning", "Please generate passes first.")
             return
@@ -1558,9 +1948,13 @@ class LinkBudgetApp:
                     filtered_contacts.append((start, end, pass_direction))
         self.contact_windows = filtered_contacts
         for i, (start, end, pass_direction) in enumerate(self.contact_windows):
+            mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
+            max_elevation = self.df_all.loc[mask, "Elevation (°)"].max()
+            minutes = (end - start).total_seconds() / 60.0
             self.contact_listbox.insert(
                 tk.END,
-                f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})",
+                f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})"
+                f"  ·  {minutes:.1f} min  ·  max El {max_elevation:.1f}°",
             )
 
     def on_contact_select(self, event):
@@ -1574,6 +1968,8 @@ class LinkBudgetApp:
         idx = selection[0]
         start, end, _ = self.contact_windows[idx]
         self.selected_pass_var.set(self.contact_listbox.get(idx))
+        if not self.link_budget_enabled:
+            return
         mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
         df_pass = self.df_all[mask].copy()
         self.current_table_df = df_pass
@@ -3722,6 +4118,12 @@ class LinkBudgetApp:
             project = self.project_var.get().strip()
             if project:
                 panel_values["project_name"] = project
+            norad = self.norad_var.get().strip()
+            if norad.isdigit():
+                panel_values["norad_id"] = int(norad)
+            orbit = self._custom_orbit_for_file()
+            if orbit is not None:
+                panel_values["orbit"] = orbit
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values
@@ -4645,6 +5047,7 @@ class LinkBudgetApp:
         header_right = ttk.Frame(header, style="Header.TFrame")
         header_right.pack(side=tk.RIGHT, fill=tk.Y)
         self.project_var = tk.StringVar(value="")
+        self.norad_var = tk.StringVar(value="")
 
         def _show_project(*_args):
             project = self.project_var.get().strip()
@@ -4732,14 +5135,85 @@ class LinkBudgetApp:
         main_frame = setup_tab
 
         # --- Project ---
-        project_frame = ttk.LabelFrame(main_frame, text="Project", padding=10)
+        project_frame = ttk.LabelFrame(main_frame, text="Satellite & Project", padding=10)
         project_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(project_frame, text="Project Name").pack(side=tk.LEFT, padx=5)
-        project_entry = ttk.Entry(project_frame, textvariable=self.project_var, width=40)
+        project_frame.grid_columnconfigure(0, weight=1)
+        self.satellite_frame_rows = {}
+
+        # Satellite list (satellites.json); hidden when there is none.
+        select_row = ttk.Frame(project_frame)
+        select_row.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        combo_line = ttk.Frame(select_row)
+        combo_line.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(combo_line, text="Satellite", width=12).pack(side=tk.LEFT, padx=5)
+        self.satellite_combo = ttk.Combobox(combo_line, state="readonly", width=60)
+        self.satellite_combo.pack(side=tk.LEFT, padx=(6, 12))
+        self.satellite_combo.bind("<<ComboboxSelected>>", self._on_satellite_chosen)
+        _add_tooltip(
+            self.satellite_combo,
+            "The satellites of satellites.json. With missions/<satellite>/parameters.json the link budget "
+            "is available; without it, the contact analysis only.",
+        )
+        self.mission_status_var = tk.StringVar(value="")
+        ttk.Label(
+            select_row, textvariable=self.mission_status_var, foreground=PALETTE["text_muted"], wraplength=1100
+        ).pack(side=tk.TOP, anchor="w", padx=5, pady=(4, 0))
+        select_row.grid_remove()
+        self.satellite_frame_rows["select"] = select_row
+
+        # Custom orbit of a mission not launched yet.
+        self.orbit_alt_var = tk.StringVar(value="628")
+        self.orbit_ecc_var = tk.StringVar(value="0")
+        self.orbit_argp_var = tk.StringVar(value="0")
+        self.orbit_ltan_var = tk.StringVar(value="22:20")
+        self.orbit_inc_var = tk.StringVar(value="")
+        orbit_row = ttk.Frame(project_frame)
+        orbit_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        ttk.Label(orbit_row, text="Custom orbit", width=12).pack(side=tk.LEFT, padx=5)
+        for label, var, width, tip in (
+            (
+                "Altitude (km)",
+                self.orbit_alt_var,
+                7,
+                "Mean semi-major axis minus the equatorial radius (6378.137 km).",
+            ),
+            ("Ecc.", self.orbit_ecc_var, 9, "Mean eccentricity (0 for a circular orbit)."),
+            ("ω (°)", self.orbit_argp_var, 5, "Mean argument of perigee (90° for a frozen orbit)."),
+            (
+                "Inclination (°)",
+                self.orbit_inc_var,
+                7,
+                "Empty: sun-synchronous orbit, inclination computed from the altitude.",
+            ),
+            (
+                "LTAN (hh:mm)",
+                self.orbit_ltan_var,
+                6,
+                "Local time of the ascending node. For a constellation, choose the orbital plane.",
+            ),
+        ):
+            ttk.Label(orbit_row, text=label).pack(side=tk.LEFT, padx=(6, 4))
+            if var is self.orbit_ltan_var:
+                orbit_entry = ttk.Combobox(orbit_row, textvariable=var, width=width)
+                orbit_entry.bind("<<ComboboxSelected>>", lambda _e: self.generate_custom_tle(show_errors=False))
+                self.orbit_ltan_combo = orbit_entry
+            else:
+                orbit_entry = ttk.Entry(orbit_row, textvariable=var, width=width)
+            orbit_entry.pack(side=tk.LEFT)
+            orbit_entry.bind("<KeyRelease>", lambda _e: self.set_analysis_stale())
+            _add_tooltip(orbit_entry, tip)
+        ttk.Button(orbit_row, text="Generate TLE", command=self.generate_custom_tle).pack(side=tk.LEFT, padx=(12, 0))
+        orbit_row.grid_remove()
+        self.satellite_frame_rows["orbit"] = orbit_row
+
+        name_row = ttk.Frame(project_frame)
+        name_row.grid(row=2, column=0, sticky="ew")
+        ttk.Label(name_row, text="Project Name", width=12).pack(side=tk.LEFT, padx=5)
+        project_entry = ttk.Entry(name_row, textvariable=self.project_var, width=40)
         project_entry.pack(side=tk.LEFT, padx=(6, 12))
         ttk.Label(
-            project_frame,
-            text="Shown in the window header and in the reports; saved in the parameters file.",
+            name_row,
+            text="Shown in the window title and in the reports; saved in the parameters file.",
             foreground=PALETTE["text_muted"],
         ).pack(side=tk.LEFT)
 
@@ -4754,13 +5228,23 @@ class LinkBudgetApp:
         self.tle2_entry = ttk.Entry(tle_frame, width=80)
         self.tle2_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
         self.tle2_entry.bind("<KeyRelease>", lambda event: self.set_analysis_stale())
-        ttk.Button(tle_frame, text="Load TLE from file", command=self.load_tle_from_file).grid(
-            row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0)
+        tle_buttons = ttk.Frame(tle_frame)
+        tle_buttons.grid(row=2, column=0, columnspan=2, sticky="w", padx=5, pady=(6, 0))
+        ttk.Button(tle_buttons, text="Load TLE from file", command=self.load_tle_from_file).pack(side=tk.LEFT)
+        ttk.Label(tle_buttons, text="NORAD ID").pack(side=tk.LEFT, padx=(24, 6))
+        norad_entry = ttk.Entry(tle_buttons, textvariable=self.norad_var, width=8)
+        norad_entry.pack(side=tk.LEFT)
+        self.tle_download_button = ttk.Button(tle_buttons, text="Download TLE", command=self.download_tle)
+        self.tle_download_button.pack(side=tk.LEFT, padx=(6, 0))
+        _add_tooltip(
+            self.tle_download_button,
+            "Download the latest TLE of this NORAD ID from SatNOGS (or CelesTrak) and save it in tle.txt.",
         )
         self.tle_file_var = tk.StringVar(value="TLE: none loaded")
-        ttk.Label(tle_frame, textvariable=self.tle_file_var, foreground=PALETTE["text_muted"]).grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(4, 0)
+        self.tle_info_label = ttk.Label(
+            tle_frame, textvariable=self.tle_file_var, foreground=PALETTE["text_muted"]
         )
+        self.tle_info_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(4, 0))
         tle_frame.grid_columnconfigure(1, weight=1)
 
         # --- Observation Settings Section ---
@@ -4886,6 +5370,10 @@ class LinkBudgetApp:
         contact_frame = ttk.Frame(passes_frame)
         contact_frame.pack(fill=tk.X, padx=5, pady=(10, 0))
         ttk.Label(contact_frame, text="Contact Windows (UTC Time)", font=bold_font).pack(anchor="w", pady=(0, 4))
+        self.contact_mode_var = tk.StringVar(value="")
+        ttk.Label(contact_frame, textvariable=self.contact_mode_var, foreground=PALETTE["warning"]).pack(
+            anchor="w", pady=(0, 4)
+        )
         self.contact_listbox = tk.Listbox(
             contact_frame,
             height=6,

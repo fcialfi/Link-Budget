@@ -1,5 +1,6 @@
 {
   "project_name": "AWS",
+  "norad_id": 60543,
   "eirp_sat_dbw": 4.51,
   "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,
@@ -23,7 +24,7 @@
   "uplink_spectral_efficiency_bpshz": 1.5,
   "fixed_elevation_downlink": {
     "elevation_deg": 3.0,
-    "sat_altitude_km": 628.0,
+    "sat_altitude_km": 600.0,
     "required_ebno_db": 2.6,
     "required_margin_db": 3.0,
     "tx_power_w": 3.3,
@@ -63,7 +64,7 @@
   },
   "fixed_elevation_uplink": {
     "elevation_deg": 3.0,
-    "sat_altitude_km": 628.0,
+    "sat_altitude_km": 600.0,
     "required_ebno_db": 9.6,
     "required_margin_db": 3.0,
     "scintillation": false,
