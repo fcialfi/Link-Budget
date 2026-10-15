@@ -132,3 +132,15 @@ def test_sun_noise_lowers_gt_and_ebno(params):
     # Far from the Sun the noise is negligible.
     far = with_sun["Sun Separation (°)"] > 30
     assert with_sun.loc[far, "Sun Noise (dB)"].max() < 0.02
+
+
+def test_scintillation_adds_no_sky_noise(params):
+    # Tropospheric scintillation is a fade, not an absorption: it lowers C but not G/T.
+    plain = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    scint = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    scint.scintillation = True
+    a = link_core.PassAnalysis(TLE, SVALBARD, plain).day(DAY, budget="visible")
+    b = link_core.PassAnalysis(TLE, SVALBARD, scint).day(DAY, budget="visible")
+    seen = a["Visible"]
+    assert (b.loc[seen, "Atmospheric Att (dB)"] > a.loc[seen, "Atmospheric Att (dB)"]).all()
+    assert np.allclose(b.loc[seen, "G/T GS (dB/K)"], a.loc[seen, "G/T GS (dB/K)"], atol=0.011)

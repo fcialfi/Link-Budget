@@ -406,16 +406,20 @@ def atmospheric_attenuation_vs_elevation(
     alt_gs: float,
     include_scintillation: bool = True,
     elevations_deg: np.ndarray = ATMOSPHERE_ELEVATION_GRID_DEG,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_absorptive: bool = False,
+):
     """ITU-R slant path attenuation (dB) at each of ``elevations_deg``.
 
     Returns ``(elevations_deg, attenuation_db)``; use
     :func:`interpolate_vs_elevation` for the samples of a pass. On a model
     error the attenuation at :data:`MIN_ELEVATION_DEG` is used everywhere.
+    With ``return_absorptive`` also the absorptive part (gas + cloud + rain,
+    without scintillation), the one that radiates noise:
+    ``(elevations_deg, attenuation_db, absorptive_db)``.
     """
     elevations = np.asarray(elevations_deg, dtype=float)
     try:
-        _, _, _, _, total = itu.atmospheric_attenuation_slant_path(
+        gas, cloud, rain, _scint, total = itu.atmospheric_attenuation_slant_path(
             lat,
             lon,
             freq_ghz,
@@ -430,12 +434,18 @@ def atmospheric_attenuation_vs_elevation(
             include_scintillation=include_scintillation,
         )
         values = np.asarray(getattr(total, "value", total), dtype=float) * np.ones_like(elevations)
+        absorptive = sum(
+            np.asarray(getattr(part, "value", part), dtype=float) for part in (gas, cloud, rain)
+        ) * np.ones_like(elevations)
     except Exception as e:
         print(f"Error calculating atmospheric attenuation vs elevation: {e}", file=sys.stderr)
         values = np.full_like(
             elevations,
             atmospheric_attenuation(lat, lon, freq_ghz, p, d_gs, alt_gs, include_scintillation),
         )
+        absorptive = np.full_like(elevations, atmospheric_attenuation(lat, lon, freq_ghz, p, d_gs, alt_gs, False))
+    if return_absorptive:
+        return elevations, values, absorptive
     return elevations, values
 
 
@@ -1432,7 +1442,8 @@ def calculate_fixed_elevation_link_budget(
         condition_gt = gt
         noise: Dict[str, float] = {}
         if gt_model is not None:
-            sky = sky_noise_temperature_k(atm["total"])
+            # Only absorption radiates noise: tropospheric scintillation is left out (ITU-R P.618 §3).
+            sky = sky_noise_temperature_k(atm["gas"] + atm["cloud"] + atm["rain"])
             condition_gt = ground_station_gt_dbk(
                 gt, gt_model["tsys_ref_k"], sky_ref_k, sky, gt_model.get("radome_loss_db", 0.0)
             )
