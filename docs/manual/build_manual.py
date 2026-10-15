@@ -519,6 +519,10 @@ def content():
         "pass, when the dump is complete and a product can be processed (the convention of product timeliness "
         "requirements); unchecked, each bit counts when it comes down, a few minutes earlier. Saved in the "
         "parameters file (latency_at_pass_end, on for EPS-Sterna); lbtool.py --latency-at-pass-end.",
+        "<b>Save to Mission</b> writes these inputs (data rates, latency requirement, memory, minimum pass, "
+        "antenna setup, latency at end of pass, ground stations) into the parameters.json of the selected "
+        "mission, keeping the rest of the file; they are loaded again whenever the mission is selected. "
+        "<b>Reload</b> reads them back; the line below the buttons names the file.",
         "<b>Min Pass Duration</b> (min): contacts (usable minutes of one satellite over one station, across "
         "midnight) shorter than this are not used, being too short to schedule (acquisition, lock, start of the "
         "dump). Empty: 0, every contact is used. Saved in the parameters file (min_pass_min); lbtool.py "
