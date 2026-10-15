@@ -53,23 +53,23 @@ def _mission(name: str, day: date, plane: str | None, download: bool = False, sa
         calculations.set_isotropic_antenna_pattern()
     if sat.custom_orbit:
         orbit = (params or {}).get("orbit") or {}
-        planes = orbit.get("ltan") or ["22:20"]
-        planes = planes if isinstance(planes, list) else [planes]
-        plane = plane or planes[0]
-        per_plane = max(1, int(orbit.get("satellites_per_plane") or 1))
-        if not 1 <= sat_number <= per_plane:
-            raise SystemExit(f"--sat must be 1 to {per_plane} (satellites per plane).")
-        plane_index = planes.index(plane) if plane in planes else 0
+        members = link_core.constellation_members(orbit)
+        plane = plane or members[0][0]
+        chosen = [m for m in members if m[0] == plane and m[1] == sat_number]
+        if not chosen:
+            numbers = [m[1] for m in members if m[0] == plane]
+            raise SystemExit(f"--plane {plane} --sat {sat_number}: no such satellite (plane {plane}: "
+                             f"{', '.join(map(str, numbers)) or 'none'}).")
+        _plane, _number, arg_latitude = chosen[0]
         tle = tle_source.synthetic_tle(
-            float(orbit.get("altitude_km", 628.0)),
+            float(orbit.get("altitude_km") or 628.0),
             tle_source.ltan_hours(plane),
             link_core.utc_midnight(day),
             orbit.get("inclination_deg"),
             name=sat.name.upper(),
             eccentricity=float(orbit.get("eccentricity") or 0.0),
             arg_perigee_deg=float(orbit.get("arg_perigee_deg") or 0.0),
-            arg_latitude_deg=((sat_number - 1) * 360.0 / per_plane
-                              + plane_index * float(orbit.get("phasing_deg") or 0.0)) % 360.0,
+            arg_latitude_deg=arg_latitude,
         )
         lines = (tle.line1, tle.line2)
     else:

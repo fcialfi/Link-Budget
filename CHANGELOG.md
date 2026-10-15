@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Constellation: Extra sats (orbit.extra_satellites, "LTAN@deg", e.g. 19:30@120) adds single satellites to the regular planes, in the statistics, Show Constellation, 3D View, the satellite selector and lbtool.py --plane/--sat.
+- parameters.json in a standard form: every known parameter, in the same order for every mission, null when unused (e.g. AWS shows where to enter the instrument data rate); every save writes this form. A null sun_noise means on.
 - Ground stations in ground_stations.csv, a CSV with a header that opens in Excel (semicolon separator accepted; the old ground_stations.txt is still read); Edit Stations... edits the catalogue as a table.
 - Mission Parameters...: the parameters.json of the selected mission as a table grouped by subject, with units and descriptions, edited and saved from the window (mission_schema.py).
 - Fix: the statistics results are cleared when another satellite (mission, or plane / sat # for a single-satellite run) is selected, instead of staying on screen.

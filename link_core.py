@@ -541,7 +541,7 @@ def link_inputs_from_parameters(params: dict) -> LinkInputs:
         pfd_limit_low=dl_values["pfd_limit"] if dl_values else None,
         pfd_limit_high=dl_values["pfd_limit_high"] if dl_values else None,
         occupied_bandwidth_hz=bitrate * (1 + rolloff) / spectral_eff if rolloff is not None and spectral_eff else None,
-        sun_noise=bool(params.get("sun_noise", True)),
+        sun_noise=params.get("sun_noise") is not False,  # null or missing: on
         solar_flux_sfu=_number(params, "solar_flux_sfu"),
     )
 
@@ -566,34 +566,68 @@ def station_gt_fields(name: str) -> dict:
     return {"gt_dbk": own["gt_dbk"], "gt_ref_elevation_deg": own["ref_elevation_deg"], "tsys_k": own["tsys_k"]}
 
 
+def parse_extra_satellite(text: str) -> tuple[str, float]:
+    """("hh:mm", argument of latitude in deg) of an extra satellite written "LTAN@deg", e.g. "19:30@120"."""
+    import tle_source
+
+    plane, sep, angle = str(text).partition("@")
+    if not sep:
+        raise ValueError(f"extra satellite '{text}': write LTAN@argument of latitude, e.g. 19:30@120")
+    plane = plane.strip()
+    tle_source.ltan_hours(plane)  # validates hh:mm
+    return plane, float(angle) % 360.0
+
+
+def constellation_members(orbit: dict) -> list[tuple[str, int, float]]:
+    """(plane LTAN, number in the plane, argument of latitude at epoch [deg]) of every satellite.
+
+    ``satellites_per_plane`` satellites (default 1) evenly spaced in each
+    plane of the LTAN list, shifted by ``phasing_deg`` from one plane to the
+    next; then the ``extra_satellites`` ("LTAN@deg"), numbered after the
+    regular ones of their plane (a plane of their own when not in the list).
+    """
+    planes = orbit.get("ltan") or ["22:20"]
+    planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
+    per_plane = max(1, int(orbit.get("satellites_per_plane") or 1))
+    phasing = float(orbit.get("phasing_deg") or 0.0)
+    members = []
+    count: dict[str, int] = {}
+    for p, plane in enumerate(planes):
+        for j in range(per_plane):
+            members.append((plane, j + 1, (j * 360.0 / per_plane + p * phasing) % 360.0))
+        count[plane] = per_plane
+    for text in orbit.get("extra_satellites") or []:
+        plane, angle = parse_extra_satellite(text)
+        count[plane] = count.get(plane, 0) + 1
+        members.append((plane, count[plane], angle))
+    return members
+
+
 def constellation_tles(orbit: dict, epoch: datetime, name: str) -> list[tuple[str, tuple[str, str]]]:
     """Synthetic TLEs of every satellite of a custom-orbit constellation.
 
     ``orbit`` is the orbit section of the mission's parameters: the planes
     are its LTAN list; ``satellites_per_plane`` satellites (default 1) are
-    spaced evenly in each plane, and ``phasing_deg`` (default 0) shifts the
-    argument of latitude from one plane to the next. Returns (name, TLE
-    lines) per satellite, e.g. "EPS-Sterna 15:30 #1".
+    spaced evenly in each plane, ``phasing_deg`` (default 0) shifts the
+    argument of latitude from one plane to the next, and
+    ``extra_satellites`` adds single satellites (see
+    :func:`constellation_members`). Returns (name, TLE lines) per
+    satellite, e.g. "EPS-Sterna 15:30 #1".
     """
     import tle_source
 
-    planes = orbit.get("ltan") or ["22:20"]
-    planes = planes if isinstance(planes, list) else [planes]
-    per_plane = max(1, int(orbit.get("satellites_per_plane") or 1))
-    phasing = float(orbit.get("phasing_deg") or 0.0)
     result = []
-    for p, plane in enumerate(planes):
-        for j in range(per_plane):
-            tle = tle_source.synthetic_tle(
-                float(orbit.get("altitude_km", 628.0)),
-                tle_source.ltan_hours(plane),
-                epoch,
-                orbit.get("inclination_deg"),
-                name=f"{name} {plane} #{j + 1}".upper(),
-                norad_id=99900 + p * 10 + j,
-                eccentricity=float(orbit.get("eccentricity") or 0.0),
-                arg_perigee_deg=float(orbit.get("arg_perigee_deg") or 0.0),
-                arg_latitude_deg=(j * 360.0 / per_plane + p * phasing) % 360.0,
-            )
-            result.append((f"{name} {plane} #{j + 1}", (tle.line1, tle.line2)))
+    for k, (plane, number, arg_latitude) in enumerate(constellation_members(orbit)):
+        tle = tle_source.synthetic_tle(
+            float(orbit.get("altitude_km") or 628.0),
+            tle_source.ltan_hours(plane),
+            epoch,
+            orbit.get("inclination_deg"),
+            name=f"{name} {plane} #{number}".upper(),
+            norad_id=99900 + k,
+            eccentricity=float(orbit.get("eccentricity") or 0.0),
+            arg_perigee_deg=float(orbit.get("arg_perigee_deg") or 0.0),
+            arg_latitude_deg=arg_latitude,
+        )
+        result.append((f"{name} {plane} #{number}", (tle.line1, tle.line2)))
     return result
