@@ -93,7 +93,7 @@
   ],
   "antenna_setup_min": 0.0,
   "downlink_data_kbps": {
-    "instruments": 64.0,
+    "instruments": 55.076,
     "hktm": null,
     "other": null
   },
