@@ -508,6 +508,10 @@ def content():
         "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
         "required time, the time within which the required share arrives, and whether the requirement is met. "
         "Saved in the parameters file (latency_requirement).",
+        "<b>Min Pass Duration</b> (min): contacts (usable minutes of one satellite over one station, across "
+        "midnight) shorter than this are not used, being too short to schedule (acquisition, lock, start of the "
+        "dump). Empty: 0, every contact is used. Saved in the parameters file (min_pass_min); lbtool.py "
+        "--min-pass.",
         "<b>Antenna Setup</b> (min, whole constellation): time to configure an antenna for another satellite. "
         "After serving a satellite the antenna cannot take a different one for this long (the same satellite "
         "resumes at once); a satellite waiting for it counts as a conflict. Saved in the parameters file "

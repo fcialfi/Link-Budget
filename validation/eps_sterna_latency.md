@@ -32,3 +32,21 @@ minimum elevation, margin and downlink bit rate.
 
 With 104 kbps (an earlier assumption) Svalbard + Punta Arenas gave
 32.5 / 63.4 / 75.9 min.
+
+## Minimum pass duration
+
+Contacts shorter than a minimum duration left out (Min Pass Duration), same
+cases (50 / 80 / 90 % [min]):
+
+| Network | Reference | 0 min | 2 min | 3 min | 4 min | 5 min |
+|---|---|---|---|---|---|---|
+| **Svalbard + Punta Arenas** | **33 / 61 / 77** | 29.7 / 59.6 / 73.5 | 30.5 / 61.3 / 74.5 | 31.4 / 62.7 / 75.5 | **32.5 / 64.5 / 77.1** | 34.8 / 68.2 / 80.7 |
+| Svalbard + McMurdo | 24 / 38 / 43 | 18.4 / 33.0 / 38.3 | 18.8 / 33.9 / 40.3 | 19.8 / 35.6 / 54.7 | 20.8 / 37.8 / 79.7 | 22.2 / 51.2 / 126.3 |
+| Svalbard + Troll | 27 / 45 / 55 | 21.3 / 39.7 / 53.7 | 21.5 / 40.8 / 57.3 | 22.2 / 42.5 / 60.9 | 22.9 / 44.5 / 63.4 | 23.9 / 47.0 / 66.1 |
+| Svalbard + O'Higgins | 29 / 49 / 68 | 23.1 / 43.2 / 61.3 | 23.4 / 44.4 / 63.5 | 24.0 / 46.2 / 65.7 | 25.6 / 51.6 / 69.2 | 27.7 / 57.1 / 72.4 |
+| Svalbard only | 47 / 75 / 84 | 52.5 / 85.1 / 139.0 | 53.4 / 87.1 / 151.7 | 54.4 / 98.0 / 174.4 | 56.2 / 126.7 / 207.2 | 60.2 / 171.4 / 262.8 |
+
+Leaving out the contacts shorter than 3-4 min brings Svalbard + Punta Arenas
+within 1-3 min of the reference on all three percentiles (4 min: 32.5 / 64.5 /
+77.1), and Svalbard + O'Higgins and the 80 % of Svalbard + Troll close to it;
+the reference probably schedules only passes of a few minutes or more.

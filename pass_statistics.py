@@ -152,6 +152,49 @@ def _groups(flags: np.ndarray) -> list[tuple[int, int]]:
     return runs
 
 
+def drop_short_contacts(
+    days: list[dict[str, dict[str, DaySamples]]],
+    step_s: float,
+    min_contact_s: float,
+    min_margin_db: float = 0.0,
+) -> list[dict[str, dict[str, DaySamples]]]:
+    """The same days without the contacts shorter than ``min_contact_s``.
+
+    A contact is a run of usable samples (in view and, with a link budget,
+    margin >= ``min_margin_db``) of one satellite over one station, followed
+    across midnight. The samples of a shorter one are set out of view: a pass
+    too short to be worth scheduling (acquisition, lock, dump start).
+    """
+    if not days or min_contact_s <= 0:
+        return days
+    min_samples = int(np.ceil(min_contact_s / step_s))
+    result = [{sat: dict(per_station) for sat, per_station in day.items()} for day in days]
+    for sat in days[0]:
+        for station in days[0][sat]:
+            parts = [day[sat][station] for day in days]
+            usable = np.concatenate([
+                np.asarray(p.visible, dtype=bool)
+                & (True if p.margin_db is None else np.nan_to_num(p.margin_db, nan=-np.inf) >= min_margin_db)
+                for p in parts
+            ])
+            keep = np.ones(len(usable), dtype=bool)
+            for first, last in _groups(usable):
+                if last - first + 1 < min_samples:
+                    keep[first : last + 1] = False
+            offset = 0
+            for k, p in enumerate(parts):
+                n = len(p.visible)
+                part_keep = keep[offset : offset + n]
+                offset += n
+                if part_keep.all():
+                    continue
+                margin = None if p.margin_db is None else np.where(part_keep, p.margin_db, np.nan)
+                result[k][sat][station] = DaySamples(
+                    p.start, p.elevation_deg, np.asarray(p.visible, dtype=bool) & part_keep, margin, p.station
+                )
+    return result
+
+
 def _ordered_unique(values) -> list:
     seen = []
     for value in values:

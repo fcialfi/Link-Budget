@@ -1231,6 +1231,8 @@ class LinkBudgetApp:
         setup = payload.get("antenna_setup_min")
         if hasattr(self, "stats_setup_var"):
             self.stats_setup_var.set("" if setup is None else f"{setup:g}")
+            min_pass = payload.get("min_pass_min")
+            self.stats_min_pass_var.set("" if min_pass is None else f"{min_pass:g}")
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
@@ -1905,6 +1907,7 @@ class LinkBudgetApp:
         self.stats_latency_var = tk.StringVar(value="")
         self.stats_latency_pct_var = tk.StringVar(value="")
         self.stats_setup_var = tk.StringVar(value="")
+        self.stats_min_pass_var = tk.StringVar(value="")
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -1926,6 +1929,9 @@ class LinkBudgetApp:
              "on ground, e.g. 60."),
             ("Within [% of data]", self.stats_latency_pct_var,
              "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
+            ("Min Pass Duration [min]", self.stats_min_pass_var,
+             "Contacts (usable minutes of one satellite over one station) shorter than this are not used: "
+             "too short to be worth scheduling (acquisition, lock, start of the dump). Empty: 0, all used."),
             ("Antenna Setup [min]", self.stats_setup_var,
              "Time to configure an antenna for another satellite (whole constellation): after a pass the "
              "antenna cannot take a different satellite for this long. Empty: 0."),
@@ -2183,6 +2189,9 @@ class LinkBudgetApp:
         setup_min = _number(self.stats_setup_var, "Antenna Setup [min]") or 0.0
         if setup_min < 0:
             raise ValueError("The antenna setup time must be positive.")
+        min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
+        if min_pass < 0:
+            raise ValueError("The minimum pass duration must be positive.")
         inputs["link"] = link
         inputs["budget"] = {
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
@@ -2192,6 +2201,7 @@ class LinkBudgetApp:
             "generated_bps": sum(given.values()) * 1e3 if given else None,
             "flows_kbps": given,
             "setup_s": setup_min * 60.0,
+            "min_pass_s": min_pass * 60.0,
         }
         return inputs
 
@@ -2256,6 +2266,10 @@ class LinkBudgetApp:
                 for k in range(inputs["days"]):
                     days.append(day_samples(link_core.utc_midnight(inputs["start"] + timedelta(days=k))))
                     _progress(k + 1, inputs["days"])
+                if budget and budget["min_pass_s"] > 0:
+                    days = pass_statistics.drop_short_contacts(
+                        days, step_s, budget["min_pass_s"], budget["required_margin"]
+                    )
                 kwargs = dict(
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
@@ -2662,6 +2676,7 @@ class LinkBudgetApp:
             if budget["latency_requirement"]:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
+            rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
             if inputs["constellation"]:
                 rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
         else:
@@ -5282,11 +5297,12 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
-            try:
-                if self.stats_setup_var.get().strip():
-                    panel_values["antenna_setup_min"] = float(self.stats_setup_var.get())
-            except ValueError:
-                pass
+            for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var)):
+                try:
+                    if var.get().strip():
+                        panel_values[key] = float(var.get())
+                except ValueError:
+                    pass
             network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
             if network:
                 panel_values["statistics_stations"] = network

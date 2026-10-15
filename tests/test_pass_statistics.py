@@ -217,3 +217,23 @@ def test_statistics_report_pdf(tmp_path):
     )
     data = path.read_bytes()
     assert data.startswith(b"%PDF") and len(data) > 2000
+
+
+def test_drop_short_contacts_across_midnight():
+    start1 = datetime.datetime(2026, 10, 1, tzinfo=UTC)
+    start2 = datetime.datetime(2026, 10, 2, tzinfo=UTC)
+
+    def samples(start, visible):
+        visible = np.array(visible, dtype=bool)
+        return ps.DaySamples(start, np.where(visible, 20.0, -5.0), visible, np.where(visible, 5.0, np.nan))
+
+    # Contact 1: one sample (dropped); contact 2: two samples before and one after midnight (kept).
+    days = [
+        {"S": {"G": samples(start1, [0, 1, 0, 0, 1, 1])}},
+        {"S": {"G": samples(start2, [1, 0, 0, 0, 0, 0])}},
+    ]
+    kept = ps.drop_short_contacts(days, step_s=60, min_contact_s=120)
+    assert list(kept[0]["S"]["G"].visible) == [False, False, False, False, True, True]
+    assert list(kept[1]["S"]["G"].visible) == [True, False, False, False, False, False]
+    assert days[0]["S"]["G"].visible[1]  # the input is not changed
+    assert ps.drop_short_contacts(days, 60, 0) is days

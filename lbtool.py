@@ -188,6 +188,9 @@ def cmd_statistics(args) -> None:
     for k in range(args.days):
         days.append(day_samples(link_core.utc_midnight(start + timedelta(days=k))))
         print(f"\r{k + 1}/{args.days} days", end="", file=sys.stderr, flush=True)
+    if link and (args.min_pass or 0) > 0:
+        days = pass_statistics.drop_short_contacts(days, link_core.STEP_S, args.min_pass * 60.0,
+                                                   budget_kwargs["min_margin_db"])
     if args.constellation and link:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
         result = pass_statistics.simulate_constellation(
@@ -258,6 +261,8 @@ def main(argv=None) -> None:
     stats.add_argument("--backup-antennas", action="store_true",
                        help="with --constellation: every antenna of a station serves a satellite at the same "
                             "time (default: one antenna per site, the others backups)")
+    stats.add_argument("--min-pass", type=float,
+                       help="contacts shorter than this are not used [min] (default 0: all)")
     stats.add_argument("--setup", type=float,
                        help="with --constellation: antenna setup time between satellites [min] "
                             "(default: antenna_setup_min of the mission parameters)")
