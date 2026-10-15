@@ -2382,7 +2382,8 @@ class LinkBudgetApp:
                                             values=[self._STATS_ALL_DAYS])
         self.stats_day_combo.pack(side=tk.LEFT, padx=(6, 0))
         self.stats_day_combo.bind("<<ComboboxSelected>>", lambda _e: self._redraw_statistics_plot())
-        ttk.Label(day_row, text="(whole constellation: the whole period, or one day in detail)",
+        self.stats_day_hint_var = tk.StringVar(value="(after Compute Statistics, for more than one day)")
+        ttk.Label(day_row, textvariable=self.stats_day_hint_var,
                   foreground=PALETTE["text_muted"]).pack(side=tk.LEFT, padx=(6, 0))
 
         self.stats_plot_frame = ttk.Frame(parent, height=720)
@@ -2468,6 +2469,7 @@ class LinkBudgetApp:
         self._stats_plot_args = None
         self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS], state="disabled")
         self.stats_day_var.set(self._STATS_ALL_DAYS)
+        self.stats_day_hint_var.set("(after Compute Statistics, for more than one day)")
         self.stats_summary_var.set(message)
         self.stats_status_var.set("")
         self.stats_export_button.state(["disabled"])
@@ -2873,13 +2875,15 @@ class LinkBudgetApp:
         constellation = bool(getattr(result, "satellites", None))
         # The day selector: the whole period or one day (one row per satellite).
         days = [f"{d.date:%Y-%m-%d}" for d in result.days]
-        if constellation and len(days) > 1:
+        if len(days) > 1:
             self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS] + days, state="readonly")
             if not keep_day or self.stats_day_var.get() not in days:
                 self.stats_day_var.set(self._STATS_ALL_DAYS)
+            self.stats_day_hint_var.set("(the whole period, or one day in detail)")
         else:
             self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS], state="disabled")
             self.stats_day_var.set(self._STATS_ALL_DAYS)
+            self.stats_day_hint_var.set("(one day computed: nothing to choose)")
         chosen_day = self.stats_day_var.get()
         day_index = days.index(chosen_day) if chosen_day in days else None
         whole_period = constellation and len(days) > 1 and day_index is None
@@ -2926,8 +2930,12 @@ class LinkBudgetApp:
             else:
                 title = f"Contacts on {first_day:%d %b %Y} (UTC), one row per satellite"
         else:
-            rows = [f"{d.date:%d %b}" for d in result.days][:31]
-            title = "Contacts per day (UTC)" + (" — first 31 days" if len(result.days) > 31 else "")
+            if day_index is not None:
+                rows = [f"{result.days[day_index].date:%d %b}"]
+                title = f"Contacts on {result.days[day_index].date:%d %b %Y} (UTC)"
+            else:
+                rows = [f"{d.date:%d %b}" for d in result.days][:31]
+                title = "Contacts per day (UTC)" + (" — first 31 days" if len(result.days) > 31 else "")
         used = []
         for p in passes:
             label, stations = p.stations, p.stations
@@ -2957,7 +2965,8 @@ class LinkBudgetApp:
                 # Over several days a pass is a thin bar: no white edge, which would hide it.
                 ax_time.broken_barh([(x0, max(w, span_h / 1500))], (r_ - 0.36, 0.72), facecolors=color,
                                     edgecolor="white", linewidth=0 if whole_period else 0.5)
-        ax_time.set_ylim(len(rows) - 0.5, -0.5)
+        pad = 0.5 if len(rows) > 2 else 1.5  # a single row keeps a normal bar height
+        ax_time.set_ylim(len(rows) - 1 + pad, -pad)
         ax_time.set_yticks(range(len(rows)))
         ax_time.set_yticklabels(rows)
         ax_time.set_xlim(0, span_h)
