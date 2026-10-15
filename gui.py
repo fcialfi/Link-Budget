@@ -264,6 +264,7 @@ import pass_statistics
 import link_core
 import licensing
 import static_report
+import statistics_report
 
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
@@ -1996,6 +1997,11 @@ class LinkBudgetApp:
         )
         self.stats_export_button.pack(fill=tk.X, pady=(6, 0))
         self.stats_export_button.state(["disabled"])
+        self.stats_pdf_button = ttk.Button(
+            buttons, text="Export PDF...", width=14, command=self.export_statistics_pdf
+        )
+        self.stats_pdf_button.pack(fill=tk.X, pady=(6, 0))
+        self.stats_pdf_button.state(["disabled"])
 
         self.stats_progress = ttk.Progressbar(parent, mode="determinate", maximum=1.0)
         self.stats_progress.pack(fill=tk.X, pady=(10, 0))
@@ -2232,8 +2238,10 @@ class LinkBudgetApp:
             return
         self.stats_button.state(["disabled"])
         self.stats_export_button.state(["disabled"])
+        self.stats_pdf_button.state(["disabled"])
         state = {"done": 0, "total": inputs["days"]}
         use_backups = self.stats_backup_var.get()  # read here: Tk variables stay in the main thread
+        inputs["use_backups"] = use_backups
         names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
@@ -2291,6 +2299,7 @@ class LinkBudgetApp:
     def _show_statistics(self, result, inputs) -> None:
         self.stats_result = result
         self.stats_export_button.state(["!disabled"])
+        self.stats_pdf_button.state(["!disabled"])
         s = result.summary
         budget = inputs["budget"]
         sat_name = self.current_sat.name if self.current_sat else "satellite"
@@ -2587,7 +2596,87 @@ class LinkBudgetApp:
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.stats_figure = fig  # kept for the PDF report
         plt.close(fig)
+
+    def _statistics_settings(self, inputs: dict) -> list:
+        """The inputs of the last statistics, as (label, value) rows for the report."""
+
+        rows = [
+            ("Satellite", self.current_sat.name if self.current_sat else "TLE of the Orbit & Passes tab"),
+            ("Satellites", f"{len(inputs['constellation'])} (whole constellation)" if inputs["constellation"] else "1"),
+            ("Period", f"{inputs['start']:%Y-%m-%d}, {inputs['days']} day(s), 30 s step"),
+            ("Ground stations", ", ".join(
+                st.name + (
+                    f" ({calculations.GROUND_STATION_ANTENNAS[st.name]} antennas"
+                    + ("" if inputs.get("use_backups") else ", 1 used") + ")"
+                    if calculations.GROUND_STATION_ANTENNAS.get(st.name, 1) > 1 else ""
+                )
+                for st in inputs["stations"])),
+            ("Antennas used", "all, backups included" if inputs.get("use_backups") else "one per site"),
+            ("Minimum elevation", f"{inputs['min_el']:g}° (and horizon masks)"),
+        ]
+        budget = inputs["budget"]
+        if budget:
+            rows += [
+                ("Required Eb/No / margin", f"{budget['required_ebno']:g} dB / {budget['required_margin']:g} dB"),
+                ("Information bit rate", f"{budget['info_bitrate_bps'] / 1e6:.3f} Mbps"),
+            ]
+            if budget["flows_kbps"]:
+                rows.append(("On-board data", " + ".join(f"{k} {v:g} kbps" for k, v in budget["flows_kbps"].items())))
+            if budget["latency_requirement"]:
+                minutes, percent = budget["latency_requirement"]
+                rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
+            if inputs["constellation"]:
+                rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
+        else:
+            rows.append(("Link budget", "none: contact analysis only"))
+        return rows
+
+    def export_statistics_pdf(self) -> None:
+        result = getattr(self, "stats_result", None)
+        inputs = getattr(self, "stats_inputs", None)
+        if result is None or inputs is None:
+            return
+        project = _project_slug(self.project_var.get()) if self.project_var.get().strip() else "statistics"
+        path = filedialog.asksaveasfilename(
+            title="Export Statistics Report",
+            defaultextension=".pdf",
+            initialfile=f"{project}_statistics.pdf",
+            filetypes=[("PDF Files", "*.pdf"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+        import tempfile
+
+        figure_png = None
+        try:
+            if getattr(self, "stats_figure", None) is not None:
+                handle, figure_png = tempfile.mkstemp(suffix=".png")
+                os.close(handle)
+                self.stats_figure.savefig(figure_png, dpi=150)
+            name = self.current_sat.name if self.current_sat else "Satellite"
+            statistics_report.build_statistics_report_pdf(
+                path,
+                result,
+                statistics_report.StatisticsReportContext(
+                    title=f"{name} – Contact and Data Statistics",
+                    period=self.stats_status_var.get().split("  ·  exported")[0],
+                    settings=self._statistics_settings(inputs),
+                    summary_lines=[line for line in self.stats_summary_var.get().splitlines() if line.strip()],
+                    figure_png=figure_png,
+                    logo_path=_asset_path(LOGO_FILE),
+                    project=self.project_var.get().strip(),
+                    app_version=APP_VERSION,
+                ),
+            )
+        except Exception as exc:
+            messagebox.showerror("Export Statistics Report", f"Could not write the report: {exc}")
+            return
+        finally:
+            if figure_png and os.path.exists(figure_png):
+                os.remove(figure_png)
+        self.stats_status_var.set(self.stats_status_var.get().split("  ·  exported")[0] + f"  ·  exported to {path}")
 
     def export_statistics_csv(self) -> None:
         result = getattr(self, "stats_result", None)

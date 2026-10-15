@@ -37,6 +37,7 @@ a = Analysis(
         # (PDF report, licence check), listed so a build never leaves them out.
         'calculations',
         'static_report',
+        'statistics_report',
         'licensing',
         'version',
         'tle_source',
