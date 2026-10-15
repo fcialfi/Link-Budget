@@ -191,7 +191,8 @@ def cmd_statistics(args) -> None:
     if args.constellation and link:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
         result = pass_statistics.simulate_constellation(
-            days, link_core.STEP_S, antennas=dict(calculations.GROUND_STATION_ANTENNAS), **kwargs
+            days, link_core.STEP_S,
+            antennas=dict(calculations.GROUND_STATION_ANTENNAS) if args.backup_antennas else {}, **kwargs
         )
     else:
         result = pass_statistics.aggregate(
@@ -252,6 +253,9 @@ def main(argv=None) -> None:
     stats.add_argument("--other", type=float, help="other data rate on the downlink [kbps]")
     stats.add_argument("--constellation", action="store_true",
                        help="all satellites of a custom-orbit constellation (stations shared, one satellite at a time)")
+    stats.add_argument("--backup-antennas", action="store_true",
+                       help="with --constellation: every antenna of a station serves a satellite at the same "
+                            "time (default: one antenna per site, the others backups)")
     stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
     stats.add_argument("--latency-pct", type=float, default=100.0,
                        help="share of the data that must meet it [%%] (default 100)")

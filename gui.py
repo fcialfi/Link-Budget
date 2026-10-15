@@ -1880,6 +1880,17 @@ class LinkBudgetApp:
             "satellites together. Each station tracks one satellite at a time; when several are in view, "
             "the one with more data on board is served and the others wait (conflict).",
         )
+        self.stats_backup_var = tk.BooleanVar(value=False)
+        backup_check = ttk.Checkbutton(
+            station_box, text="Use backup antennas", variable=self.stats_backup_var
+        )
+        backup_check.pack(anchor="w", pady=(2, 0))
+        _add_tooltip(
+            backup_check,
+            "Normally one antenna per site is used and the others are backups. Checked: every antenna of a "
+            "station (last column of ground_stations.txt) serves a satellite at the same time, a what-if "
+            "for the constellation statistics.",
+        )
 
         buttons = ttk.Frame(inputs)
         buttons.pack(side=tk.RIGHT, anchor="n")
@@ -2125,6 +2136,7 @@ class LinkBudgetApp:
         self.stats_button.state(["disabled"])
         self.stats_export_button.state(["disabled"])
         state = {"done": 0, "total": inputs["days"]}
+        use_backups = self.stats_backup_var.get()  # read here: Tk variables stay in the main thread
         names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
@@ -2144,7 +2156,8 @@ class LinkBudgetApp:
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
                 )
-                antennas = dict(calculations.GROUND_STATION_ANTENNAS)
+                # One antenna per site, the others backups, unless the backups are used too.
+                antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
                 if inputs["constellation"] and budget:
                     state["result"] = pass_statistics.simulate_constellation(
                         days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs

@@ -518,9 +518,11 @@ def content():
         "the system figures (served minutes, conflicts, volume, memory, latency and requirement), the Per "
         "Satellite table the figures of each satellite, the Per Station table the use of each station "
         "(served minutes, volume, busy time, minutes with more than one satellite usable).",
-        "The <b>Per Station</b> table is also given for one satellite and several stations. A station with "
-        "several antennas (last column of ground_stations.txt) serves that many satellites at a time; Busy is the "
-        "share of its antenna time in use, Contention the minutes with more satellites usable than antennas.",
+        "The <b>Per Station</b> table is also given for one satellite and several stations. Normally one "
+        "antenna per site is used, the others being backups; with <b>Use backup antennas</b> (lbtool.py: "
+        "--backup-antennas) a station serves as many satellites at a time as its antennas (last column of "
+        "ground_stations.txt). Busy is the share of the antenna time in use, Contention the minutes with more "
+        "satellites usable than antennas.",
     ])
     story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
                  "requirement 90 % within 100 min.")
@@ -791,8 +793,8 @@ def content():
                                 "Elevation, usually 5°: G/T values are normally given at 5°, clear sky; if it was "
                                 "measured at zenith instead, the low-elevation G/T is about 0.8 dB optimistic at "
                                 "L band); its system noise temperature [K] (empty: the mission's); the number of "
-                                "antennas (default 1), i.e. the satellites the station serves at the same time in "
-                                "the constellation statistics. E.g. Svalbard,78.2232,15.6267,10,3.0,,,,3. Lines "
+                                "antennas (default 1), backups included: used by the statistics only with Use "
+                                "backup antennas. E.g. Svalbard,78.2232,15.6267,10,3.0,,,,3. Lines "
                                 "starting with # are comments."],
         ["antenna_pattern.txt", "One point per line: angle from nadir [deg], gain [dBi], separated by a "
                                 "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "

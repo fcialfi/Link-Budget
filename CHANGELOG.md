@@ -7,7 +7,7 @@
 - Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes). lbtool.py: --sat.
 - Statistics plots redrawn: contact time, data per day, gaps (or time per satellite) and data latency with the requirement.
 - Sun outage: Sun noise in the ground antenna beam along the passes (Sun position, dish pattern, solar flux), lowering G/T and Eb/No; Sun Separation and Sun Noise columns, passes marked in the contact list and in lbtool.py, included in the statistics.
-- Ground stations: own measured G/T (with its elevation and Tsys) and number of antennas per station in ground_stations.txt; the constellation statistics serve one satellite per antenna. Svalbard with 3 antennas, Punta Arenas (2 antennas) added.
+- Ground stations: own measured G/T (with its elevation and Tsys) and number of antennas per station in ground_stations.txt; one antenna per site is used, the others are backups, unless Use backup antennas (--backup-antennas) is checked: then the constellation statistics serve one satellite per antenna. Svalbard with 3 antennas, Punta Arenas (2 antennas) added.
 - Doppler rate (Hz/s) along the passes, from the range acceleration: table column, Doppler plot, largest shift and rate per pass in the contact list and in lbtool.py.
 - Fix: tropospheric scintillation no longer adds sky noise (only gas, cloud and rain absorption radiate noise, ITU-R P.618 §3).
 - Validation: AWS downlink at Svalbard against SatMaster Pro (validation/satmaster_aws_svalbard.md): C/N0 within 0.1 dB in clear sky.
