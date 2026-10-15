@@ -560,10 +560,22 @@ def content():
          "T_sky) / Tsys). At low elevation and in rain the G/T is lower. Ground spill-over is not modelled. "
          "Empty: constant G/T."],
         ["Radome Loss [dB]", "G/T degradation of the radome (e.g. 0.25 dB), subtracted from the G/T."],
+        ["Solar Flux [sfu]", "Solar flux density at the downlink frequency, for the Sun noise (1 sfu = "
+                             "1e-22 W/m²/Hz). Typically 100–250 sfu at L/S band at solar maximum. Empty: quiet "
+                             "Sun, T = 120000 × f^−0.75 K (about 80 000 K, 49 sfu, at 1.7 GHz)."],
         ["Link Availability [%]", "Rain and clouds are taken for p = 100 − availability [% of time]."],
         ["Other Attenuations [dB]", "Any further fixed loss."],
         ["Tropospheric scintillation", "ITU-R P.618 tropospheric scintillation; off by default (valid from 5° "
                                        "of elevation and about 4–20 GHz)."],
+        ["Sun noise (Sun outage)", "On by default, with a System Noise Temperature. When the Sun is near the "
+                                   "ground antenna beam it adds T_sun × Ω_sun × G(θ) / 4π to the system noise "
+                                   "temperature (θ: angle Sun–satellite seen from the station; Gaussian main "
+                                   "beam of 70 λ/D, peak gain G/T + 10 log10 Tsys; ITU-R S.465 side lobes "
+                                   "32 − 25 log10 θ outside it). G/T and Eb/No drop by 10 log10(1 + ΔT/Tsys). "
+                                   "Sun position: Astronomical Almanac low-precision formulae (about 0.01°). "
+                                   "A 3 m antenna at 1.7 GHz with the quiet Sun on its axis: +510 K, about "
+                                   "−6 dB with Tsys 150 K. The contact list marks the passes with at least "
+                                   "0.5 dB (☀ SUN NOISE)."],
         ["Coded Bit Rate [Mbps]", "Channel bit rate of the transmitter (coding included)."],
         ["Overhead (coded / info)", "Coded bit rate / information bit rate (coding × formatting)."],
         ["Demodulator Loss [dB]", "Receiver implementation loss."],
@@ -594,7 +606,10 @@ def content():
         ["EIRP (dBW)", "Tx chain + S/C antenna gain (or EIRP SAT at the pattern peak − roll-off)."],
         ["Atmospheric Att (dB)", "ITU-R attenuation at the elevation of the sample (the model is evaluated "
                                  "on an elevation grid and interpolated)."],
-        ["G/T GS (dB/K)", "Ground station G/T at the elevation of the sample (see the parameters)."],
+        ["G/T GS (dB/K)", "Ground station G/T at the elevation of the sample, with the Sun noise (see the "
+                          "parameters)."],
+        ["Sun Separation (°)", "Angle between the Sun and the satellite seen from the station."],
+        ["Sun Noise (dB)", "G/T degradation from the Sun in the antenna beam."],
         ["Link Losses (dB)", "Ionospheric + polarisation + multipath, from the static tab."],
         ["C/(No+Io) (dBHz)", "Carrier to noise (and interference) density after the demodulator losses."],
         ["Eb/No (dB)", "C/(No+Io) − 10·log10(transfer frame bit rate)."],

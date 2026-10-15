@@ -112,3 +112,23 @@ def test_command_line_lists_the_missions(capsys):
     lbtool.main(["missions"])
     out = capsys.readouterr().out
     assert "AWS" in out and "EPS-Sterna" in out
+
+
+def test_sun_noise_lowers_gt_and_ebno(params):
+    # 17 May 2026 ~20:53:30 UTC: the Sun is about 0.2° from AWS seen from Svalbard.
+    import datetime as dt
+
+    link = link_core.link_inputs_from_parameters(params)
+    quiet = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    day = link_core.utc_midnight(dt.date(2026, 5, 17))
+    with_sun = link_core.PassAnalysis(TLE, SVALBARD, link).day(day)
+    without = link_core.PassAnalysis(TLE, SVALBARD, quiet).day(day)
+    assert "Sun Noise (dB)" not in without and "Sun Separation (°)" in without
+    sample = with_sun["Sun Noise (dB)"].idxmax()
+    assert with_sun.at[sample, "Sun Separation (°)"] < 1.0
+    assert with_sun.at[sample, "Sun Noise (dB)"] > 5.0
+    drop = without.at[sample, "Eb/No (dB)"] - with_sun.at[sample, "Eb/No (dB)"]
+    assert drop == pytest.approx(with_sun.at[sample, "Sun Noise (dB)"], abs=0.02)
+    # Far from the Sun the noise is negligible.
+    far = with_sun["Sun Separation (°)"] > 30
+    assert with_sun.loc[far, "Sun Noise (dB)"].max() < 0.02

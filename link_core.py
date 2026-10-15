@@ -79,6 +79,10 @@ class LinkInputs:
     pfd_limit_low: Optional[float] = None
     pfd_limit_high: Optional[float] = None
     occupied_bandwidth_hz: Optional[float] = None
+    # Sun in the ground antenna beam: noise added to the system noise temperature
+    # (needs gt_model). Solar flux at the downlink frequency in sfu; None: quiet Sun.
+    sun_noise: bool = True
+    solar_flux_sfu: Optional[float] = None
 
     @property
     def p(self) -> float:
@@ -231,6 +235,7 @@ class PassAnalysis:
                 include_scintillation=link.scintillation,
             )
             gt_ref = link.gt_for(st)
+            tsys_grid = None
             if link.gt_model is None:
                 gt_grid = np.full_like(attenuation, gt_ref)
             else:
@@ -240,11 +245,12 @@ class PassAnalysis:
                 sky_ref = calculations.gt_reference_sky_noise_k(
                     st.lat, st.lon, link.freq_ghz, st.d_gs, st.alt_km, model["ref_elevation_deg"]
                 )
+                sky = calculations.sky_noise_temperature_k(attenuation)
                 gt_grid = calculations.ground_station_gt_dbk(
-                    gt_ref, model["tsys_ref_k"], sky_ref,
-                    calculations.sky_noise_temperature_k(attenuation), model.get("radome_loss_db", 0.0),
+                    gt_ref, model["tsys_ref_k"], sky_ref, sky, model.get("radome_loss_db", 0.0),
                 )
-            self._tables["dl"] = (grid, attenuation, gt_grid)
+                tsys_grid = model["tsys_ref_k"] - sky_ref + sky
+            self._tables["dl"] = (grid, attenuation, gt_grid, tsys_grid)
         return self._tables["dl"]
 
     def _uplink_table(self):
@@ -258,7 +264,7 @@ class PassAnalysis:
 
     def atmosphere_summary(self) -> str:
         """One line on the attenuation and G/T used, for the window."""
-        grid, attenuation, gt_grid = self._downlink_tables()
+        grid, attenuation, gt_grid, _tsys = self._downlink_tables()
         low = calculations.MIN_ELEVATION_DEG
         text = (
             f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(low, grid, attenuation):.3f} "
@@ -274,7 +280,24 @@ class PassAnalysis:
         scaling = calculations.gt_diameter_scaling_db(self.station.d_gs, self.link.gt_ref_diameter_m)
         if scaling:
             text += f" ({self.station.d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
+        if self._sun_applies():
+            flux = self.link.solar_flux_sfu
+            text += (
+                f"\nSun noise: {'quiet Sun' if flux is None else f'{flux:g} sfu'}, "
+                f"+{self._sun_noise_k(np.array([0.0]), np.array([90.0]))[0]:.0f} K on the antenna axis"
+            )
         return text
+
+    def _sun_applies(self) -> bool:
+        return bool(self.link is not None and self.link.sun_noise and self.link.gt_model is not None)
+
+    def _sun_noise_k(self, separation_deg, sun_elevation_deg):
+        """Noise temperature (K) the Sun adds to the station antenna."""
+        link = self.link
+        peak_gain = link.gt_for(self.station) + 10 * np.log10(link.gt_model["tsys_ref_k"])
+        return calculations.sun_noise_temperature_k(
+            separation_deg, sun_elevation_deg, peak_gain, self.station.d_gs, link.freq_ghz, link.solar_flux_sfu
+        )
 
     # --- one day ---
 
@@ -298,13 +321,16 @@ class PassAnalysis:
             self.min_elevation_deg, calculations.mask_elevation_deg(azimuth, self.station.mask)
         )
         visible = np.asarray(altitudes) >= required
+        sun_el, sun_az = calculations.sun_altaz_deg(self.station.lat, self.station.lon, times)
+        sun_sep = calculations.angular_separation_deg(altitudes, azimuth, sun_el, sun_az)
         frame = pd.DataFrame({"Time (UTC)": times})
         if self.link is None:
             frame["Elevation (°)"] = np.round(altitudes, 2)
             frame["Slant Range (km)"] = np.round(slant_ranges, 2)
         else:
             frame = self._budget(frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight,
-                                 visible, budget)
+                                 visible, budget, sun_sep, sun_el)
+        frame["Sun Separation (°)"] = np.round(sun_sep, 2)
         frame["Azimuth (°)"] = np.round(azimuth, 2)
         frame["Min Elevation (°)"] = np.round(required, 2)
         frame["Visible"] = visible
@@ -312,11 +338,18 @@ class PassAnalysis:
             self._add_pfd(frame)
         return frame
 
-    def _budget(self, frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight, visible, budget):
+    def _budget(self, frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight, visible, budget,
+                sun_sep, sun_el):
         link, st = self.link, self.station
-        grid, attenuation, gt_grid = self._downlink_tables()
+        grid, attenuation, gt_grid, tsys_grid = self._downlink_tables()
         atm = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, attenuation)
         gt = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, gt_grid)
+        sun_db = None
+        if self._sun_applies():
+            # The Sun raises the system noise temperature: G/T and Eb/No drop by the same dB.
+            tsys = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, tsys_grid)
+            sun_db = 10 * np.log10(1.0 + self._sun_noise_k(sun_sep, sun_el) / tsys)
+            gt = gt - sun_db
         ul_atm = None
         ul = link.uplink
         if ul is not None:
@@ -346,6 +379,8 @@ class PassAnalysis:
                 **link.loss_kwargs,
             )
             params["G/T GS (dB/K)"] = float(gt[i])
+            if sun_db is not None:
+                params["Sun Noise (dB)"] = round(float(sun_db[i]), 2)
             for key in _ROUNDED:
                 if params.get(key) is not None:
                     params[key] = round(params[key], _DECIMALS.get(key, 2))
@@ -463,6 +498,8 @@ def link_inputs_from_parameters(params: dict) -> LinkInputs:
         pfd_limit_low=dl_values["pfd_limit"] if dl_values else None,
         pfd_limit_high=dl_values["pfd_limit_high"] if dl_values else None,
         occupied_bandwidth_hz=bitrate * (1 + rolloff) / spectral_eff if rolloff is not None and spectral_eff else None,
+        sun_noise=bool(params.get("sun_noise", True)),
+        solar_flux_sfu=_number(params, "solar_flux_sfu"),
     )
 
 
