@@ -5,6 +5,7 @@
 - parameters.json in a standard form: every known parameter, in the same order for every mission, null when unused (e.g. AWS shows where to enter the instrument data rate); every save writes this form. A null sun_noise means on.
 - Ground stations in ground_stations.csv, a CSV with a header that opens in Excel (semicolon separator accepted; the old ground_stations.txt is still read); Edit Stations... edits the catalogue as a table.
 - Mission Parameters...: the parameters.json of the selected mission as a table grouped by subject, with units and descriptions, edited and saved from the window (mission_schema.py).
+- Statistics: "Contacts shown" also for a single satellite (one day in detail), with a note saying why it is greyed out (no statistics yet, or one day only).
 - Statistics, whole constellation: the contact timeline covers the whole period (one row per satellite, the days on the time axis) instead of the first day only; "Contacts shown" picks one day in detail.
 - Fix: selecting another mission clears every parameter its parameters.json does not give (link, statistics, station network, static link budgets back to their defaults), and all of them for a mission without parameters.json, instead of keeping the values of the mission before.
 - Fix: the statistics results are cleared when another satellite (mission, or plane / sat # for a single-satellite run) is selected, instead of staying on screen.
