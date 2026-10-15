@@ -230,9 +230,9 @@ class PassAnalysis:
     def _downlink_tables(self):
         if "dl" not in self._tables:
             link, st = self.link, self.station
-            grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
+            grid, attenuation, absorptive = calculations.atmospheric_attenuation_vs_elevation(
                 st.lat, st.lon, link.freq_ghz, link.p, st.d_gs, st.alt_km,
-                include_scintillation=link.scintillation,
+                include_scintillation=link.scintillation, return_absorptive=True,
             )
             gt_ref = link.gt_for(st)
             tsys_grid = None
@@ -245,7 +245,8 @@ class PassAnalysis:
                 sky_ref = calculations.gt_reference_sky_noise_k(
                     st.lat, st.lon, link.freq_ghz, st.d_gs, st.alt_km, model["ref_elevation_deg"]
                 )
-                sky = calculations.sky_noise_temperature_k(attenuation)
+                # Only absorption radiates noise: scintillation is left out (ITU-R P.618 §3).
+                sky = calculations.sky_noise_temperature_k(absorptive)
                 gt_grid = calculations.ground_station_gt_dbk(
                     gt_ref, model["tsys_ref_k"], sky_ref, sky, model.get("radome_loss_db", 0.0),
                 )
