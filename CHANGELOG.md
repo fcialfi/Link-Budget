@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Ground stations in ground_stations.csv, a CSV with a header that opens in Excel (semicolon separator accepted; the old ground_stations.txt is still read); Edit Stations... edits the catalogue as a table.
+- Mission Parameters...: the parameters.json of the selected mission as a table grouped by subject, with units and descriptions, edited and saved from the window (mission_schema.py).
 - Fix: the statistics results are cleared when another satellite (mission, or plane / sat # for a single-satellite run) is selected, instead of staying on screen.
 - missions/EPS-Sterna/README.md: data sheet of the EPS-Sterna values (orbit, link, on-board data, memory, ground segment, requirement) with their sources and the latest results.
 - Statistics: Save to Mission and Reload buttons: the statistics inputs are saved in and reloaded from the parameters.json of the selected mission.

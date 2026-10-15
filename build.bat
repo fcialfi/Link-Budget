@@ -42,7 +42,7 @@ if exist dist (
 %PY% -m PyInstaller --noconfirm gui.spec || goto :error
 
 echo === Copying the data files
-for %%f in ("ground_stations.txt" "satellites.json") do (
+for %%f in ("ground_stations.csv" "satellites.json") do (
     if exist %%f (
         copy /y %%f "dist\%APP%\" >nul || goto :error
     ) else (

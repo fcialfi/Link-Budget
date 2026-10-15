@@ -47,15 +47,16 @@ def _resolve_ground_stations_file() -> str:
     # If bundled, allow a file next to the executable to override packaged data.
     if getattr(sys, "frozen", False):
         exe_dir = os.path.dirname(sys.executable)
-        candidates.append(os.path.join(exe_dir, "ground_stations.txt"))
+        candidates += [os.path.join(exe_dir, "ground_stations.csv"), os.path.join(exe_dir, "ground_stations.txt")]
 
     # Local working directory comes next so users can drop in a custom file while
     # running from source.
-    candidates.append(os.path.join(os.getcwd(), "ground_stations.txt"))
+    candidates += [os.path.join(os.getcwd(), "ground_stations.csv"), os.path.join(os.getcwd(), "ground_stations.txt")]
 
     # Fallback to the repository/module path only when running from source.
     if not getattr(sys, "frozen", False):
-        candidates.append(os.path.join(os.path.dirname(__file__), "ground_stations.txt"))
+        here = os.path.dirname(__file__)
+        candidates += [os.path.join(here, "ground_stations.csv"), os.path.join(here, "ground_stations.txt")]
 
     for candidate in candidates:
         if candidate and os.path.isfile(candidate):
@@ -110,6 +111,42 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
     return _read_ground_stations(file_path)[0]
 
 
+# Columns of the ground station catalogue (CSV with this header; the first four required).
+STATION_COLUMNS = (
+    "name", "latitude_deg", "longitude_deg", "altitude_m", "antenna_diameter_m",
+    "gt_dbk", "gt_elevation_deg", "tsys_k", "antennas",
+)
+
+
+def write_ground_stations(file_path: str, rows: list[dict]) -> None:
+    """Write a ground station catalogue as CSV with a header (empty cells for missing optional values)."""
+    import csv
+
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(STATION_COLUMNS)
+        for row in rows:
+            cells = []
+            for key in STATION_COLUMNS:
+                value = row.get(key)
+                cells.append("" if value is None or value == "" else (f"{value:g}" if isinstance(value, float) else value))
+            writer.writerow(cells)
+
+
+def ground_station_rows() -> list[dict]:
+    """The loaded catalogue as rows of :data:`STATION_COLUMNS`."""
+    rows = []
+    for name, (lat, lon, alt) in GROUND_STATIONS.items():
+        own = GROUND_STATION_GT.get(name) or {}
+        rows.append({
+            "name": name, "latitude_deg": lat, "longitude_deg": lon, "altitude_m": alt,
+            "antenna_diameter_m": GROUND_STATION_DIAMETERS.get(name),
+            "gt_dbk": own.get("gt_dbk"), "gt_elevation_deg": own.get("ref_elevation_deg"),
+            "tsys_k": own.get("tsys_k"), "antennas": GROUND_STATION_ANTENNAS.get(name),
+        })
+    return rows
+
+
 def _read_ground_stations(
     file_path: str | None = None,
     gt_values: Optional[dict] = None,
@@ -134,38 +171,56 @@ def _read_ground_stations(
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"Ground station file not found: {file_path}")
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        for line_no, raw_line in enumerate(f, start=1):
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = [p.strip() for p in line.split(",")]
-            if not 4 <= len(parts) <= 9:
-                raise ValueError(
-                    f"Line {line_no} in {file_path} must have 4 to 9 comma-separated fields: name, latitude, "
-                    "longitude, altitude [, diameter, G/T, G/T elevation, Tsys, antennas]"
-                )
-            name, lat_str, lon_str, alt_str = parts[:4]
-            try:
-                lat = float(lat_str)
-                lon = float(lon_str)
-                alt = float(alt_str)
-                if len(parts) >= 5 and parts[4]:
-                    diameters[name] = float(parts[4])
-                extra = ([float(v) if v else None for v in parts[5:8]] + [None, None, None])[:3]
-                if gt_values is not None and extra[0] is not None:
-                    gt_values[name] = {"gt_dbk": extra[0], "ref_elevation_deg": extra[1], "tsys_k": extra[2]}
-                if len(parts) == 9 and parts[8]:
-                    count = int(parts[8])
-                    if count < 1:
-                        raise ValueError("the number of antennas must be at least 1")
-                    if antennas is not None:
-                        antennas[name] = count
-            except ValueError as exc:
-                raise ValueError(
-                    f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
-                ) from exc
-            stations[name] = (lat, lon, alt)
+    with open(file_path, "r", encoding="utf-8-sig") as f:
+        lines = [(n, raw.strip()) for n, raw in enumerate(f, start=1)]
+    lines = [(n, line) for n, line in lines if line and not line.startswith("#")]
+    # A CSV saved by Excel with a semicolon separator is accepted too.
+    delimiter = ";" if lines and ";" in lines[0][1] and "," not in lines[0][1] else ","
+    columns = list(STATION_COLUMNS)
+    if lines and lines[0][1].split(delimiter)[0].strip().lower() == "name":
+        # A header row: the columns may come in any order, the optional ones may be missing.
+        header = [h.strip().lower() for h in lines[0][1].split(delimiter)]
+        unknown = [h for h in header if h and h not in STATION_COLUMNS]
+        if unknown or any(c not in header for c in STATION_COLUMNS[:4]):
+            raise ValueError(
+                f"{file_path}: the header must name the columns {', '.join(STATION_COLUMNS)} "
+                f"(the first four required); unknown: {', '.join(unknown) or 'none'}"
+            )
+        columns = header
+        lines = lines[1:]
+
+    for line_no, line in lines:
+        parts = [p.strip() for p in line.split(delimiter)]
+        if not 4 <= len(parts) <= len(columns):
+            raise ValueError(
+                f"Line {line_no} in {file_path} must have 4 to 9 comma-separated fields: name, latitude, "
+                "longitude, altitude [, diameter, G/T, G/T elevation, Tsys, antennas]"
+            )
+        row = dict(zip(columns, parts))
+        name = row["name"]
+
+        def _num(key):
+            text = row.get(key, "")
+            return float(text) if text else None
+
+        try:
+            lat, lon, alt = (float(row[k]) for k in STATION_COLUMNS[1:4])
+            if _num("antenna_diameter_m") is not None:
+                diameters[name] = _num("antenna_diameter_m")
+            if gt_values is not None and _num("gt_dbk") is not None:
+                gt_values[name] = {"gt_dbk": _num("gt_dbk"), "ref_elevation_deg": _num("gt_elevation_deg"),
+                                   "tsys_k": _num("tsys_k")}
+            if row.get("antennas"):
+                count = int(float(row["antennas"]))
+                if count < 1:
+                    raise ValueError("the number of antennas must be at least 1")
+                if antennas is not None:
+                    antennas[name] = count
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
+            ) from exc
+        stations[name] = (lat, lon, alt)
 
     if not stations:
         raise ValueError(f"No ground stations found in file: {file_path}")
