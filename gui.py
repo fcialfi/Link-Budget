@@ -2701,6 +2701,10 @@ class LinkBudgetApp:
                 closest = self.df_all.loc[in_contact, "Sun Separation (°)"].min()
                 if closest < 5.0:
                     text += f"  ·  ☀ Sun {closest:.1f}° from the satellite"
+            if "Doppler Rate (Hz/s)" in self.df_all.columns:
+                doppler = self.df_all.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
+                rate = self.df_all.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
+                text += f"  ·  Doppler ±{doppler:.1f} kHz, max {rate:.0f} Hz/s"
             self.contact_listbox.insert(tk.END, text)
 
     def on_contact_select(self, event):
@@ -2781,6 +2785,13 @@ class LinkBudgetApp:
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax3.grid(True)
         ax3.set_title("Doppler Shift")
+        if "Doppler Rate (Hz/s)" in df_pass.columns:
+            ax3_rate = ax3.twinx()
+            ax3_rate.plot(df_pass["Time (UTC)"], df_pass["Doppler Rate (Hz/s)"], color=MATLAB_COLORS["orange"],
+                          linestyle="--")
+            ax3_rate.set_ylabel("Doppler rate (Hz/s)", color=MATLAB_COLORS["orange"], fontsize=8)
+            ax3_rate.tick_params(axis="y", labelcolor=MATLAB_COLORS["orange"], labelsize=8)
+            ax3.set_title("Doppler Shift and Rate")
         # Rotated time labels, set on the axes: fig.autofmt_xdate() would call
         # subplots_adjust, which the constrained layout does not allow.
         for ax in (ax1, ax2, ax3):
@@ -2800,6 +2811,8 @@ class LinkBudgetApp:
             ("Off Boresight Angle (°)", "Nadir Ang. [°]", "Geometry",
              "Angle from the satellite antenna boresight (nadir) towards the station."),
             ("Doppler Shift (kHz)", "Doppler [kHz]", "Geometry", "Doppler shift of the downlink carrier."),
+            ("Doppler Rate (Hz/s)", "Dop. Rate [Hz/s]", "Geometry",
+             "Rate of change of the downlink Doppler shift (from the range acceleration)."),
             ("Sun Separation (°)", "Sun Sep. [°]", "Geometry",
              "Angle between the Sun and the satellite seen from the station (the antenna axis)."),
             ("Path Loss (dB)", "FSL [dB]", "Link Budget", "Free space loss."),

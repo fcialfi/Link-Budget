@@ -609,6 +609,10 @@ def content():
         ["G/T GS (dB/K)", "Ground station G/T at the elevation of the sample, with the Sun noise (see the "
                           "parameters)."],
         ["Sun Separation (°)", "Angle between the Sun and the satellite seen from the station."],
+        ["Doppler Rate (Hz/s)", "Rate of change of the downlink Doppler shift, −f r''/c, from the range "
+                                "acceleration (relative velocity, satellite gravity, station rotation): exact at "
+                                "every sample, peak at the closest approach. Shown dashed in the Doppler plot; "
+                                "the contact list gives the largest Doppler shift and rate of each pass."],
         ["Sun Noise (dB)", "G/T degradation from the Sun in the antenna beam."],
         ["Link Losses (dB)", "Ionospheric + polarisation + multipath, from the static tab."],
         ["C/(No+Io) (dBHz)", "Carrier to noise (and interference) density after the demodulator losses."],
