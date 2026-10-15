@@ -8,6 +8,7 @@ the ones the program gives.
 """
 
 import datetime
+import re
 import warnings
 
 import numpy as np
@@ -136,10 +137,10 @@ def chapters(m, root=None):
     # Section references are written as tokens (§gt, §atm, ...) and numbered here, so they follow the
     # position of these chapters in the manual.
     ref_ch = m._chapter[0] + 1
-    sections = ["const", "orbit", "stations", "geom", "atm", "gt", "sun", "dl", "ul", "columns", "static",
+    sections = ["const", "symbols", "orbit", "stations", "geom", "atm", "gt", "sun", "dl", "ul", "columns", "static",
                 "static_results", "derived", "example"]
     tokens = {name: f"{ref_ch}.{k}" for k, name in enumerate(sections, start=1)}
-    tokens.update(ref=str(ref_ch), lat=f"{ref_ch + 1}.3", calc=str(m.CALC_CHAPTER[0]))
+    tokens.update(ref=str(ref_ch), lat=f"{ref_ch + 1}.3", calc=str(m.CALC_CHAPTER[0]), ref_stats=str(ref_ch + 1))
 
     def T(text):
         for name in sorted(tokens, key=len, reverse=True):
@@ -211,6 +212,110 @@ def chapters(m, root=None):
     ], [4.0, 6.0, 6.5], bold_cols=(0,))
 
     # ----------------------------------------------------------------------
+    story += H2("List of symbols")
+    story.append(P(
+        "Every symbol used in the formulas of chapters §calc, §ref and §ref_stats, with its meaning, its unit "
+        "and the section where it is defined or computed. Subscripts: GS ground station, SAT satellite, UL "
+        "uplink, ref reference, req required."))
+    groups = [
+        ("Orbit and geometry", [
+            (r"R", "Earth equatorial radius, 6378.137", "km", "§const"),
+            (r"\mu,\ J_2", "Earth gravitational parameter, second zonal harmonic", "km³/s², –", "§const"),
+            (r"a,\ e,\ i,\ \omega", "Semi-major axis, eccentricity, inclination, argument of perigee", "km, –, °, °", "§orbit"),
+            (r"h", "Satellite altitude (a − R)", "km", "§orbit"),
+            (r"n,\ p", "Mean motion, semi-latus rectum a(1 − e²)", "rad/s, km", "§orbit"),
+            (r"\Omega,\ \dot{\Omega}_{\mathrm{SSO}}", "Right ascension of the ascending node (RAAN); node rate of a sun-synchronous orbit", "°, rad/s", "§orbit"),
+            (r"M_0,\ \dot{M},\ \dot{\omega}", "Mean anomaly at the epoch; J2 rates of mean anomaly and perigee", "°, rad/s", "§orbit"),
+            (r"T", "Nodal period", "min", "§orbit"),
+            (r"u,\ \Delta u", "Argument of latitude at the epoch; phasing between planes", "°", "§orbit"),
+            (r"N,\ p,\ j", "Satellites per plane; plane index; satellite index in the plane", "–", "§orbit"),
+            (r"t_0,\ \mathrm{LTAN}", "Epoch (00:00 UTC of the day); local time of the ascending node", "–, h", "§orbit"),
+            (r"\mathrm{el},\ \mathrm{az}", "Elevation and azimuth of the satellite seen from the station", "°", "§stations"),
+            (r"\mathrm{el}_{\min},\ \mathrm{el}_{\mathrm{req}},\ m", "Min Elevation; required elevation; horizon mask", "°", "§stations"),
+            (r"h_{\mathrm{GS}}", "Station altitude", "km", "§geom"),
+            (r"d", "Slant range", "km (m in the PFD)", "§geom"),
+            (r"\eta", "Angle from the satellite nadir to the station (off-boresight angle)", "°", "§geom"),
+            (r"f_D,\ \dot{f}_D", "Doppler shift and Doppler rate", "Hz, Hz/s", "§geom"),
+            (r"\dot{r},\ \ddot{r}", "Range rate and range acceleration", "km/s, km/s²", "§geom"),
+            (r"\mathbf{v}_{\mathrm{rel}},\ \hat{\mathbf{r}}", "Relative velocity; unit vector from the station to the satellite", "km/s, –", "§geom"),
+            (r"\mathbf{a}_{\mathrm{sat}},\ \mathbf{a}_{\mathrm{GS}}", "Gravity acceleration of the satellite; centripetal acceleration of the station", "km/s²", "§geom"),
+            (r"\theta", "Angle between two directions (Sun separation, depointing)", "°", "§geom, §sun"),
+        ]),
+        ("Propagation and losses", [
+            (r"f,\ \lambda", "Carrier frequency; wavelength c / f", "GHz, m", "§dl"),
+            (r"p", "Percentage of time the attenuation is exceeded: 100 − availability", "%", "§atm"),
+            (r"A,\ A_g,\ A_c,\ A_r,\ A_s", "Total, gas, cloud, rain, tropospheric scintillation attenuation", "dB", "§atm"),
+            (r"L_{\mathrm{FS}}", "Free space loss", "dB", "§columns"),
+            (r"L_{\mathrm{iono}},\ S_4,\ P_{\mathrm{pp}}", "Ionospheric loss; S4 scintillation index; peak-to-peak fluctuation", "dB, –, dB", "§derived"),
+            (r"f_{\mathrm{ref}},\ S_{4,\mathrm{ref}}", "Frequency at which S4 was measured; S4 at that frequency", "MHz, –", "§derived"),
+            (r"\phi,\ \lambda,\ \phi_m,\ \phi_p,\ \lambda_p", "Station latitude and longitude; geomagnetic latitude; geomagnetic pole", "°", "§derived"),
+            (r"L_{\mathrm{pol}},\ AR,\ r", "Polarisation mismatch loss; axial ratio; voltage axial ratio 10<super>AR/20</super>", "dB, dB, –", "§derived"),
+            (r"L_{\mathrm{mp}},\ L_{\mathrm{other}}", "Multipath losses; Other Attenuations", "dB", "§static"),
+            (r"L_{\mathrm{link}}", "Static losses applied along the passes: L_iono + L_pol + L_mp", "dB", "§columns"),
+            (r"L_{\mathrm{prop}}", "Total propagation loss of the static budget", "dB", "§static_results"),
+            (r"L_{\mathrm{point}},\ \theta_p,\ \theta_{3\mathrm{dB}}", "Pointing loss; depointing angle; 3 dB beamwidth 70 λ/D", "dB, °, °", "§static_results"),
+        ]),
+        ("Antennas, G/T and Sun", [
+            (r"P_{\mathrm{Tx}}", "Transmitter power (10 log of the power in W)", "dBW", "§static_results"),
+            (r"L_{\mathrm{circuit}},\ L_{\mathrm{VSWR}},\ \Gamma", "Antenna circuit loss; mismatch loss; reflection coefficient", "dB, dB, –", "§static_results"),
+            (r"T_{\mathrm{chain}}", "Tx chain without antenna gain: P_Tx − L_circuit − L_VSWR", "dBW", "§columns"),
+            (r"G_{\mathrm{ant}},\ G_{\mathrm{eff}}", "Tx antenna gain; effective gain G_ant − L_circuit − L_VSWR", "dBi", "§static_results"),
+            (r"G(\eta),\ G_{\mathrm{peak}}", "Satellite antenna pattern gain at η; highest gain of the pattern", "dBi", "§columns"),
+            (r"\mathrm{EIRP}", "Effective isotropic radiated power", "dBW", "§columns"),
+            (r"D,\ D_{\mathrm{ref}}", "Ground antenna diameter; diameter the G/T GS refers to", "m", "§gt"),
+            (r"(G/T)_{\mathrm{GS}},\ (G/T)_{\mathrm{ref}}", "G/T GS entered; G/T of the station at the reference elevation", "dB/K", "§gt"),
+            (r"\mathrm{el}_{\mathrm{ref}}", "G/T reference elevation", "°", "§gt"),
+            (r"T_{\mathrm{sys}},\ T_{\mathrm{sys,ref}}", "System noise temperature; at the reference elevation, clear sky", "K", "§gt"),
+            (r"T_{\mathrm{sky}},\ T_{\mathrm{sky,ref}}", "Sky noise temperature; at the reference elevation, clear sky", "K", "§gt"),
+            (r"T_m,\ T_c", "Mean radiating temperature 275 K; cosmic background 2.7 K", "K", "§const"),
+            (r"L_{\mathrm{radome}}", "Radome loss", "dB", "§gt"),
+            (r"T_b,\ S,\ \Omega_{\odot}", "Sun brightness temperature; solar flux; solar disc solid angle", "K, sfu, sr", "§sun"),
+            (r"G_{\mathrm{main}},\ G_{\mathrm{side}}", "Ground antenna main-lobe and side-lobe gain towards the Sun", "dBi", "§sun"),
+            (r"\Delta T,\ \Delta_{\mathrm{Sun}}", "Noise added by the Sun; Sun noise (drop of G/T)", "K, dB", "§sun"),
+            (r"k", "Boltzmann constant (−228.6 dBW/K/Hz); in §orbit the J2 coefficient", "–", "§const"),
+            (r"n,\ L,\ g,\ \lambda_{\odot},\ \varepsilon", "Days from J2000; Sun mean longitude, mean anomaly, ecliptic longitude; obliquity", "d, °", "§sun"),
+            (r"\alpha,\ \delta,\ H,\ \mathrm{GMST}", "Sun right ascension, declination, hour angle; sidereal time (α is the roll-off elsewhere)", "°", "§sun"),
+            (r"\lambda_{\mathrm{GS}}", "Station longitude", "°", "§sun"),
+        ]),
+        ("Link budget and data", [
+            (r"P_{\mathrm{Rx}}", "Received power", "dBW", "§columns"),
+            (r"S/N_0,\ C/N_0,\ C/I_0", "Signal and carrier to noise density; carrier to interference density", "dBHz", "§columns"),
+            (r"L_{\mathrm{demod}},\ L_{\mathrm{mod}},\ D_{\mathrm{mod}}", "Demodulator loss; modulation degradation (L_mod = D_mod)", "dB", "§dl, §static"),
+            (r"E_b/N_0,\ (E_b/N_0)_{\mathrm{req}}", "Energy per bit to noise density; required", "dB", "§columns"),
+            (r"R_c,\ R_{\mathrm{frame}},\ R_{\mathrm{info}}", "Coded, transfer frame and information bit rate", "bit/s", "§dl, §derived"),
+            (r"OH,\ F,\ c", "Overhead R_c/R_info; formatting factor R_frame/R_info; coding factor R_c/R_frame", "–", "§derived"),
+            (r"I,\ L_{\mathrm{frame}},\ L_{\mathrm{cb}},\ L_{\mathrm{df}},\ L_{\mathrm{user}}", "RS interleaving depth; frame, codeblock, data field and user data lengths", "–, bytes", "§derived"),
+            (r"L_{\mathrm{SH}},\ L_{\mathrm{pkt}},\ L_{\mathrm{CUC}},\ L_{\mathrm{PEC}}", "Frame secondary header; packet length; packet data field header; packet error control", "bytes", "§derived"),
+            (r"B,\ \alpha,\ \eta_s", "Occupied bandwidth; roll-off; spectral efficiency", "Hz, –, b/s/Hz", "§dl"),
+            (r"\mathrm{PFD},\ \mathrm{PFD}_{4\mathrm{kHz}}", "Power flux density; in the 4 kHz reference bandwidth", "dBW/m², dBW/m²/4kHz", "§static_results"),
+            (r"L_{\mathrm{low}},\ L_{\mathrm{high}},\ M_{\mathrm{PFD}}", "PFD limits 0–5° and 25–90°; PFD margin", "dBW/m²/4kHz, dB", "§derived"),
+        ]),
+        ("Margins and tolerances", [
+            (r"M,\ M_{\mathrm{nom}}", "Data Recovery Margin E_b/N_0 − (E_b/N_0)_req (nominal)", "dB", "§static_results"),
+            (r"a,\ b,\ \mathrm{adv},\ \mathrm{fav}", "Adverse (negative) and favourable limits of a tolerance", "dB", "§derived"),
+            (r"\mu_k,\ \sigma_k^2,\ \sigma", "Mean and variance of tolerance k; standard deviation of the margin", "dB, dB², dB", "§derived"),
+            (r"M_{\mathrm{mean}},\ M_{-3\sigma},\ M_{\mathrm{RSS}}", "Margin mean, MEAN − 3σ, Worst Case RSS", "dB", "§derived"),
+            (r"M_{\mathrm{fav}},\ M_{\mathrm{adv}}", "Margin with all tolerances favourable / adverse", "dB", "§derived"),
+        ]),
+        ("Statistics", [
+            (r"s,\ g,\ t,\ \Delta t", "Satellite, station, sample; time step 30 s", "–, –, –, s", "§ref_stats.2"),
+            (r"m(s,g,t),\ M_{\mathrm{req}}", "Margin over the required Eb/No; Required Margin", "dB", "§ref_stats.2"),
+            (r"C,\ R_d,\ R_{\mathrm{RT}}", "Capacity of a sample; downlink rate of the stored data; real-time TM rate", "bit, bit/s, bit/s", "§ref_stats.2"),
+            (r"G", "Data generated on board: instruments + HKTM + other", "bit/s", "§ref_stats.3"),
+            (r"Q,\ Q_{\max}", "Data on board; on-board memory", "bit", "§ref_stats.3"),
+            (r"x,\ D", "Bits downloaded in a sample; bits downloaded before it", "bit", "§ref_stats.3"),
+            (r"t_{\mathrm{arr}}", "Time the chunk reaches the ground (end of sample or of pass)", "s", "§ref_stats.3"),
+            (r"\ell_{\min},\ \ell_{\max},\ \bar{\ell}", "Latency range of a chunk; mean latency", "s, min", "§ref_stats.3"),
+            (r"s(L),\ L_X", "Share of the data within L minutes; latency at X %", "–, min", "§ref_stats.3"),
+        ]),
+    ]
+    for title, items in groups:
+        story.append(H3(title))
+        story += TABLE([["Symbol", "Meaning", "Unit", "Section"]] +
+                       [[M(tex), re.sub(r"([A-Za-z0-9)])_([A-Za-z0-9]+)", r"\1<sub>\2</sub>", meaning), unit, where]
+                        for tex, meaning, unit, where in items],
+                       [3.6, 8.4, 2.6, 1.9], bold_cols=())
+
     story += H2("Orbit, TLE and constellation")
     story.append(P(
         "<b>Launched satellite</b>: the two TLE lines of <b>tle.txt</b> in the mission folder, or downloaded by "
