@@ -54,3 +54,20 @@ the reference probably schedules only passes of a few minutes or more.
 With the minimum SDA pass duration of EPS-Sterna, 4.7 min (in the mission
 parameters; with the 30 s step a contact needs 10 samples, i.e. it acts as
 5 min): Svalbard + Punta Arenas 34.8 / 68.2 / 80.7 min, against 33 / 61 / 77.
+
+## Sensitivity (Svalbard + Punta Arenas, 64 kbps)
+
+| Minimum elevation | Required margin | Min pass 0 min | Min pass 4.7 min |
+|---|---|---|---|
+| 5° | 3 dB or 0 dB | 29.7 / 59.6 / 73.5 | 34.8 / 68.2 / 80.7 |
+| 3° | 3 dB or 0 dB | 25.8 / 53.1 / 69.9 | 28.1 / 58.3 / 72.6 |
+| 0° | 3 dB | 23.5 / 49.1 / 66.7 | 24.2 / 51.5 / 68.4 |
+| 0° | 0 dB | 22.6 / 47.6 / 65.5 | 23.2 / 49.7 / 67.2 |
+
+- A 10 s step instead of 30 s changes nothing (4.7 min: 34.5 / 67.9 / 80.3).
+- The required margin does not matter above 3°: the link closes with more
+  than 3 dB in every usable sample.
+- The minimum elevation is the dominant assumption: with the 4.7 min minimum
+  pass the reference (33 / 61 / 77) lies between 5° and 3°, as with a
+  minimum elevation of about 4° or a horizon mask lower than 5° in parts of
+  the sky.
