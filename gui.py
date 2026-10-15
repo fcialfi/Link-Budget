@@ -2004,7 +2004,7 @@ class LinkBudgetApp:
             summary_frame, textvariable=self.stats_summary_var, justify="left", font=bold_font, wraplength=1100
         ).pack(anchor="w")
 
-        self.stats_plot_frame = ttk.Frame(parent, height=640)
+        self.stats_plot_frame = ttk.Frame(parent, height=720)
         self.stats_plot_frame.pack(fill=tk.X, pady=(10, 0))
         self.stats_plot_frame.pack_propagate(False)
 
@@ -2404,137 +2404,172 @@ class LinkBudgetApp:
                         _fmt(record.min_margin_db, 2)),
             )
 
+    # Categorical slots (validated: adjacent CVD ΔE >= 9, normal-vision >= 19.6) and inks.
+    _STATS_SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
+    _STATS_INK = {"primary": "#0b0b0b", "secondary": "#52514e", "muted": "#8a8984", "grid": "#e6e5e1"}
+
     def _draw_statistics_plot(self, result, budget) -> None:
-        """Four panels: time per day, data per day, gaps (or satellites) and latency (or passes)."""
+        """Contact timeline on top; data on board and latency (or gaps / per satellite) below."""
+
+        from matplotlib.patches import Patch
 
         for widget in self.stats_plot_frame.winfo_children():
             widget.destroy()
-        blue, orange, purple = MATLAB_COLORS["blue"], MATLAB_COLORS["orange"], MATLAB_COLORS["purple"]
-        light = "#9CC3E6"
-        fig, axes = plt.subplots(2, 2, figsize=(12, 6.6), layout="constrained")
-        (ax_time, ax_data), (ax_left, ax_right) = axes
-        days = result.days
-        x = np.arange(len(days))
-        labels = [f"{d.date:%d %b}" for d in days]
+        ink = self._STATS_INK
+        series = self._STATS_SERIES
         constellation = bool(getattr(result, "satellites", None))
-        width = 0.38
-        # Legends above each panel, right of its title: they never hide the data.
-        legend_kwargs = dict(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=4, frameon=False,
-                             borderaxespad=0.2)
+        # Color follows the station (catalogue order), whatever the selection.
+        station_color = {
+            name: series[k % len(series)] for k, name in enumerate(calculations.GROUND_STATIONS)
+        }
+
+        fig = plt.figure(figsize=(12, 7.4), layout="constrained")
+        grid = fig.add_gridspec(2, 2, height_ratios=(1.15, 1.0))
+        ax_time = fig.add_subplot(grid[0, :])
+        ax_left = fig.add_subplot(grid[1, 0])
+        ax_right = fig.add_subplot(grid[1, 1])
 
         def _style(ax, title, ylabel=None, xlabel=None):
-            ax.set_title(title, fontsize=9, loc="left", fontweight="bold")
+            ax.set_title(title, fontsize=9, loc="left", fontweight="bold", color=ink["primary"])
             if ylabel:
-                ax.set_ylabel(ylabel, fontsize=8)
+                ax.set_ylabel(ylabel, fontsize=8, color=ink["secondary"])
             if xlabel:
-                ax.set_xlabel(xlabel, fontsize=8)
-            ax.tick_params(axis="both", labelsize=7)
-            ax.grid(True, axis="y", alpha=0.4)
+                ax.set_xlabel(xlabel, fontsize=8, color=ink["secondary"])
+            ax.tick_params(axis="both", labelsize=7, colors=ink["secondary"], length=0)
+            ax.grid(True, color=ink["grid"], linewidth=0.8)
             ax.set_axisbelow(True)
-            for side in ("top", "right"):
+            for side in ("top", "right", "left"):
                 ax.spines[side].set_visible(False)
+            ax.spines["bottom"].set_color(ink["muted"])
 
-        def _day_axis(ax):
-            step = max(1, int(np.ceil(len(days) / 12)))
-            ax.set_xticks(x[::step])
-            ax.set_xticklabels(labels[::step])
-            ax.set_xlim(-0.6, len(days) - 0.4)
-
-        # 1. Contact (served) and usable minutes per day.
-        contact = [d.contact_min for d in days]
-        if budget and days and days[0].usable_min is not None:
-            usable = [d.usable_min for d in days]
-            ax_time.bar(x - width / 2, contact, width, color=light,
-                        label="Served" if constellation else "Contact")
-            ax_time.bar(x + width / 2, usable, width, color=blue,
-                        label="Usable, any satellite" if constellation else "Usable (margin OK)")
-            ax_time.legend(**legend_kwargs)
-        else:
-            ax_time.bar(x, contact, 0.6, color=blue)
-        if contact:
-            ax_time.axhline(float(np.mean(contact)), color="black", linestyle=":", linewidth=1)
-        _style(ax_time, "Contact time per day", "min/day")
-        _day_axis(ax_time)
-
-        # 2. Data per day (or passes per day without a link budget).
-        if budget:
-            capacity = [d.capacity_mb or 0.0 for d in days]
-            downloaded = [d.downloaded_mb or 0.0 for d in days]
-            ax_data.bar(x - width / 2, capacity, width, color=light, label="Capacity")
-            ax_data.bar(x + width / 2, downloaded, width, color=blue, label="Downloaded")
-            generated = result.summary.get("generated_mb_per_day")
-            if generated:
-                ax_data.axhline(generated, color=orange, linestyle="--", linewidth=1.2, label="Generated")
-            if days and days[0].on_board_mb is not None:
-                ax_data.plot(x, [d.on_board_mb for d in days], "s-", color=purple, markersize=4,
-                             linewidth=1.2, label="On board, end of day")
-            ax_data.legend(**dict(legend_kwargs, ncol=2))
-            _style(ax_data, "Data per day", "MB")
-        else:
-            ax_data.bar(x, [d.contacts for d in days], 0.6, color=blue)
-            _style(ax_data, "Passes per day", "passes")
-        _day_axis(ax_data)
-
-        # 3. Constellation: time per satellite; one satellite: gaps between contacts.
+        # 1. Contact timeline: one row per day (one satellite) or per satellite (first day).
+        passes = result.passes
         if constellation:
-            sats = result.satellites
-            y = np.arange(len(sats))
-            served = [r["served_min_per_day"] for r in sats]
-            conflicts = [r["conflict_min_per_day"] for r in sats]
-            ax_left.barh(y, served, color=blue, label="Served")
-            ax_left.barh(y, conflicts, left=served, color=orange, label="Waiting (stations busy)")
-            ax_left.set_yticks(y)
-            ax_left.set_yticklabels([r["satellite"] for r in sats])
-            ax_left.invert_yaxis()
-            ax_left.legend(**legend_kwargs)
-            _style(ax_left, "Time per satellite", xlabel="min/day")
-            ax_left.grid(True, axis="x", alpha=0.4)
-            ax_left.grid(False, axis="y")
+            first_day = result.days[0].date if result.days else None
+            rows = [r["satellite"] for r in result.satellites]
+            title = f"Contacts on {first_day:%d %b %Y} (UTC), one row per satellite"
         else:
-            passes = result.passes
-            gaps = [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(passes, passes[1:])]
-            if gaps:
-                ax_left.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=blue, edgecolor="white")
-                worst = max(gaps)
-                ax_left.axvline(worst, color=orange, linestyle="--", linewidth=1.2)
-                ax_left.annotate(f"max {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
-                                 xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
-                                 color=orange)
-            else:
-                ax_left.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
-                             transform=ax_left.transAxes, fontsize=8)
-            _style(ax_left, "Gaps between contacts", "count", "min")
+            rows = [f"{d.date:%d %b}" for d in result.days][:31]
+            title = "Contacts per day (UTC)" + (" — first 31 days" if len(result.days) > 31 else "")
+        used = []
+        for p in passes:
+            label, stations = p.stations, p.stations
+            if constellation:
+                label, _, stations = p.stations.partition(": ")
+                if first_day is None or p.start.date() != first_day:
+                    continue
+            station = stations.split(" + ")[0] if stations else ""
+            usable = p.usable_min is None or p.usable_min > 0
+            color = station_color.get(station, series[0]) if usable else ink["muted"]
+            if station and usable and station not in used:
+                used.append(station)
+            row = rows.index(label) if constellation else rows.index(f"{p.start:%d %b}") if f"{p.start:%d %b}" in rows else None
+            if row is None:
+                continue
+            start_h = p.start.hour + p.start.minute / 60 + p.start.second / 3600
+            length_h = (p.end - p.start).total_seconds() / 3600
+            # A pass over midnight continues at the start of the next row.
+            pieces = [(row, start_h, min(length_h, 24 - start_h))]
+            if start_h + length_h > 24 and not constellation and row + 1 < len(rows):
+                pieces.append((row + 1, 0.0, start_h + length_h - 24))
+            for r_, x0, w in pieces:
+                ax_time.broken_barh([(x0, max(w, 0.02))], (r_ - 0.36, 0.72), facecolors=color,
+                                    edgecolor="white", linewidth=0.5)
+        ax_time.set_ylim(len(rows) - 0.5, -0.5)
+        ax_time.set_yticks(range(len(rows)))
+        ax_time.set_yticklabels(rows)
+        ax_time.set_xlim(0, 24)
+        ax_time.set_xticks(range(0, 25, 2))
+        ax_time.set_xticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
+        _style(ax_time, title)
+        ax_time.grid(False, axis="y")
+        used.sort(key=lambda st: list(station_color).index(st) if st in station_color else len(station_color))
+        handles = [Patch(color=station_color.get(st, series[0]), label=st) for st in used]
+        if budget and any(p.usable_min == 0 for p in passes):
+            handles.append(Patch(color=ink["muted"], label="No usable minute"))
+        if handles:
+            ax_time.legend(handles=handles, fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0),
+                           ncol=len(handles), frameon=False, borderaxespad=0.2, labelcolor=ink["secondary"])
 
-        # 4. Latency of the data, or the passes.
+        # 2. Data on board over time (memory model), else minutes per day.
+        if result.on_board_series is not None:
+            times, on_board = result.on_board_series
+            ax_left.plot(times, on_board, color=series[0], linewidth=1.2)
+            ax_left.fill_between(times, on_board, color=series[0], alpha=0.12, linewidth=0)
+            peak = int(np.argmax(on_board))
+            ax_left.plot([times[peak]], [on_board[peak]], "o", color=series[0], markersize=5,
+                         markeredgecolor="white", markeredgewidth=1.5)
+            ax_left.annotate(f"max {on_board[peak]:.0f} MB", (times[peak], on_board[peak]), xytext=(6, 4),
+                             textcoords="offset points", fontsize=7, color=ink["secondary"])
+            ax_left.set_ylim(bottom=0)
+            ax_left.set_xlim(times[0], times[-1])
+            locator = mdates.AutoDateLocator(maxticks=8)
+            ax_left.xaxis.set_major_locator(locator)
+            ax_left.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+            _style(ax_left, "Data on board" + (" (all satellites)" if constellation else ""), "MB")
+        else:
+            x = np.arange(len(result.days))
+            minutes = [d.usable_min if budget and d.usable_min is not None else d.contact_min for d in result.days]
+            ax_left.bar(x, minutes, 0.6, color=series[0])
+            step = max(1, int(np.ceil(len(x) / 12)))
+            ax_left.set_xticks(x[::step])
+            ax_left.set_xticklabels([f"{d.date:%d %b}" for d in result.days][::step])
+            _style(ax_left, ("Usable" if budget else "Contact") + " minutes per day", "min/day")
+            ax_left.grid(False, axis="x")
+
+        # 3. Latency of the data; without it the time per satellite or the gaps.
         if result.latency_chunks:
             top = max(hi for _bits, _lo, hi in result.latency_chunks) / 60.0
-            grid = np.linspace(0.0, top, 200)
-            share = [100.0 * (result.latency_fraction(m) or 0.0) for m in grid]
-            ax_right.plot(grid, share, color=blue, linewidth=1.8)
-            ax_right.fill_between(grid, share, color=blue, alpha=0.12)
+            grid_min = np.linspace(0.0, top, 200)
+            share = [100.0 * (result.latency_fraction(m) or 0.0) for m in grid_min]
+            ax_right.plot(grid_min, share, color=series[0], linewidth=2)
             required = result.summary.get("latency_requirement_min")
             if required is not None:
                 percent = result.summary["latency_requirement_pct"]
+                within = result.summary["latency_within_pct"]
                 ok = result.summary.get("latency_requirement_met")
-                color = MATLAB_COLORS["green"] if ok else MATLAB_COLORS["red"]
-                ax_right.axvline(required, color=color, linestyle="--", linewidth=1.2)
-                ax_right.axhline(percent, color=color, linestyle=":", linewidth=1)
-                ax_right.plot([required], [result.summary["latency_within_pct"]], "o", color=color)
-                ax_right.annotate(f"{result.summary['latency_within_pct']:.0f}% within {required:g} min",
-                                  (required, result.summary["latency_within_pct"]), xytext=(6, -12),
-                                  textcoords="offset points", fontsize=7, color=color)
+                ax_right.axvline(required, color=ink["muted"], linestyle="--", linewidth=1)
+                ax_right.axhline(percent, color=ink["muted"], linestyle=":", linewidth=1)
+                ax_right.plot([required], [within], "o", color=series[1], markersize=7,
+                              markeredgecolor="white", markeredgewidth=1.5)
+                ax_right.annotate(
+                    f"{within:.0f}% within {required:g} min  ({'✓ met' if ok else f'✗ {percent:g}% required'})",
+                    (required, within), xytext=(8, -14), textcoords="offset points", fontsize=7,
+                    color=ink["primary"],
+                )
             ax_right.set_ylim(0, 102)
             ax_right.set_xlim(0, top)
-            _style(ax_right, "Data latency", "% of data on ground", "latency [min]")
-            ax_right.grid(True, axis="x", alpha=0.4)
-        elif result.passes:
-            durations = [p.contact_min for p in result.passes]
-            elevations = [p.max_elevation_deg for p in result.passes]
-            ax_right.scatter(elevations, durations, s=14, color=blue, alpha=0.7, edgecolors="none")
-            _style(ax_right, "Passes: duration vs maximum elevation", "contact [min]", "max elevation [deg]")
-            ax_right.grid(True, axis="x", alpha=0.4)
+            _style(ax_right, "Data latency (share of the data on ground)", "% of data", "latency [min]")
+        elif constellation:
+            sats = result.satellites
+            y = np.arange(len(sats))
+            served = [r["served_min_per_day"] for r in sats]
+            waiting = [r["conflict_min_per_day"] for r in sats]
+            ax_right.barh(y, served, 0.6, color=series[0], label="Served")
+            ax_right.barh(y, waiting, 0.6, left=served, color=series[1], label="Waiting (stations busy)",
+                          edgecolor="white", linewidth=1)
+            ax_right.set_yticks(y)
+            ax_right.set_yticklabels([r["satellite"] for r in sats])
+            ax_right.invert_yaxis()
+            ax_right.legend(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
+                            labelcolor=ink["secondary"])
+            _style(ax_right, "Time per satellite", xlabel="min/day")
+            ax_right.grid(False, axis="y")
         else:
-            ax_right.axis("off")
+            gaps = [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(passes, passes[1:])]
+            if gaps:
+                ax_right.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=series[0], edgecolor="white")
+                worst = max(gaps)
+                ax_right.axvline(worst, color=ink["muted"], linestyle="--", linewidth=1)
+                ax_right.annotate(f"longest {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
+                                  xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
+                                  color=ink["primary"])
+                ax_right.set_xlim(left=0)
+            else:
+                ax_right.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
+                              transform=ax_right.transAxes, fontsize=8, color=ink["secondary"])
+            _style(ax_right, "Gaps between contacts", "count", "gap [min]")
+            ax_right.grid(False, axis="x")
 
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
