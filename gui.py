@@ -1236,7 +1236,7 @@ class LinkBudgetApp:
             min_pass = payload.get("min_pass_min")
             self.stats_min_pass_var.set("" if min_pass is None else f"{min_pass:g}")
             self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
-            memory = payload.get("memory_gbit")
+            memory = payload.get("memory_gb")
             self.stats_memory_var.set("" if memory is None else f"{memory:g}")
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
@@ -1936,9 +1936,9 @@ class LinkBudgetApp:
              "on ground, e.g. 60."),
             ("Within [% of data]", self.stats_latency_pct_var,
              "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
-            ("On-board Memory [Gb]", self.stats_memory_var,
-             "Optional, with the on-board data rates: memory of each satellite for these data, in gigabit "
-             "(e.g. 4 for one 4 Gb partition). Gives the share used, the hours without contacts until it "
+            ("On-board Memory [GB]", self.stats_memory_var,
+             "Optional, with the on-board data rates: memory of each satellite for these data, in gigabytes "
+             "(e.g. 4 for one 4 GB partition). Gives the share used, the hours without contacts until it "
              "is full, and the data lost when it fills (new data discarded)."),
             ("Min Pass Duration [min]", self.stats_min_pass_var,
              "Contacts (usable minutes of one satellite over one station) shorter than this are not used: "
@@ -2211,9 +2211,9 @@ class LinkBudgetApp:
         setup_min = _number(self.stats_setup_var, "Antenna Setup [min]") or 0.0
         if setup_min < 0:
             raise ValueError("The antenna setup time must be positive.")
-        memory_gbit = _number(self.stats_memory_var, "On-board Memory [Gb]")
-        if memory_gbit is not None and memory_gbit <= 0:
-            raise ValueError("The on-board memory must be greater than 0 Gb.")
+        memory_gb = _number(self.stats_memory_var, "On-board Memory [GB]")
+        if memory_gb is not None and memory_gb <= 0:
+            raise ValueError("The on-board memory must be greater than 0 GB.")
         min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
         if min_pass < 0:
             raise ValueError("The minimum pass duration must be positive.")
@@ -2227,7 +2227,7 @@ class LinkBudgetApp:
             "flows_kbps": given,
             "setup_s": setup_min * 60.0,
             "min_pass_s": min_pass * 60.0,
-            "memory_bits": memory_gbit * 1e9 if memory_gbit else None,
+            "memory_bits": memory_gb * 8e9 if memory_gb else None,
         }
         return inputs
 
@@ -2374,7 +2374,7 @@ class LinkBudgetApp:
             if "memory_mb" not in s:
                 return None
             text = (
-                f"Memory ({s['memory_mb'] * 8 / 1000:g} Gb per satellite): max {s['max_memory_use_pct']:.1f} % used, "
+                f"Memory ({s['memory_mb'] / 1000:g} GB per satellite): max {s['max_memory_use_pct']:.1f} % used, "
                 f"full after {s['memory_autonomy_h']:.1f} h without contacts"
             )
             if s.get("lost_mb"):
@@ -2723,7 +2723,7 @@ class LinkBudgetApp:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
             if budget.get("memory_bits"):
-                rows.append(("On-board memory", f"{budget['memory_bits'] / 1e9:g} Gb per satellite"))
+                rows.append(("On-board memory", f"{budget['memory_bits'] / 8e9:g} GB per satellite"))
             rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
             rows.append(("Latency counted", "at the end of each pass (dump complete)"
                          if inputs.get("latency_at_pass_end") else "when each bit comes down"))
@@ -5348,7 +5348,7 @@ class LinkBudgetApp:
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
             for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
-                             ("memory_gbit", self.stats_memory_var)):
+                             ("memory_gb", self.stats_memory_var)):
                 try:
                     if var.get().strip():
                         panel_values[key] = float(var.get())

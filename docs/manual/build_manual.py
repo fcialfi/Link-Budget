@@ -508,11 +508,11 @@ def content():
         "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
         "required time, the time within which the required share arrives, and whether the requirement is met. "
         "Saved in the parameters file (latency_requirement).",
-        "<b>On-board Memory</b> (Gb, with the on-board data rates): memory of each satellite for these data, "
-        "e.g. 4 Gb for one partition. The summary gives the largest share used, the hours without contacts "
+        "<b>On-board Memory</b> (GB, with the on-board data rates): memory of each satellite for these data, "
+        "e.g. 4 GB for one partition. The summary gives the largest share used, the hours without contacts "
         "until it is full and, if it fills, the data lost (the new data are discarded; the latency of the rest "
-        "is then approximate). Saved in the parameters file (memory_gbit: 4 Gb, the Mission Data partition, "
-        "for EPS-Sterna); lbtool.py --memory-gbit.",
+        "is then approximate). Saved in the parameters file (memory_gb: 4 GB, the Mission Data partition, "
+        "for EPS-Sterna; 64 GB per band in total); lbtool.py --memory-gb.",
         "<b>Latency at end of pass</b>: the data downloaded during a pass count as on ground at the end of that "
         "pass, when the dump is complete and a product can be processed (the convention of product timeliness "
         "requirements); unchecked, each bit counts when it comes down, a few minutes earlier. Saved in the "

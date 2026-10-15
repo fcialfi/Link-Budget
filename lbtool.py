@@ -167,8 +167,8 @@ def cmd_statistics(args) -> None:
             generated_bps=sum(rates) * 1e3 if rates else None,
             latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
             latency_at_pass_end=bool(args.latency_at_pass_end or (params or {}).get("latency_at_pass_end")),
-            memory_bits=1e9 * (args.memory_gbit if args.memory_gbit is not None
-                               else float((params or {}).get("memory_gbit") or 0.0)) or None,
+            memory_bits=8e9 * (args.memory_gb if args.memory_gb is not None
+                               else float((params or {}).get("memory_gb") or 0.0)) or None,
         )
     satellites = [("SAT", tle)]
     if args.constellation:
@@ -275,8 +275,8 @@ def main(argv=None) -> None:
     stats.add_argument("--latency-at-pass-end", action="store_true",
                        help="data on ground at the end of their pass (dump complete); default: the mission "
                             "parameters' latency_at_pass_end")
-    stats.add_argument("--memory-gbit", type=float,
-                       help="on-board memory per satellite for these data [Gb] (default: memory_gbit of the "
+    stats.add_argument("--memory-gb", type=float,
+                       help="on-board memory per satellite for these data [GB] (default: memory_gb of the "
                             "mission parameters)")
     stats.add_argument("--min-pass", type=float,
                        help="contacts shorter than this are not used [min] (default 0: all)")
