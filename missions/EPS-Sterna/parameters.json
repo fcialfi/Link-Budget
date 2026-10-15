@@ -99,5 +99,6 @@
   },
   "min_pass_min": 4.7,
   "min_elevation_deg": 3.0,
-  "latency_at_pass_end": true
+  "latency_at_pass_end": true,
+  "memory_gbit": 4.0
 }

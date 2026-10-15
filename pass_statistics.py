@@ -152,6 +152,19 @@ def _groups(flags: np.ndarray) -> list[tuple[int, int]]:
     return runs
 
 
+def _memory_figures(memory_bits, max_bits_one_satellite, lost_bits, generated_bps, period_s) -> dict:
+    """Use of the on-board memory of one satellite: share, autonomy without contacts, data lost."""
+    if not memory_bits:
+        return {}
+    return {
+        "memory_mb": memory_bits / 8e6,
+        "max_memory_use_pct": 100.0 * max_bits_one_satellite / memory_bits,
+        "memory_autonomy_h": memory_bits / generated_bps / 3600.0,
+        "lost_mb": lost_bits / 8e6,
+        "lost_pct": 100.0 * lost_bits / (generated_bps * period_s) if period_s else 0.0,
+    }
+
+
 def drop_short_contacts(
     days: list[dict[str, dict[str, DaySamples]]],
     step_s: float,
@@ -211,6 +224,7 @@ def aggregate(
     generated_bps: Optional[float] = None,
     latency_requirement: Optional[tuple[float, float]] = None,
     latency_at_pass_end: bool = False,
+    memory_bits: Optional[float] = None,
 ) -> StatisticsResult:
     """Passes, daily figures and a summary from the samples of consecutive days.
 
@@ -266,8 +280,13 @@ def aggregate(
         if latency_at_pass_end:
             for first, last in _groups(capacity_bits > 0):
                 arrival[first : last + 1] = (last + 1) * step_s
+        lost_bits = 0.0
         for i in range(n):
             memory += generated_per_step
+            if memory_bits and memory > memory_bits:
+                # Memory full: the new data are lost (the latency of the rest is then approximate).
+                lost_bits += memory - memory_bits
+                memory = memory_bits
             take = min(memory, capacity_bits[i])
             if take > 0:
                 # First in, first out: the bits downloaded now were generated
@@ -352,6 +371,7 @@ def aggregate(
             max_on_board_mb=float(memory_end_bits.max()) / 8e6,
             final_on_board_mb=float(memory_end_bits[-1]) / 8e6,
             **latency,
+            **_memory_figures(memory_bits, float(memory_end_bits.max()), lost_bits, generated_bps, n * step_s),
         )
         result.on_board_series = (times, memory_end_bits / 8e6)
         if latency_requirement is not None and result.latency_chunks:
@@ -412,6 +432,7 @@ def simulate_constellation(
     antennas: Optional[dict[str, int]] = None,
     setup_s: float = 0.0,
     latency_at_pass_end: bool = False,
+    memory_bits: Optional[float] = None,
 ) -> ConstellationResult:
     """Satellites sharing ground stations whose antennas track one satellite each.
 
@@ -468,6 +489,7 @@ def simulate_constellation(
     on_board = np.zeros((n_sat, n))
     conflict = np.zeros((n_sat, n), dtype=bool)
     chunks: list[list] = [[] for _ in range(n_sat)]
+    lost = np.zeros(n_sat)
     setup_steps = int(np.ceil(setup_s / step_s)) if setup_s > 0 else 0
     n_slots = len(slot_station)
     last_sat = np.full(n_slots, -1)  # satellite each antenna was last configured for
@@ -482,6 +504,11 @@ def simulate_constellation(
 
     for i in range(n):
         memory += gen_step
+        if memory_bits:
+            # Memory full: the new data are lost (the latency of the rest is then approximate).
+            over = np.maximum(memory - memory_bits, 0.0)
+            lost += over
+            memory -= over
         # A station keeps tracking its satellite while the link closes (a real
         # antenna follows one pass); the free stations then go to the other
         # satellites by a maximum matching (augmenting paths), the satellites
@@ -562,6 +589,7 @@ def simulate_constellation(
             "downloaded_mb_per_day": float(downloaded[s].sum()) / 8e6 / n_days,
             "max_on_board_mb": float(on_board[s].max()) / 8e6 if with_memory else None,
             "final_on_board_mb": float(on_board[s, -1]) / 8e6 if with_memory else None,
+            "lost_mb": float(lost[s]) / 8e6 if with_memory else None,
             "mean_latency_min": (
                 sum(c[0] * (c[1] + c[2]) / 2 for c in sat_chunks) / bits / 60.0 if bits else None
             ),
@@ -638,6 +666,7 @@ def simulate_constellation(
             generated_mb_per_day=generated_bps * 86400 / 8e6 * n_sat,
             max_on_board_mb=float(on_board.sum(axis=0).max()) / 8e6,
             final_on_board_mb=float(on_board[:, -1].sum()) / 8e6,
+            **_memory_figures(memory_bits, float(on_board.max()), float(lost.sum()), generated_bps, n * step_s),
             mean_latency_min=sum(c[0] * (c[1] + c[2]) / 2 for c in all_chunks) / total_bits / 60.0 if total_bits else None,
             max_latency_min=max(c[2] for c in all_chunks) / 60.0 if all_chunks else None,
         )
