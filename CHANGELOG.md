@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Statistics: Latency at end of pass (lbtool.py --latency-at-pass-end): the data of a pass count as on ground when the dump is complete, the convention for product timeliness; on for EPS-Sterna (latency_at_pass_end).
 - Fix: the on-board data rates and the latency requirement of a mission are cleared when another mission without them is selected.
 - EPS-Sterna: minimum elevation 3° in the mission parameters (AWS: 5°); lbtool.py takes it from the mission parameters unless --min-elevation is given.
 - EPS-Sterna: minimum SDA pass duration 4.7 min in the mission parameters.

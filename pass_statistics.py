@@ -210,6 +210,7 @@ def aggregate(
     min_margin_db: float = 0.0,
     generated_bps: Optional[float] = None,
     latency_requirement: Optional[tuple[float, float]] = None,
+    latency_at_pass_end: bool = False,
 ) -> StatisticsResult:
     """Passes, daily figures and a summary from the samples of consecutive days.
 
@@ -259,13 +260,19 @@ def aggregate(
         latencies_weighted = 0.0
         max_latency = 0.0
         generated_per_step = generated_bps * step_s
+        # With latency_at_pass_end the data count as on ground at the end of
+        # their pass (run of usable samples), when the dump is complete.
+        arrival = (np.arange(n) + 1) * step_s
+        if latency_at_pass_end:
+            for first, last in _groups(capacity_bits > 0):
+                arrival[first : last + 1] = (last + 1) * step_s
         for i in range(n):
             memory += generated_per_step
             take = min(memory, capacity_bits[i])
             if take > 0:
                 # First in, first out: the bits downloaded now were generated
                 # from (downloaded_total) to (downloaded_total + take) / rate.
-                t_now = (i + 1) * step_s
+                t_now = arrival[i]
                 oldest = downloaded_total / generated_bps
                 newest = (downloaded_total + take) / generated_bps
                 max_latency = max(max_latency, t_now - oldest)
@@ -404,6 +411,7 @@ def simulate_constellation(
     latency_requirement: Optional[tuple[float, float]] = None,
     antennas: Optional[dict[str, int]] = None,
     setup_s: float = 0.0,
+    latency_at_pass_end: bool = False,
 ) -> ConstellationResult:
     """Satellites sharing ground stations whose antennas track one satellite each.
 
@@ -420,6 +428,9 @@ def simulate_constellation(
     satellites at a time. ``setup_s`` is the time an antenna needs to be
     configured for another satellite: after serving one it cannot take a
     different satellite for that long (the same satellite resumes at once).
+    ``latency_at_pass_end``: the data downloaded during a pass count as on
+    ground at the end of that pass (dump complete), not when each bit comes
+    down (the time a product can be processed).
     """
     result = ConstellationResult()
     if not days:
@@ -461,6 +472,14 @@ def simulate_constellation(
     n_slots = len(slot_station)
     last_sat = np.full(n_slots, -1)  # satellite each antenna was last configured for
     free_from = np.zeros(n_slots, dtype=int)  # first sample it may take another satellite
+    pending: list[list] = [[] for _ in range(n_sat)]  # chunks of the pass in progress (latency_at_pass_end)
+
+    def _close_pass(s, t_end):
+        for chunk in pending[s]:
+            take, lo, hi, t_now = chunk
+            chunks[s].append((take, lo + t_end - t_now, hi + t_end - t_now))
+        pending[s].clear()
+
     for i in range(n):
         memory += gen_step
         # A station keeps tracking its satellite while the link closes (a real
@@ -509,19 +528,26 @@ def simulate_constellation(
             free_from[g] = i + 1 + setup_steps
         for s in range(n_sat):
             if served_station[s, i] < 0:
+                if i > 0 and served_station[s, i - 1] >= 0:
+                    _close_pass(s, i * step_s)
                 continue
             take = min(memory[s], step_bits)
             if take > 0 and generated_bps > 0:
                 t_now = (i + 1) * step_s
                 oldest = downloaded_total[s] / generated_bps
                 newest = (downloaded_total[s] + take) / generated_bps
-                chunks[s].append((take, t_now - newest, t_now - oldest))
+                if latency_at_pass_end:
+                    pending[s].append((take, t_now - newest, t_now - oldest, t_now))
+                else:
+                    chunks[s].append((take, t_now - newest, t_now - oldest))
             elif generated_bps <= 0:
                 take = step_bits  # capacity only
             memory[s] -= take if generated_bps > 0 else 0.0
             downloaded_total[s] += take
             downloaded[s, i] = take
         on_board[:, i] = memory
+    for s in range(n_sat):
+        _close_pass(s, n * step_s)
 
     step_min = step_s / 60.0
     with_memory = generated_bps > 0

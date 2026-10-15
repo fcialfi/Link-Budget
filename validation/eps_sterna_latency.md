@@ -103,3 +103,31 @@ Tool with the adopted EPS-Sterna settings: minimum elevation 3°, minimum pass
   after an orbit without a contact the next pass cannot download two orbits
   of data at 1.542 Mbps and the memory queues; the reference behaves as if
   every dump emptied the memory.
+
+## Data counted at the end of the dump
+
+Same settings, with the data downloaded during a pass counted as on ground at
+the end of that pass (Latency at end of pass), 7 days:
+
+| Network | Reference | Tool, end of pass |
+|---|---|---|
+| SVL | 47 56 65 75 84 89 92 96 | 54 64 75 85 95 130 178 197 |
+| SVL+MCM | 24 29 33 38 43 45 48 52 | 25 30 35 40 45 48 82 99 |
+| SVL+OHI | 29 35 41 49 68 81 91 95 | 30 36 43 52 70 83 93 97 |
+| SVL+TRO | 27 32 38 45 55 74 89 94 | 28 34 40 48 64 80 92 96 |
+| **SVL+PUN** | **33 40 49 61 77 85 92 96** | **36 45 55 67 82 89 95 99** |
+| SVL+INU | 47 56 65 75 84 89 95 103 | 48 58 67 77 87 92 96 103 |
+
+Counting the data at the end of the dump reproduces the reference within
+1-3 min for SVL+MCM (to 95 %), SVL+OHI (all percentiles), SVL+TRO (to 80 %)
+and SVL+INU (all percentiles, 100 % identical), and explains why Inuvik adds
+nothing to Svalbard in the reference. The reference therefore counts the
+data at the end of the dump, the convention for product timeliness; adopted
+for EPS-Sterna (latency_at_pass_end in the mission parameters). SVL+PUN is
+3-6 min above the reference and Svalbard only 7-10 min: these two networks
+probably differ in another assumption (minimum elevation or horizon mask of
+Svalbard and Punta Arenas). A "one dump per pole passage" rule (no new dump
+within 30 min of the previous one) changes nothing and was not kept.
+
+Tool with the adopted settings, Svalbard + Punta Arenas: 80 % of the data on
+ground within 67 min (85 % within 75 min).

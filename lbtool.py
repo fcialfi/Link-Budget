@@ -166,6 +166,7 @@ def cmd_statistics(args) -> None:
             min_margin_db=float(margin or 0.0),
             generated_bps=sum(rates) * 1e3 if rates else None,
             latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
+            latency_at_pass_end=bool(args.latency_at_pass_end or (params or {}).get("latency_at_pass_end")),
         )
     satellites = [("SAT", tle)]
     if args.constellation:
@@ -269,6 +270,9 @@ def main(argv=None) -> None:
     stats.add_argument("--backup-antennas", action="store_true",
                        help="with --constellation: every antenna of a station serves a satellite at the same "
                             "time (default: one antenna per site, the others backups)")
+    stats.add_argument("--latency-at-pass-end", action="store_true",
+                       help="data on ground at the end of their pass (dump complete); default: the mission "
+                            "parameters' latency_at_pass_end")
     stats.add_argument("--min-pass", type=float,
                        help="contacts shorter than this are not used [min] (default 0: all)")
     stats.add_argument("--setup", type=float,

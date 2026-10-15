@@ -237,3 +237,19 @@ def test_drop_short_contacts_across_midnight():
     assert list(kept[1]["S"]["G"].visible) == [True, False, False, False, False, False]
     assert days[0]["S"]["G"].visible[1]  # the input is not changed
     assert ps.drop_short_contacts(days, 60, 0) is days
+
+
+def test_latency_at_pass_end():
+    # Contact in the last two samples: with the dump counted at its end, every bit waits one sample more
+    # when it came down in the first sample of the pass.
+    d1 = _day(1, [0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 5, 5])
+    per_bit = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    at_end = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, latency_at_pass_end=True)
+    assert at_end.summary["max_latency_min"] == pytest.approx(60.0)  # all on ground at the end of the pass
+    assert at_end.summary["mean_latency_min"] > per_bit.summary["mean_latency_min"]
+    day = {"S1": {"G": _sat_day([0, 0, 0, 0, 1, 1])}}
+    c_bit = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    c_end = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4,
+                                      latency_at_pass_end=True)
+    assert c_end.summary["max_latency_min"] == pytest.approx(60.0)
+    assert c_end.summary["mean_latency_min"] > c_bit.summary["mean_latency_min"]

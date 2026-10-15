@@ -1235,6 +1235,7 @@ class LinkBudgetApp:
             self.stats_setup_var.set("" if setup is None else f"{setup:g}")
             min_pass = payload.get("min_pass_min")
             self.stats_min_pass_var.set("" if min_pass is None else f"{min_pass:g}")
+            self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
@@ -1983,6 +1984,17 @@ class LinkBudgetApp:
             "satellites together. Each station tracks one satellite at a time; when several are in view, "
             "the one with more data on board is served and the others wait (conflict).",
         )
+        self.stats_pass_end_var = tk.BooleanVar(value=False)
+        pass_end_check = ttk.Checkbutton(
+            station_box, text="Latency at end of pass", variable=self.stats_pass_end_var
+        )
+        pass_end_check.pack(anchor="w", pady=(2, 0))
+        _add_tooltip(
+            pass_end_check,
+            "Checked: the data downloaded during a pass count as on ground at the end of that pass, when the "
+            "dump is complete and a product can be processed (the usual convention for product timeliness). "
+            "Unchecked: each bit counts as on ground when it comes down. Saved in the parameters file.",
+        )
         self.stats_backup_var = tk.BooleanVar(value=False)
         backup_check = ttk.Checkbutton(
             station_box, text="Use backup antennas", variable=self.stats_backup_var
@@ -2255,6 +2267,7 @@ class LinkBudgetApp:
         state = {"done": 0, "total": inputs["days"]}
         use_backups = self.stats_backup_var.get()  # read here: Tk variables stay in the main thread
         inputs["use_backups"] = use_backups
+        inputs["latency_at_pass_end"] = self.stats_pass_end_var.get()
         names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
@@ -2277,6 +2290,7 @@ class LinkBudgetApp:
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
+                    latency_at_pass_end=inputs["latency_at_pass_end"],
                 )
                 # One antenna per site, the others backups, unless the backups are used too.
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
@@ -2680,6 +2694,8 @@ class LinkBudgetApp:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
             rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
+            rows.append(("Latency counted", "at the end of each pass (dump complete)"
+                         if inputs.get("latency_at_pass_end") else "when each bit comes down"))
             if inputs["constellation"]:
                 rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
         else:
@@ -5306,6 +5322,7 @@ class LinkBudgetApp:
                         panel_values[key] = float(var.get())
                 except ValueError:
                     pass
+            panel_values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
             network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
             if network:
                 panel_values["statistics_stations"] = network
