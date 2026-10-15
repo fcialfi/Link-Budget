@@ -8,8 +8,6 @@ the ones the program gives.
 """
 
 import datetime
-import json
-import os
 import warnings
 
 import numpy as np
@@ -22,45 +20,93 @@ def _fmt(value, digits=2):
 # --------------------------------------------------------------------------
 # Worked examples (computed with the program's own functions)
 # --------------------------------------------------------------------------
-def _static_example(root):
-    """AWS downlink over Svalbard at 3°, as the Static LB · Downlink tab computes it."""
+# An invented mission and ground station, used by every example of the manual.
+EXAMPLE = {
+    "station": "Example station",
+    "lat": 64.0, "lon": 20.0, "alt_m": 300.0, "d_gs": 3.7,
+    "freq_ghz": 2.25, "elevation_deg": 5.0, "altitude_km": 650.0, "availability_pct": 99.9,
+    "tx_power_w": 4.0, "circuit_loss_db": 0.8, "vswr": 1.3,
+    # Satellite antenna pattern: angle from nadir [deg], gain [dBi].
+    "pattern": ([0, 20, 40, 50, 60, 65, 70], [4.0, 3.6, 2.4, 1.4, 0.2, -0.5, -1.5]),
+    "coded_mbps": 4.0, "interleaving": 4, "rolloff": 0.35, "spectral_eff": 2.0,
+    "required_ebno_db": 2.5, "required_margin_db": 3.0,
+    "demod_loss_db": 1.5, "modulation_degradation_db": 0.3,
+    "s4_ref": 0.2, "tx_axial_ratio_db": 2.0, "rx_axial_ratio_db": 1.0, "multipath_db": 0.2,
+    "rx_depointing_deg": 0.1,
+    "gt_dbk": 13.5, "gt_ref_elevation_deg": 10.0, "tsys_k": 160.0, "radome_db": 0.3,
+    "pfd_low": -154.0, "pfd_high": -144.0,
+    "tolerances": [
+        {"name": "Transmitter Power", "key": "tx_power", "favourable_db": 0.5, "adverse_db": 0.5,
+         "distribution": "TRI"},
+        {"name": "Atmospheric / Propagation Loss", "key": "propagation", "favourable_db": 1.0,
+         "adverse_db": 1.0, "distribution": "GAU"},
+    ],
+}
+
+
+def _static_example():
+    """The invented downlink, computed as the Static LB · Downlink tab computes it."""
     import astropy.units as u
 
     import calculations as c
 
-    with open(os.path.join(root, "missions", "AWS", "parameters.json"), encoding="utf-8") as f:
-        p = json.load(f)
-    dl = p["fixed_elevation_downlink"]
-    c.load_antenna_pattern(os.path.join(root, "missions", "AWS", "antenna_pattern.txt"))
-    lat, lon, alt_m = c.GROUND_STATIONS["Svalbard"]
-    eta = c.off_nadir_angle_deg(dl["elevation_deg"], dl["sat_altitude_km"], alt_m / 1000.0)
+    e = EXAMPLE
+    c.set_antenna_pattern(np.array(e["pattern"][0], dtype=float), np.array(e["pattern"][1], dtype=float))
+    eta = c.off_nadir_angle_deg(e["elevation_deg"], e["altitude_km"], e["alt_m"] / 1000.0)
     gain = c.satellite_antenna_gain_dbi(eta)
-    rate = p["bitrate_mbps"] * 1e6
-    bandwidth = rate * (1 + p["rolloff"]) / p["spectral_efficiency_bpshz"]
+    framing = c.ccsds_tm_overheads(e["interleaving"], True, False)
+    rate = e["coded_mbps"] * 1e6
+    bandwidth = rate * (1 + e["rolloff"]) / e["spectral_eff"]
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         budget = c.calculate_fixed_elevation_link_budget(
-            freq=p["frequency_ghz"] * u.GHz, elevation_deg=dl["elevation_deg"],
-            sat_altitude_km=dl["sat_altitude_km"], lat_gs=lat, lon_gs=lon, alt_gs_km=alt_m / 1000.0,
-            d_gs=c.GROUND_STATION_DIAMETERS.get("Svalbard", p["antenna_diameter_m"]), eirp=p["eirp_sat_dbw"],
-            gt=p["gt_gs_dbk"], demod_loss=p["demod_loss_db"], bitrate=rate, overhead=p["overhead"],
-            other_att=p["other_attenuations_db"] or 0.0, pointing_loss_db=0.0,
-            link_availability_pct=p["link_availability_pct"], include_scintillation=bool(dl.get("scintillation")),
-            required_ebno=dl["required_ebno_db"], tx_power_w=dl["tx_power_w"],
-            antenna_circuit_loss_db=dl["ant_circuit_loss_db"], vswr=dl["vswr"], antenna_gain_dbi=gain,
-            ionospheric_s4_ref=dl["iono_s4_ref"], ionospheric_s4_ref_freq_mhz=dl["iono_s4_ref_freq_mhz"],
-            polarisation_loss_db=dl["polarisation_loss_db"], multipath_loss_db=dl["multipath_loss_db"],
-            modulation_degradation_db=dl["modulation_degradation_db"], occupied_bandwidth_hz=bandwidth,
-            pfd_limit_dbw_m2_4khz=dl["pfd_limit"], pfd_limit_high_dbw_m2_4khz=dl["pfd_limit_high"],
-            tx_axial_ratio_db=dl["ant_axial_ratio_db"], rx_axial_ratio_db=dl["rx_axial_ratio_db"],
-            rx_depointing_deg=dl["rx_depointing_deg"], rx_beamwidth_3db_deg=dl["rx_beamwidth_deg"],
-            formatting_overhead=dl["formatting_overhead"],
-            tolerances=[dict(name="Tx Antenna Gain", key=k, **v) for k, v in dl["tolerances"].items()],
-            gt_model={"ref_elevation_deg": p["gt_ref_elevation_deg"], "tsys_ref_k": p["tsys_ref_k"],
-                      "radome_loss_db": p["radome_loss_db"]},
+            freq=e["freq_ghz"] * u.GHz, elevation_deg=e["elevation_deg"], sat_altitude_km=e["altitude_km"],
+            lat_gs=e["lat"], lon_gs=e["lon"], alt_gs_km=e["alt_m"] / 1000.0, d_gs=e["d_gs"], eirp=None,
+            gt=e["gt_dbk"], demod_loss=e["demod_loss_db"], bitrate=rate, overhead=framing["total"],
+            other_att=0.0, pointing_loss_db=0.0, link_availability_pct=e["availability_pct"],
+            include_scintillation=False, required_ebno=e["required_ebno_db"], tx_power_w=e["tx_power_w"],
+            antenna_circuit_loss_db=e["circuit_loss_db"], vswr=e["vswr"], antenna_gain_dbi=gain,
+            ionospheric_s4_ref=e["s4_ref"], polarisation_loss_db=None, multipath_loss_db=e["multipath_db"],
+            modulation_degradation_db=e["modulation_degradation_db"], occupied_bandwidth_hz=bandwidth,
+            pfd_limit_dbw_m2_4khz=e["pfd_low"], pfd_limit_high_dbw_m2_4khz=e["pfd_high"],
+            tx_axial_ratio_db=e["tx_axial_ratio_db"], rx_axial_ratio_db=e["rx_axial_ratio_db"],
+            rx_depointing_deg=e["rx_depointing_deg"], rx_beamwidth_3db_deg=None,
+            formatting_overhead=framing["formatting"], tolerances=e["tolerances"],
+            gt_model={"ref_elevation_deg": e["gt_ref_elevation_deg"], "tsys_ref_k": e["tsys_k"],
+                      "radome_loss_db": e["radome_db"]},
         )
-    framing = c.ccsds_tm_overheads(int(dl["ccsds_interleaving"]), dl["ccsds_ocf"], dl["ccsds_fecf"])
-    return p, dl, eta, gain, bandwidth, budget, framing
+    return eta, gain, bandwidth, budget, framing
+
+
+def _gt_example():
+    """G/T of the invented station versus elevation, clear sky and rain, as the program computes it."""
+    import calculations as c
+
+    e = EXAMPLE
+    p = 100.0 - e["availability_pct"]
+    alt_km = e["alt_m"] / 1000.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sky_ref = c.gt_reference_sky_noise_k(e["lat"], e["lon"], e["freq_ghz"], e["d_gs"], alt_km,
+                                             e["gt_ref_elevation_deg"])
+        sky_ref_zenith = c.gt_reference_sky_noise_k(e["lat"], e["lon"], e["freq_ghz"], e["d_gs"], alt_km, 90.0)
+        rows = []
+        for el in (2.0, 5.0, 10.0, 20.0, 45.0, 90.0):
+            clear = c.atmospheric_attenuation_contributions(
+                e["lat"], e["lon"], e["freq_ghz"], el, p, e["d_gs"], alt_km,
+                include_rain=False, include_clouds=False, include_scintillation=False)
+            rain = c.atmospheric_attenuation_contributions(
+                e["lat"], e["lon"], e["freq_ghz"], el, p, e["d_gs"], alt_km, include_scintillation=False)
+            a_clear = clear["gas"]
+            a_rain = rain["gas"] + rain["cloud"] + rain["rain"]
+            t_clear, t_rain = c.sky_noise_temperature_k(a_clear), c.sky_noise_temperature_k(a_rain)
+            gt_clear = c.ground_station_gt_dbk(e["gt_dbk"], e["tsys_k"], sky_ref, t_clear, e["radome_db"])
+            gt_rain = c.ground_station_gt_dbk(e["gt_dbk"], e["tsys_k"], sky_ref, t_rain, e["radome_db"])
+            gt_zenith_ref = c.ground_station_gt_dbk(e["gt_dbk"], e["tsys_k"], sky_ref_zenith, t_clear,
+                                                    e["radome_db"])
+            rows.append((el, a_clear, t_clear, e["tsys_k"] - sky_ref + t_clear, gt_clear, a_rain, t_rain,
+                         gt_rain, gt_zenith_ref))
+    return sky_ref, sky_ref_zenith, rows
 
 
 def _statistics_example():
@@ -85,7 +131,7 @@ def _statistics_example():
 # --------------------------------------------------------------------------
 # Chapters
 # --------------------------------------------------------------------------
-def chapters(m, root):
+def chapters(m, root=None):
     """The reference chapters, as a list of flowables."""
     # Section references are written as tokens (§gt, §atm, ...) and numbered here, so they follow the
     # position of these chapters in the manual.
@@ -191,7 +237,7 @@ def chapters(m, root):
         "n  = √(μ / a³)                      p = a (1 − e²)",
         "SSO inclination:  cos i = − (dΩ/dt)_SSO / (1.5 · n · J2 · (R / p)²)",
         "RAAN = α_sun(epoch) + 15° · (LTAN − 12 h)          (α_sun: right ascension of the Sun)",
-        "mean anomaly M = u − ω              (u: argument of latitude of the satellite at the epoch)",
+        "mean anomaly M = u − ω              (u: argument of latitude at the epoch)",
         "k = 0.75 · J2 · (R / p)²",
         "dM/dt = n · (1 + k · √(1 − e²) · (3 cos² i − 1))      dω/dt = n · k · (5 cos² i − 1)",
         "nodal period T = 2π / (dM/dt + dω/dt)",
@@ -213,14 +259,15 @@ def chapters(m, root):
     try:
         import tle_source as ts
 
-        alt, ecc = 595.6, 0.001214
+        alt, ecc = 650.0, 0.001
         inc = ts.sso_inclination_deg(alt, ecc)
-        period = ts.nodal_period_min(ts.EARTH_RADIUS_KM + alt, ecc, 97.794)
+        period = ts.nodal_period_min(ts.EARTH_RADIUS_KM + alt, ecc, inc)
         story.append(NOTE(
-            f"<b>Example – EPS-Sterna</b> (595.6 km, e = 0.001214): the sun-synchronous inclination is "
-            f"{inc:.3f}° (the parameters give the reference value 97.794°, which is used); the nodal period at "
-            f"97.794° is {period:.2f} min. With planes 15:30, 19:30, 23:30, N = 2 and phasing 60°, u is 0° and "
-            f"180° (15:30), 60° and 240° (19:30), 120° and 300° (23:30): the six satellites are 60° apart."))
+            f"<b>Example</b> (an invented mission): 650 km, e = 0.001, inclination empty. The sun-synchronous "
+            f"inclination is {inc:.3f}° and the nodal period {period:.2f} min. With planes 10:30 and 22:30, "
+            "N = 3 satellites per plane and phasing 60°, u is 0°, 120°, 240° in the 10:30 plane and 60°, 180°, "
+            "300° in the 22:30 plane; an extra satellite \"10:30@90\" becomes \"&lt;mission&gt; 10:30 #4\" "
+            "at u = 90°."))
     except Exception:  # pragma: no cover - the example is only illustrative
         pass
 
@@ -340,17 +387,67 @@ def chapters(m, root):
         "           = G/T GS + 20·log(D / D_ref)                     otherwise (0 without D_ref)",
         "2. T_sky(A) = Tm · (1 − 10^(−A/10)) + Tc · 10^(−A/10)",
         "   T_sky,ref = T_sky(A_g at the reference elevation, p = 50 %, gas only)",
-        "   T_sky     = T_sky(A_g + A_c + A_r of the sample or column)    (no scintillation: it radiates",
-        "                                                               no noise)",
+        "   T_sky     = T_sky(A_g + A_c + A_r of the sample or column; scintillation excluded)",
         "3. Tsys = Tsys_ref − T_sky,ref + T_sky",
         "   G/T  = G/T_ref − 10·log(Tsys / Tsys_ref) − radome loss",
         "4. pass analysis only: G/T −= Sun Noise (dB)                  (section §sun)",
     ))
     story.append(P(
+        "<b>Why the G/T changes with the elevation.</b> The G/T GS is a measured or specified value: the antenna "
+        "gain G over the system noise temperature Tsys<sub>ref</sub> at one elevation, the reference elevation, "
+        "in clear sky. The gain of the dish does not depend on where it points, but Tsys does: it is the noise "
+        "of the receiver and feed, which is fixed, plus the noise of the sky the antenna looks at, T<sub>sky</sub>. "
+        "An atmosphere that attenuates the signal by A dB also radiates noise (the absorbed power is re-emitted "
+        "as heat at about Tm = 275 K): the longer the path through the atmosphere, the higher A and "
+        "T<sub>sky</sub>. At low elevation the path is longest; rain and clouds add attenuation and noise too. "
+        "The program therefore keeps the fixed part of Tsys, Tsys<sub>ref</sub> − T<sub>sky,ref</sub>, and adds "
+        "the sky noise of the actual elevation and weather (step 3). The G/T changes by the ratio of the two "
+        "system noise temperatures, as G is unchanged."))
+    story += BUL([
+        "At the reference elevation in clear sky T<sub>sky</sub> = T<sub>sky,ref</sub>, so G/T = G/T<sub>ref</sub> "
+        "− radome loss: the radome loss is subtracted at every elevation, G/T GS being the value without radome.",
+        "Below the reference elevation, or in rain, T<sub>sky</sub> &gt; T<sub>sky,ref</sub> and the G/T is lower; "
+        "above it the G/T is slightly higher.",
+        "The effect is larger for a low-noise receiver (small Tsys<sub>ref</sub>) and at higher frequencies.",
+        "<b>The reference elevation matters</b>: the same G/T GS specified at zenith instead of 5° or 10° "
+        "describes a worse receiver (the low zenith sky noise leaves more of Tsys<sub>ref</sub> to the "
+        "receiver), so the G/T at low elevation comes out lower. When it is not known, 5° (the usual "
+        "specification) is assumed; the station catalogue can give each station its own (gt_elevation_deg).",
         "Without a System Noise Temperature, steps 2–4 are skipped: G/T = G/T<sub>ref</sub> at every elevation "
-        "and weather (no radome loss, no Sun noise). The static tab refuses a Tsys<sub>ref</sub> not higher than "
-        "T<sub>sky,ref</sub>. Ground spill-over of the side lobes is not modelled. In the pass analysis the G/T is "
-        "computed on the elevation grid of section §atm and interpolated."))
+        "and weather (no radome loss, no Sun noise).",
+        "The static tab refuses a Tsys<sub>ref</sub> not higher than T<sub>sky,ref</sub>. Ground spill-over of the "
+        "side lobes (ground noise picked up at low elevation) is not modelled.",
+        "The static link budget computes it at its elevation, once for each column (clear: gas only; rain "
+        "faded: gas + cloud + rain at p). The pass analysis computes it with the rain-faded attenuation on the "
+        "elevation grid of section §atm and interpolates it at the elevation of each sample.",
+    ])
+    try:
+        sky_ref, sky_ref_zenith, gt_rows = _gt_example()
+        e = EXAMPLE
+        story.append(NOTE(
+            f"<b>Example</b> (invented station at {e['lat']:g}° N, {e['lon']:g}° E, {e['alt_m']:g} m, "
+            f"{e['d_gs']:g} m dish, {e['freq_ghz']:g} GHz): G/T GS = {e['gt_dbk']:g} dB/K and Tsys<sub>ref</sub> = "
+            f"{e['tsys_k']:g} K at {e['gt_ref_elevation_deg']:g}° clear sky, radome {e['radome_db']:g} dB, "
+            f"availability {e['availability_pct']:g} % (p = {100 - e['availability_pct']:.1f} %). The clear-sky "
+            f"gas attenuation at {e['gt_ref_elevation_deg']:g}° gives T<sub>sky,ref</sub> = {sky_ref:.1f} K, so "
+            f"the receiver and feed account for {e['tsys_k'] - sky_ref:.1f} K. Computed by the program while this "
+            "manual was built:"))
+        table = [["El [°]", "A clear [dB]", "T_sky clear [K]", "Tsys clear [K]", "G/T clear [dB/K]",
+                  "A rain [dB]", "T_sky rain [K]", "G/T rain [dB/K]", "G/T clear, ref. at zenith"]]
+        for el, a_c, t_c, tsys_c, gt_c, a_r, t_r, gt_r, gt_z in gt_rows:
+            table.append([f"{el:g}", f"{a_c:.3f}", f"{t_c:.1f}", f"{tsys_c:.1f}", f"{gt_c:.2f}", f"{a_r:.3f}",
+                          f"{t_r:.1f}", f"{gt_r:.2f}", f"{gt_z:.2f}"])
+        story += TABLE(table, [1.2, 1.8, 1.9, 1.9, 1.9, 1.7, 1.9, 1.9, 2.3], bold_cols=(0,))
+        el5 = next(r for r in gt_rows if r[0] == 5.0)
+        story.append(P(
+            f"For example at 5° in clear sky: T<sub>sky</sub> = 275 (1 − 10<super>−{el5[1]:.3f}/10</super>) + 2.7 · "
+            f"10<super>−{el5[1]:.3f}/10</super> = {el5[2]:.1f} K; Tsys = {e['tsys_k']:g} − {sky_ref:.1f} + "
+            f"{el5[2]:.1f} = {el5[3]:.1f} K; G/T = {e['gt_dbk']:g} − 10·log({el5[3]:.1f} / {e['tsys_k']:g}) − "
+            f"{e['radome_db']:g} = {el5[4]:.2f} dB/K. The last column takes the same {e['gt_dbk']:g} dB/K and "
+            f"{e['tsys_k']:g} K as if specified at zenith (T<sub>sky,ref</sub> = {sky_ref_zenith:.1f} K): "
+            f"{el5[8]:.2f} dB/K at 5°, {el5[4] - el5[8]:.2f} dB less."))
+    except Exception as exc:  # pragma: no cover
+        story.append(P(f"<i>[example not computed: {exc}]</i>"))
 
     # ----------------------------------------------------------------------
     story += H2("Sun noise")
@@ -379,9 +476,9 @@ def chapters(m, root):
     try:
         import calculations as c
 
-        tb = c.sun_brightness_temperature_k(1.707)
+        tb = c.sun_brightness_temperature_k(EXAMPLE["freq_ghz"])
         story.append(NOTE(
-            f"At 1.707 GHz the quiet Sun has T<sub>b</sub> = {tb:,.0f} K. A pass is marked ☀ SUN NOISE in the "
+            f"At {EXAMPLE['freq_ghz']:g} GHz the quiet Sun has T<sub>b</sub> = {tb:,.0f} K. A pass is marked ☀ SUN NOISE in the "
             "contact list when the Sun noise reaches 0.5 dB; without a System Noise Temperature the list shows "
             "instead the passes with the Sun less than 5° from the satellite."))
     except Exception:  # pragma: no cover
@@ -615,62 +712,67 @@ def chapters(m, root):
     # ----------------------------------------------------------------------
     story += H2("Worked example: static downlink")
     try:
-        p, dl, eta, gain, bandwidth, b, framing = _static_example(root)
+        eta, gain, bandwidth, b, framing = _static_example()
+        e = EXAMPLE
         clear, rain = b["clear"], b["rain_faded"]
         iono = b["ionospheric_scintillation"]
-        story.append(P(
-            "AWS, Static LB · Downlink as saved in missions/AWS/parameters.json: Svalbard, el = "
-            f"{dl['elevation_deg']:g}°, h = {dl['sat_altitude_km']:g} km, f = {p['frequency_ghz']:g} GHz, "
-            f"availability {p['link_availability_pct']:g} %. Computed by the program while this manual was "
-            "built; the Static LB tab shows the same values (rounded)."))
+        pol = b["polarisation_loss_range_db"]
         tx = b["tx_power_dbw"]
+        story.append(P(
+            f"An invented S-band downlink: the station of §gt ({e['lat']:g}° N, {e['lon']:g}° E, {e['d_gs']:g} m), "
+            f"el = {e['elevation_deg']:g}°, h = {e['altitude_km']:g} km, f = {e['freq_ghz']:g} GHz, availability "
+            f"{e['availability_pct']:g} %; Tx chain {e['tx_power_w']:g} W, circuit loss {e['circuit_loss_db']:g} dB, "
+            f"VSWR {e['vswr']:g}, gain from the satellite antenna pattern; coded rate {e['coded_mbps']:g} Mbps with "
+            f"CCSDS framing I = {e['interleaving']}, OCF; S4 {e['s4_ref']:g} at GPS L1; axial ratios "
+            f"{e['tx_axial_ratio_db']:g} / {e['rx_axial_ratio_db']:g} dB; multipath {e['multipath_db']:g} dB; Rx "
+            f"depointing {e['rx_depointing_deg']:g}°; demodulator {e['demod_loss_db']:g} dB, modulation "
+            f"{e['modulation_degradation_db']:g} dB; required Eb/No {e['required_ebno_db']:g} dB. Computed by the "
+            "program while this manual was built; entered in the Static LB · Downlink tab they give the same "
+            "values."))
         rows = [
             ["Step", "Calculation", "Value"],
-            ["Off-nadir angle η", f"asin((R + h_GS) cos {dl['elevation_deg']:g}° / (R + h))", f"{eta:.2f}°"],
-            ["Antenna gain G(η)", "antenna_pattern.txt", f"{gain:.2f} dBi"],
-            ["Tx power", f"10·log {dl['tx_power_w']:g} W", f"{tx:.2f} dBW"],
-            ["VSWR loss", f"VSWR {dl['vswr']:g}", f"{b['vswr_loss_db']:.3f} dB"],
-            ["EIRP", f"{tx:.2f} − {dl['ant_circuit_loss_db']:g} − {b['vswr_loss_db']:.3f} + {gain:.2f}",
+            ["CCSDS framing", f"frame {framing['frame_bytes']} B, data field {framing['data_field_bytes']} B, "
+                              f"codeblock {framing['codeblock_bytes']} B",
+             f"F {framing['formatting']:.5f}, coding {framing['coding']:.5f}, OH {framing['total']:.5f}"],
+            ["Off-nadir angle η", f"asin((R + h_GS) cos {e['elevation_deg']:g}° / (R + h))", f"{eta:.2f}°"],
+            ["Antenna gain G(η)", "pattern interpolated", f"{gain:.2f} dBi"],
+            ["Tx power", f"10·log {e['tx_power_w']:g} W", f"{tx:.2f} dBW"],
+            ["VSWR loss", f"Γ = 0.3/2.3; −10·log(1 − Γ²)", f"{b['vswr_loss_db']:.3f} dB"],
+            ["EIRP", f"{tx:.2f} − {e['circuit_loss_db']:g} − {b['vswr_loss_db']:.3f} "
+                     f"{'+' if gain >= 0 else '−'} {abs(gain):.2f}",
              f"{b['eirp_dbw']:.2f} dBW"],
             ["Slant range d", "formula of §geom", f"{b['slant_range_km']:.1f} km"],
-            ["Free space loss", f"20·log {b['slant_range_km']:.1f} + 20·log {p['frequency_ghz']:g} + 92.45",
+            ["Free space loss", f"20·log {b['slant_range_km']:.1f} + 20·log {e['freq_ghz']:g} + 92.45",
              f"{b['path_loss_db']:.2f} dB"],
             ["Atmosphere clear / rain", "gas / gas + cloud + rain",
              f"{clear['atmospheric_attenuation_db']:.3f} / {rain['atmospheric_attenuation_db']:.3f} dB"],
             ["Ionospheric loss", f"S4 {iono['s4_ref']:g} → {iono['s4']:.3f}; 27.5·S4^1.26 / 2",
              f"{b['ionospheric_loss_db']:.2f} dB"],
-            ["Polarisation loss", "entered", f"{b['polarisation_loss_db']:.2f} dB"],
-            ["Rx pointing loss", f"12 ({dl['rx_depointing_deg']:g} / {dl['rx_beamwidth_deg']:g})²",
-             f"{b['rx_pointing_loss_db']:.3f} dB"],
+            ["Polarisation loss", f"co-polar, AR {e['tx_axial_ratio_db']:g} / {e['rx_axial_ratio_db']:g} dB",
+             f"{pol['co_polar']:.3f} dB"],
+            ["Rx pointing loss", f"12 ({e['rx_depointing_deg']:g} / {b['rx_beamwidth_3db_deg']:.2f})², "
+                                 "θ3dB = 70 λ / D", f"{b['rx_pointing_loss_db']:.3f} dB"],
             ["Rx power clear", "EIRP − total propagation loss − pointing", f"{clear['rx_power_dbw']:.2f} dBW"],
-            ["Sky noise ref. / clear", f"gas at {p['gt_ref_elevation_deg']:g}° / at {dl['elevation_deg']:g}°",
-             f"{b['gt_model']['sky_ref_k']:.1f} / {clear['sky_noise_k']:.1f} K"],
-            ["Tsys clear", f"{p['tsys_ref_k']:g} − {b['gt_model']['sky_ref_k']:.1f} + {clear['sky_noise_k']:.1f}",
-             f"{clear['system_noise_k']:.1f} K"],
-            ["G/T clear", f"{p['gt_gs_dbk']:g} − 10·log({clear['system_noise_k']:.1f}/{p['tsys_ref_k']:g}) − "
-                          f"{p['radome_loss_db']:g}", f"{clear['gt_dbk']:.2f} dB/K"],
+            ["G/T clear", f"as in §gt at {e['elevation_deg']:g}°: Tsys {clear['system_noise_k']:.1f} K",
+             f"{clear['gt_dbk']:.2f} dB/K"],
             ["S/No clear", "Rx power + G/T + 228.6", f"{clear['received_cno_dbhz']:.2f} dBHz"],
-            ["C/No clear", f"− {p['demod_loss_db']:g} − {dl['modulation_degradation_db']:g}",
+            ["C/No clear", f"− {e['demod_loss_db']:g} − {e['modulation_degradation_db']:g}",
              f"{clear['cno_dbhz']:.2f} dBHz"],
-            ["Transfer frame bit rate", f"{p['bitrate_mbps']:g} Mbps / {p['overhead']:g} × "
-                                        f"{dl['formatting_overhead']:g}",
+            ["Transfer frame bit rate", f"{e['coded_mbps']:g} Mbps / {framing['total']:.5f} × "
+                                        f"{framing['formatting']:.5f}",
              f"{b['bitrate_formatted_bps'] / 1e3:.1f} kbps = {b['bitrate_dbhz']:.2f} dBHz"],
             ["Eb/No clear / rain", "C/No − 10·log R_frame", f"{clear['ebno_db']:.2f} / {rain['ebno_db']:.2f} dB"],
-            ["Data Recovery Margin clear / rain", f"Eb/No − {dl['required_ebno_db']:g}",
+            ["Data Recovery Margin clear / rain", f"Eb/No − {e['required_ebno_db']:g}",
              f"{clear['margin_db']:.2f} / {rain['margin_db']:.2f} dB"],
-            ["MEAN − 3σ (rain)", "Tx gain ±1.5 dB TRI: σ = 1.5/√6",
+            ["MEAN − 3σ (rain)", "Tx power ±0.5 dB TRI, propagation ±1 dB GAU",
              f"{rain['margin_statistics']['mean_minus_3sigma_db']:.2f} dB"],
+            ["Worst Case RSS (rain)", "margin − √(0.5² + 1²)", f"{rain['margin_statistics']['worst_case_rss_db']:.2f} dB"],
             ["PFD in 4 kHz", f"B = {bandwidth / 1e6:g} MHz", f"{b['pfd_dbw_m2_per_4khz']:.2f} dBW/m²/4kHz"],
-            ["PFD margin", f"limit {b['pfd_limit_dbw_m2_4khz']:g} at {dl['elevation_deg']:g}°",
+            ["PFD margin", f"limit {b['pfd_limit_dbw_m2_4khz']:g} at {e['elevation_deg']:g}°",
              f"{b['pfd_margin_db']:.2f} dB"],
-            ["CCSDS I = 5", "frame 1115 B, data field 1105 B, codeblock 1275 B",
-             f"F {framing['formatting']:.5f}, coding {framing['coding']:.5f}, OH {framing['total']:.5f}"],
         ]
         story += TABLE(rows, [4.0, 7.5, 5.0])
-        story.append(P(
-            "The same link was checked against SatMaster Pro (validation/satmaster_aws_svalbard.md): C/No in "
-            "clear sky within 0.15 dB."))
-    except Exception as exc:  # pragma: no cover - only if the mission files are missing
+    except Exception as exc:  # pragma: no cover
         story.append(P(f"<i>[example not computed: {exc}]</i>"))
 
     # ======================================================================

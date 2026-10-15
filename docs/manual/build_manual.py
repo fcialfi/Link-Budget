@@ -395,7 +395,7 @@ def content():
         "the file and loads the values in the window.",
         "Without parameters.json only the <b>contact analysis</b> is done: the passes with their times, "
         "duration and maximum elevation. The Downlink, Uplink and Static LB tabs are disabled. To add the "
-        "link budget, copy the parameters.json of a similar mission (e.g. AWS) into the folder and edit it.",
+        "link budget, copy the parameters.json of a similar mission into the folder and edit it.",
         "<b>antenna_pattern.txt</b> (optional; or any .txt/.csv file with \"pattern\" in its name): the "
         "satellite antenna pattern of the mission (two columns, angle from nadir in degrees and gain in dBi, "
         "separated by commas, tabs, spaces or semicolons, then also with a decimal comma as Excel writes it with "
@@ -408,7 +408,7 @@ def content():
         "than one day; without internet the saved one is used.",
     ])
     story.append(P(
-        "A mission not launched yet (e.g. EPS-Sterna, of which AWS is the protoflight) has "
+        "A mission not launched yet (e.g. EPS-Sterna) has "
         "<b>custom orbit</b>, given by its mean elements: <b>altitude</b> (mean semi-major axis minus the "
         "equatorial radius), <b>eccentricity</b>, argument of perigee <b>ω</b> (90° for a frozen orbit), "
         "<b>inclination</b> (empty: computed for a sun-synchronous orbit), on the <b>Custom orbit</b> row. "
@@ -452,7 +452,7 @@ def content():
         "Space-Track; it only lists satellites with a known radio transmitter) and N2YO (the TLE on the "
         "satellite's page). When both fail, the status line gives the "
         "reason for each source. "
-        "The NORAD ID is read from and saved to the parameters file (key norad_id; AWS is 60543). Without "
+        "The NORAD ID is read from and saved to the parameters file (key norad_id). Without "
         "internet access the TLE already loaded is kept: copy the TLE from a web page into tle.txt instead.",
         "<b>Date</b> (YYYY-MM-DD): the day analysed (00:00–24:00 UTC, 30 s step).",
         "<b>Ground Station</b>: the station of the pass analysis, from the catalogue (ground_stations.csv); "
@@ -553,11 +553,12 @@ def content():
         "ground_stations.csv). Busy is the share of the antenna time in use, Contention the minutes with more "
         "satellites usable than antennas.",
     ])
-    story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
-                 "requirement 90 % within 100 min.")
+    story += FIG("statistics_plots", "Statistics plots: one satellite over one station, 104 kbps on board, "
+                 "latency requirement 90 % within 100 min.")
     story.append(P(
         "Three plots follow the summary. <b>Contacts</b>: a timeline, one row per day (for a constellation, one "
-        "row per satellite over the first day), each pass drawn from its start to its end in UTC and coloured by "
+        "row per satellite over the whole period; <b>Contacts shown</b> above the plots draws one day in "
+        "detail), each pass drawn from its start to its end in UTC and coloured by "
         "its station (grey: no usable minute); the gaps are the white spaces. <b>Data on board</b>: the memory "
         "occupation along the whole period (all satellites for a constellation), with its maximum. <b>Data "
         "latency</b>: the share of the data on ground within a given latency, with the requirement and whether "
@@ -584,7 +585,7 @@ def content():
         ["Frequency [GHz]", "Downlink carrier frequency."],
         ["C/Io [dBHz]", "Carrier to interference density. Leave empty when there is no interferer."],
         ["G/T GS [dB/K]", "Ground station figure of merit of the reference antenna, at the reference "
-                          "elevation in clear sky (Svalbard 3 m: 9.9 dB/K)."],
+                          "elevation in clear sky (e.g. 9.9 dB/K for a 3 m antenna at L band)."],
         ["Antenna Diameter GS [m]", "Used for a station without a diameter in ground_stations.csv (5th "
                                     "column): ITU-R attenuation model, 3 dB beamwidth and G/T scaling."],
         ["G/T Reference Diameter [m]", "Diameter of the antenna the G/T GS refers to. A station with another "
@@ -773,8 +774,8 @@ def content():
     ])
     story += H2("Ionospheric scintillation")
     story.append(P(
-        "From the S4 index measured at a reference frequency (GPS L1 1575.42 MHz by default), as in ESA "
-        "AWS-TN-ESA-SYS-0052: S4 is scaled to the link frequency as f^−1.5, the peak-to-peak power fluctuation "
+        "From the S4 index measured at a reference frequency (GPS L1 1575.42 MHz by default), as in the ESA "
+        "method for L-band downlinks: S4 is scaled to the link frequency as f^−1.5, the peak-to-peak power fluctuation "
         "is 27.5·S4^1.26 dB and the fade is half of it. The geomagnetic latitude (dipole) gives the zone: "
         "equatorial (&lt; 20°), mid-latitude (&lt; 58°), auroral oval (&lt; 72°), polar cap."))
     story += H2("Antennas")
@@ -850,10 +851,10 @@ def content():
         "calculations as the window. Examples:"))
     story += BUL([
         "<font face='Courier'>python lbtool.py missions</font>: lists the missions.",
-        "<font face='Courier'>python lbtool.py passes --mission AWS --station Svalbard --date 2026-10-14 "
+        "<font face='Courier'>python lbtool.py passes --mission &lt;name&gt; --station Svalbard --date 2026-10-14 "
         "-o passes.csv</font>: contacts of the day with maximum elevation, minimum Eb/No and PFD margin; the "
         "samples above the horizon go to the CSV file.",
-        "<font face='Courier'>python lbtool.py statistics --mission AWS --stations Svalbard,Kangerlussuaq "
+        "<font face='Courier'>python lbtool.py statistics --mission &lt;name&gt; --stations Svalbard,Kangerlussuaq "
         "--start 2026-10-14 --days 30 --instruments 100 --hktm 4 -o stats.csv</font>: the statistics of the "
         "Statistics tab over a station network, with the on-board data rates in kbps.",
         "Options: <font face='Courier'>--download</font> (download the TLE first), "
