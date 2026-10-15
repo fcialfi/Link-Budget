@@ -20,7 +20,7 @@
 
 ### Statistics
 - Latency requirement (share of the data on ground within a time) and use of each station of the network.
-- New plots: contact timeline (per day, or per satellite for a constellation) coloured by station, data on board over time, data latency with the requirement.
+- New plots: contact timeline (per day, or per satellite for a constellation) coloured by station, data on board over time, data latency with the requirement; without on-board data rates, revisit gaps of each satellite and contact time by station.
 - PDF report of the statistics (Export PDF…): verdict, inputs, summary, plots, tables per station, satellite, day and pass.
 - Fix: crash of the statistics on Windows (garbage collection in the worker thread).
 

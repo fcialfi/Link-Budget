@@ -537,10 +537,11 @@ def content():
         "Three plots follow the summary. <b>Contacts</b>: a timeline, one row per day (for a constellation, one "
         "row per satellite over the first day), each pass drawn from its start to its end in UTC and coloured by "
         "its station (grey: no usable minute); the gaps are the white spaces. <b>Data on board</b>: the memory "
-        "occupation along the whole period (all satellites for a constellation), with its maximum; without "
-        "on-board data rates, the usable (or contact) minutes per day. <b>Data latency</b>: the share of the "
-        "data on ground within a given latency, with the requirement and whether it is met; without on-board "
-        "data, the gaps between contacts (or, for a constellation, the time per satellite)."))
+        "occupation along the whole period (all satellites for a constellation), with its maximum. <b>Data "
+        "latency</b>: the share of the data on ground within a given latency, with the requirement and whether "
+        "it is met. Without on-board data rates these two plots become the <b>gaps between contacts</b> of each "
+        "satellite (its revisit time) and the <b>contact time by station</b> of each satellite (or day), with "
+        "the minutes spent waiting for a busy station."))
     story += FIG("statistics_tables", "Per-day and per-pass tables.")
     story.append(P(
         "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "
