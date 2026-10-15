@@ -48,8 +48,32 @@ curve at IBO 0), carriers per transponder AUTO (1 adds a 1.8 dB per-carrier
 back-off), carrier spacing factor 2 (at least 1 + roll-off), site altitude in km
 (0.01), downlink availability 99.99 (AUTO splits the overall availability).
 
-Next check: the same case at 10° (range 1931.2 km, satellite EIRP 5.07 dBW,
-antenna noise 15.7 K), where the scintillation model is valid.
+## 10° elevation
+
+Range 1931.2 km, satellite EIRP 5.07 dBW (pattern 0.56 dBi at 64.2° off nadir),
+antenna noise 14.5 K (clear sky at 10°). SatMaster applied a 5.56 dB per-carrier
+back-off (uplink HPA power no longer on MIN); its C/N0 is corrected by +5.56 dB
+to the same EIRP.
+
+| | Tool | SatMaster | Difference |
+|---|---|---|---|
+| Free space loss [dB] | 162.81 | 162.81 | 0.00 |
+| Gas, clear [dB] | 0.19 | 0.20 | 0.01 |
+| System noise, clear [K] | 108.8 | 111.26 | 0.10 dB |
+| **C/N0 clear [dB-Hz]** | **78.06** | **77.96** | **0.10** |
+| Tropospheric scintillation [dB] | 0.44 | 0.49 | 0.05 |
+| System noise, rain [K] | 109.9 | 112.69 | 0.11 dB |
+| **C/N0 rain down [dB-Hz]** | **77.57** | **77.40** | **0.17** |
+
+At 10° the scintillation model is valid and the two tools agree on it; the
+remaining 0.1 dB, the same at 3° and 10°, is the 2.5-2.7 K SatMaster adds to
+the system noise.
+
+## Conclusion
+
+Static downlink budget validated against SatMaster Pro: within 0.1 dB in clear
+sky (3° and 10°), 0.2 dB in rain at 10°, 0.45 dB in rain at 3° where the
+tropospheric scintillation is extrapolated below 5°.
 
 The comparison showed that the tool added sky noise from the tropospheric
 scintillation; fixed: only gas, cloud and rain radiate noise (ITU-R P.618 §3).
