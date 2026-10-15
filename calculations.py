@@ -1606,6 +1606,36 @@ def prepare_topocentric_data(
 
 
 
+EARTH_MU_KM3_S2 = 398600.4418
+EARTH_ROTATION_RAD_S = 7.2921159e-5
+
+
+def doppler_rate_hz_s(sat: "Satellite", gs: "GroundStation", times: "Time", freq_hz: float) -> np.ndarray:
+    """Rate of change of the Doppler shift (Hz/s) of a carrier at ``freq_hz``.
+
+    From the range acceleration, r'' = (|v|² - r'²)/r + r̂·(a_sat - a_gs),
+    with the relative position and velocity of the satellite seen from the
+    station (inertial frame), the satellite's two-body gravity and the
+    station's centripetal acceleration: Doppler rate = -f r'' / c. Exact at
+    every sample, also at the closest approach where a numerical derivative
+    over the 30 s step would round off the peak.
+    """
+    diff = (sat - gs).at(times)
+    los = diff.position.km
+    rel_vel = diff.velocity.km_per_s
+    distance = np.linalg.norm(los, axis=0)
+    los_unit = los / distance
+    range_rate = np.sum(rel_vel * los_unit, axis=0)
+    r_sat = sat.at(times).position.km
+    a_sat = -EARTH_MU_KM3_S2 * r_sat / np.linalg.norm(r_sat, axis=0) ** 3
+    r_gs = gs.at(times).position.km
+    a_gs = -EARTH_ROTATION_RAD_S ** 2 * np.vstack([r_gs[0], r_gs[1], np.zeros_like(r_gs[2])])
+    range_accel = (np.sum(rel_vel ** 2, axis=0) - range_rate ** 2) / distance + np.sum(
+        los_unit * (a_sat - a_gs), axis=0
+    )
+    return -range_accel / C_KM_S * freq_hz
+
+
 def calculate_link_budget_parameters(
     t_sky: "Time",
     sat: "Satellite",

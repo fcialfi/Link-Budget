@@ -144,3 +144,18 @@ def test_scintillation_adds_no_sky_noise(params):
     seen = a["Visible"]
     assert (b.loc[seen, "Atmospheric Att (dB)"] > a.loc[seen, "Atmospheric Att (dB)"]).all()
     assert np.allclose(b.loc[seen, "G/T GS (dB/K)"], a.loc[seen, "G/T GS (dB/K)"], atol=0.011)
+
+
+def test_doppler_rate_matches_the_derivative_of_the_doppler(params):
+    link = link_core.link_inputs_from_parameters(params)
+    analysis = link_core.PassAnalysis(TLE, SVALBARD, link, step_s=1)
+    start = datetime.datetime(2026, 10, 14, 1, 11, tzinfo=datetime.timezone.utc)
+    times = [start + datetime.timedelta(seconds=k) for k in range(240)]
+    frame = analysis.day(DAY, budget="visible", times=times)
+    numeric = np.gradient(frame["Doppler Shift (kHz)"].to_numpy(dtype=float) * 1000.0, 1.0)
+    rate = frame["Doppler Rate (Hz/s)"].to_numpy(dtype=float)
+    inside = np.isfinite(numeric)
+    inside[:5] = False  # edges of the one-sided differences
+    assert inside.sum() > 100
+    assert np.allclose(rate[inside], numeric[inside], atol=6.0)  # Doppler rounded to 0.01 kHz in the frame
+    assert (rate < 0).all()  # a downlink carrier always drifts down along a pass

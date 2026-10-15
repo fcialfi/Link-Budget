@@ -332,6 +332,9 @@ class PassAnalysis:
             frame = self._budget(frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight,
                                  visible, budget, sun_sep, sun_el)
         frame["Sun Separation (°)"] = np.round(sun_sep, 2)
+        if self.link is not None:
+            rate = calculations.doppler_rate_hz_s(self.sat, self.gs, sky_times, self.link.freq_ghz * 1e9)
+            frame["Doppler Rate (Hz/s)"] = np.round(rate, 1)
         frame["Azimuth (°)"] = np.round(azimuth, 2)
         frame["Min Elevation (°)"] = np.round(required, 2)
         frame["Visible"] = visible
