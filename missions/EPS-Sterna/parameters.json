@@ -12,7 +12,8 @@
       "23:30"
     ],
     "satellites_per_plane": 2,
-    "phasing_deg": 60.0
+    "phasing_deg": 60.0,
+    "extra_satellites": null
   },
   "frequency_ghz": 1.707,
   "eirp_sat_dbw": 4.51,

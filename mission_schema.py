@@ -20,6 +20,8 @@ SCHEMA: list[tuple[str, tuple[str, ...], str, str, str, str]] = [
     ("Orbit", ("orbit", "satellites_per_plane"), "Satellites per plane", "", "int", "Evenly spaced in the plane."),
     ("Orbit", ("orbit", "phasing_deg"), "Phasing between planes", "deg", "float",
      "Shift of the argument of latitude from one plane to the next."),
+    ("Orbit", ("orbit", "extra_satellites"), "Extra satellites", "LTAN@deg", "list",
+     "Single satellites added to the regular ones, e.g. 19:30@120 (plane, argument of latitude at epoch)."),
     ("Downlink", ("frequency_ghz",), "Frequency", "GHz", "float", "Downlink carrier frequency."),
     ("Downlink", ("eirp_sat_dbw",), "EIRP SAT", "dBW", "float", "Satellite EIRP (when not from the Tx chain)."),
     ("Downlink", ("bitrate_mbps",), "Coded bit rate", "Mbps", "float", "Channel bit rate, coding included."),

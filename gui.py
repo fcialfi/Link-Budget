@@ -973,6 +973,7 @@ class LinkBudgetApp:
             planes = orbit.get("ltan") or ["22:20"]
             planes = [str(p) for p in (planes if isinstance(planes, list) else [planes])]
             self.orbit_planes_var.set(", ".join(planes))
+            self.orbit_extra_var.set(", ".join(str(e) for e in (orbit.get("extra_satellites") or [])))
             self.orbit_ltan_var.set(planes[0])
             self.orbit_satnum_var.set("1")
             self._refresh_orbit_choices()
@@ -1080,18 +1081,35 @@ class LinkBudgetApp:
             raise ValueError("Sats/plane must be at least 1")
         return per_plane, float(self.orbit_phasing_var.get().strip() or 0.0)
 
+    def _orbit_extras(self) -> list[str]:
+        """The extra satellites typed (LTAN@deg), validated."""
+
+        extras = [e.strip() for e in self.orbit_extra_var.get().replace(";", ",").split(",") if e.strip()]
+        for extra in extras:
+            link_core.parse_extra_satellite(extra)
+        return extras
+
+    def _orbit_members(self) -> list[tuple[str, int, float]]:
+        """(plane, number, argument of latitude) of every satellite of the constellation typed."""
+
+        per_plane, phasing = self._orbit_constellation()
+        return link_core.constellation_members({
+            "ltan": self._orbit_planes(), "satellites_per_plane": per_plane, "phasing_deg": phasing,
+            "extra_satellites": self._orbit_extras(),
+        })
+
     def _refresh_orbit_choices(self) -> None:
-        """Update the plane and satellite menus after the planes or Sats/plane changed."""
+        """Update the plane and satellite menus after the planes, Sats/plane or extra satellites changed."""
 
         try:
-            planes = self._orbit_planes()
-            per_plane, _phasing = self._orbit_constellation()
+            members = self._orbit_members()
         except ValueError:
             return
+        planes = list(dict.fromkeys(plane for plane, _n, _a in members))
         self.orbit_ltan_combo.configure(values=planes)
         if self.orbit_ltan_var.get() not in planes:
             self.orbit_ltan_var.set(planes[0])
-        numbers = [str(k) for k in range(1, per_plane + 1)]
+        numbers = [str(n) for plane, n, _a in members if plane == self.orbit_ltan_var.get()]
         self.orbit_satnum_combo.configure(values=numbers)
         if self.orbit_satnum_var.get() not in numbers:
             self.orbit_satnum_var.set("1")
@@ -1107,15 +1125,17 @@ class LinkBudgetApp:
         inclination = float(inclination_text) if inclination_text else None
         eccentricity = float(self.orbit_ecc_var.get().strip() or 0.0)
         arg_perigee = float(self.orbit_argp_var.get().strip() or 0.0)
-        planes = self._orbit_planes()
-        per_plane, phasing = self._orbit_constellation()
-        plane_index = planes.index(self.orbit_ltan_var.get()) if self.orbit_ltan_var.get() in planes else 0
-        sat_index = min(max(int(self.orbit_satnum_var.get() or 1), 1), per_plane) - 1
+        members = self._orbit_members()
+        plane = self.orbit_ltan_var.get()
+        number = int(self.orbit_satnum_var.get() or 1)
+        chosen = [m for m in members if m[0] == plane and m[1] == number] or [members[0]]
+        plane, number, arg_latitude = chosen[0]
+        ltan = tle_source.ltan_hours(plane)
         return {
             "altitude_km": altitude,
             "ltan_h": ltan,
-            "arg_latitude_deg": (sat_index * 360.0 / per_plane + plane_index * phasing) % 360.0,
-            "satellite_label": f"{self.orbit_ltan_var.get()} #{sat_index + 1}",
+            "arg_latitude_deg": arg_latitude,
+            "satellite_label": f"{plane} #{number}",
             "inclination_deg": inclination,
             "eccentricity": eccentricity,
             "arg_perigee_deg": arg_perigee,
@@ -1124,6 +1144,7 @@ class LinkBudgetApp:
     def _on_analysed_satellite_changed(self) -> None:
         """Plane or satellite number changed: new TLE; the single-satellite statistics are out of date."""
 
+        self._refresh_orbit_choices()  # the sat # choices depend on the plane
         self.generate_custom_tle(show_errors=False)
         inputs = getattr(self, "stats_inputs", None)
         if inputs is not None and not inputs.get("constellation"):
@@ -1192,6 +1213,7 @@ class LinkBudgetApp:
             "ltan": planes,
             "satellites_per_plane": per_plane,
             "phasing_deg": phasing,
+            "extra_satellites": self._orbit_extras(),
         }
 
     def load_tle_from_file(self):
@@ -2007,10 +2029,13 @@ class LinkBudgetApp:
         ttk.Label(
             popup,
             text=(
-                f"{len(orbit['ltan'])} plane(s) × {orbit['satellites_per_plane']} satellite(s), phasing "
-                f"{orbit['phasing_deg']:g}°, altitude {orbit['altitude_km']:g} km, epoch {epoch:%Y-%m-%d} 00:00 UTC. "
-                "Change the planes, Sats/plane and Phasing in the Constellation row and press Save in "
-                "Static Link Budget to keep them; Statistics → Whole constellation uses all these satellites."
+                f"{len(satellites)} satellites: {len(orbit['ltan'])} plane(s) × {orbit['satellites_per_plane']} "
+                f"satellite(s), phasing {orbit['phasing_deg']:g}°"
+                + (f", extra {', '.join(orbit['extra_satellites'])}" if orbit.get("extra_satellites") else "")
+                + f"; altitude {orbit['altitude_km']:g} km, epoch {epoch:%Y-%m-%d} 00:00 UTC. "
+                "Change the planes, Sats/plane, Phasing and Extra sats in the Constellation row and save with "
+                "Mission Parameters (or Save in Static Link Budget); Statistics → Whole constellation uses all "
+                "these satellites."
             ),
             wraplength=1060, justify="left",
         ).pack(anchor="w", padx=10, pady=(8, 4))
@@ -2028,12 +2053,13 @@ class LinkBudgetApp:
         times = ts.utc(epoch.year, epoch.month, epoch.day, 0, np.arange(0, 100, 0.5))
         fig, (ax_map, ax_phase) = plt.subplots(1, 2, figsize=(11, 4.6), gridspec_kw={"width_ratios": [2.2, 1]})
         colors = list(MATLAB_COLORS.values())
+        plane_order = list(dict.fromkeys(name.rsplit(" ", 2)[-2] for name, _lines in satellites))
         for k, (name, lines) in enumerate(satellites):
             raan = float(lines[1][17:25])
             arg_lat = (float(lines[1][34:42]) + float(lines[1][43:51])) % 360.0
             plane = name.rsplit(" ", 2)[-2]
             table.insert("", tk.END, values=(name, plane, f"{raan:.2f}", f"{arg_lat:.1f}", lines[1][8:16].strip()))
-            color = colors[orbit["ltan"].index(plane) % len(colors)]
+            color = colors[plane_order.index(plane) % len(colors)]
             sat = link_core.EarthSatellite(lines[0], lines[1], name, ts)
             point = link_core.wgs84.subpoint_of(sat.at(times))
             lon, lat = point.longitude.degrees, point.latitude.degrees
@@ -2081,11 +2107,12 @@ class LinkBudgetApp:
         times = ts.utc(epoch.year, epoch.month, epoch.day, 0, minutes)
         radius = calculations.EARTH_RADIUS_KM
         colors = list(MATLAB_COLORS.values())
+        plane_order = list(dict.fromkeys(name.rsplit(" ", 2)[-2] for name, _lines in satellites))
         tracks = []
         for name, lines in satellites:
             sat = link_core.EarthSatellite(lines[0], lines[1], name, ts)
             plane = name.rsplit(" ", 2)[-2]
-            color = colors[orbit["ltan"].index(plane) % len(colors)] if plane in orbit["ltan"] else colors[0]
+            color = colors[plane_order.index(plane) % len(colors)]
             tracks.append((name, color, sat.at(times).position.km))
         stations = [
             (gs, link_core.wgs84.latlon(lat, lon, elevation_m=alt).at(times).position.km)
@@ -6760,6 +6787,7 @@ class LinkBudgetApp:
         self.orbit_phasing_var = tk.StringVar(value="0")
         self.orbit_planes_var = tk.StringVar(value="22:20")
         self.orbit_satnum_var = tk.StringVar(value="1")
+        self.orbit_extra_var = tk.StringVar(value="")
         orbit_row = ttk.Frame(project_frame)
         orbit_row.grid(row=1, column=0, sticky="ew", pady=(0, 6))
 
@@ -6798,6 +6826,14 @@ class LinkBudgetApp:
         spp_entry.bind("<FocusOut>", lambda _e: self._refresh_orbit_choices(), add="+")
         _orbit_field(line2, "Phasing (°)", self.orbit_phasing_var, 5,
                      "Shift of the argument of latitude from one plane to the next.")
+        extra_entry = _orbit_field(
+            line2, "Extra sats", self.orbit_extra_var, 14,
+            "Single satellites added to the regular ones, written LTAN@argument of latitude and separated by "
+            "commas, e.g. 19:30@120 (a satellite in the 19:30 plane, 120° from the ascending node at epoch). "
+            "A new LTAN makes a plane of its own.",
+        )
+        extra_entry.bind("<FocusOut>", lambda _e: self._refresh_orbit_choices(), add="+")
+        extra_entry.bind("<Return>", lambda _e: self._refresh_orbit_choices(), add="+")
         ttk.Label(line2, text="Analyse: plane").pack(side=tk.LEFT, padx=(18, 4))
         self.orbit_ltan_combo = ttk.Combobox(line2, textvariable=self.orbit_ltan_var, width=6, state="readonly")
         self.orbit_ltan_combo.pack(side=tk.LEFT)
