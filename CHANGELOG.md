@@ -5,6 +5,7 @@
 - Statistics: use of each station of the network.
 - Statistics: latency requirement (share of the data on ground within a time).
 - Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes). lbtool.py: --sat.
+- Constellation scheduling: antenna setup time between satellites (Antenna Setup [min], lbtool.py --setup; 7 min for AWS and EPS-Sterna).
 - Statistics plots redrawn: contact timeline (per day, or per satellite for a constellation) coloured by station, data on board over time, data latency with the requirement.
 - Sun outage: Sun noise in the ground antenna beam along the passes (Sun position, dish pattern, solar flux), lowering G/T and Eb/No; Sun Separation and Sun Noise columns, passes marked in the contact list and in lbtool.py, included in the statistics.
 - EPS-Sterna: phasing 60° between the planes (the 6 satellites 60° apart); statistics network Svalbard + Punta Arenas (global data), saved in the mission parameters (statistics_stations).

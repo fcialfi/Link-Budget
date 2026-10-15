@@ -1227,6 +1227,9 @@ class LinkBudgetApp:
         if isinstance(latency, dict) and hasattr(self, "stats_latency_var"):
             self.stats_latency_var.set("" if latency.get("minutes") is None else f"{latency['minutes']:g}")
             self.stats_latency_pct_var.set("" if latency.get("percent") is None else f"{latency['percent']:g}")
+        setup = payload.get("antenna_setup_min")
+        if hasattr(self, "stats_setup_var"):
+            self.stats_setup_var.set("" if setup is None else f"{setup:g}")
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
@@ -1900,6 +1903,7 @@ class LinkBudgetApp:
         self.stats_other_var = tk.StringVar(value="")
         self.stats_latency_var = tk.StringVar(value="")
         self.stats_latency_pct_var = tk.StringVar(value="")
+        self.stats_setup_var = tk.StringVar(value="")
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -1921,6 +1925,9 @@ class LinkBudgetApp:
              "on ground, e.g. 60."),
             ("Within [% of data]", self.stats_latency_pct_var,
              "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
+            ("Antenna Setup [min]", self.stats_setup_var,
+             "Time to configure an antenna for another satellite (whole constellation): after a pass the "
+             "antenna cannot take a different satellite for this long. Empty: 0."),
         )
         grid = ttk.Frame(inputs)
         grid.pack(side=tk.LEFT, anchor="n")
@@ -2167,6 +2174,9 @@ class LinkBudgetApp:
         latency_pct = _number(self.stats_latency_pct_var, "Within [% of data]")
         if latency is not None and (latency <= 0 or not 0 < (latency_pct or 100.0) <= 100):
             raise ValueError("The latency requirement must be > 0 min, for 0–100 % of the data.")
+        setup_min = _number(self.stats_setup_var, "Antenna Setup [min]") or 0.0
+        if setup_min < 0:
+            raise ValueError("The antenna setup time must be positive.")
         inputs["link"] = link
         inputs["budget"] = {
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
@@ -2175,6 +2185,7 @@ class LinkBudgetApp:
             "info_bitrate_bps": link.info_bitrate_bps,
             "generated_bps": sum(given.values()) * 1e3 if given else None,
             "flows_kbps": given,
+            "setup_s": setup_min * 60.0,
         }
         return inputs
 
@@ -2246,7 +2257,8 @@ class LinkBudgetApp:
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
                 if inputs["constellation"] and budget:
                     state["result"] = pass_statistics.simulate_constellation(
-                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
+                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas,
+                        setup_s=budget["setup_s"], **kwargs
                     )
                 else:
                     combined = [pass_statistics.combine_stations(day["SAT"]) for day in days]
@@ -2256,7 +2268,8 @@ class LinkBudgetApp:
                     if budget:
                         # Use of each station of the network (one satellite: no conflicts).
                         state["result"].stations = pass_statistics.simulate_constellation(
-                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
+                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas,
+                        setup_s=budget["setup_s"], **kwargs
                         ).stations
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
@@ -5145,6 +5158,11 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
+            try:
+                if self.stats_setup_var.get().strip():
+                    panel_values["antenna_setup_min"] = float(self.stats_setup_var.get())
+            except ValueError:
+                pass
             network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
             if network:
                 panel_values["statistics_stations"] = network

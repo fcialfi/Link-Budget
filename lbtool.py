@@ -192,7 +192,9 @@ def cmd_statistics(args) -> None:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
         result = pass_statistics.simulate_constellation(
             days, link_core.STEP_S,
-            antennas=dict(calculations.GROUND_STATION_ANTENNAS) if args.backup_antennas else {}, **kwargs
+            antennas=dict(calculations.GROUND_STATION_ANTENNAS) if args.backup_antennas else {},
+            setup_s=60.0 * (args.setup if args.setup is not None else float((params or {}).get("antenna_setup_min") or 0.0)),
+            **kwargs
         )
     else:
         result = pass_statistics.aggregate(
@@ -256,6 +258,9 @@ def main(argv=None) -> None:
     stats.add_argument("--backup-antennas", action="store_true",
                        help="with --constellation: every antenna of a station serves a satellite at the same "
                             "time (default: one antenna per site, the others backups)")
+    stats.add_argument("--setup", type=float,
+                       help="with --constellation: antenna setup time between satellites [min] "
+                            "(default: antenna_setup_min of the mission parameters)")
     stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
     stats.add_argument("--latency-pct", type=float, default=100.0,
                        help="share of the data that must meet it [%%] (default 100)")

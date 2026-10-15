@@ -508,6 +508,10 @@ def content():
         "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
         "required time, the time within which the required share arrives, and whether the requirement is met. "
         "Saved in the parameters file (latency_requirement).",
+        "<b>Antenna Setup</b> (min, whole constellation): time to configure an antenna for another satellite. "
+        "After serving a satellite the antenna cannot take a different one for this long (the same satellite "
+        "resumes at once); a satellite waiting for it counts as a conflict. Saved in the parameters file "
+        "(antenna_setup_min; 7 min for AWS and EPS-Sterna).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",

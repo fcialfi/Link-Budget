@@ -360,6 +360,7 @@ def simulate_constellation(
     generated_bps: float = 0.0,
     latency_requirement: Optional[tuple[float, float]] = None,
     antennas: Optional[dict[str, int]] = None,
+    setup_s: float = 0.0,
 ) -> ConstellationResult:
     """Satellites sharing ground stations whose antennas track one satellite each.
 
@@ -373,7 +374,9 @@ def simulate_constellation(
     (conflict). Latency is first in first out per satellite; the system
     figures put the data of all satellites together. ``antennas`` gives the
     number of antennas of a station (default 1): it serves that many
-    satellites at a time.
+    satellites at a time. ``setup_s`` is the time an antenna needs to be
+    configured for another satellite: after serving one it cannot take a
+    different satellite for that long (the same satellite resumes at once).
     """
     result = ConstellationResult()
     if not days:
@@ -411,6 +414,10 @@ def simulate_constellation(
     on_board = np.zeros((n_sat, n))
     conflict = np.zeros((n_sat, n), dtype=bool)
     chunks: list[list] = [[] for _ in range(n_sat)]
+    setup_steps = int(np.ceil(setup_s / step_s)) if setup_s > 0 else 0
+    n_slots = len(slot_station)
+    last_sat = np.full(n_slots, -1)  # satellite each antenna was last configured for
+    free_from = np.zeros(n_slots, dtype=int)  # first sample it may take another satellite
     for i in range(n):
         memory += gen_step
         # A station keeps tracking its satellite while the link closes (a real
@@ -426,7 +433,10 @@ def simulate_constellation(
         tracked = set(owner.values())
         options = {
             s: sorted(
-                (g for g in np.flatnonzero(usable[s, :, i]) if int(g) not in owner),
+                (
+                    g for g in np.flatnonzero(usable[s, :, i])
+                    if int(g) not in owner and (last_sat[g] in (-1, s) or i >= free_from[g])
+                ),
                 key=lambda g, s=s: -margin[s, g, i],
             )
             for s in range(n_sat)
@@ -452,6 +462,8 @@ def simulate_constellation(
                 conflict[s, i] = True
         for g, s in owner.items():
             served_station[s, i] = g
+            last_sat[g] = s
+            free_from[g] = i + 1 + setup_steps
         for s in range(n_sat):
             if served_station[s, i] < 0:
                 continue

@@ -184,3 +184,17 @@ def test_on_board_series_follows_the_memory():
     # 0.75 MB generated per sample, all of it downloaded in the last one.
     assert on_board == pytest.approx([0.75, 1.5, 2.25, 3.0, 3.75, 0.0])
     assert ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6).on_board_series is None
+
+
+def test_constellation_antenna_setup_time():
+    # S1 in view in samples 1-2, S2 in samples 3-6; 2 min to reconfigure the antenna.
+    day = {
+        "S1": {"G": _sat_day([0, 1, 1, 0, 0, 0, 0])},
+        "S2": {"G": _sat_day([0, 0, 0, 1, 1, 1, 1])},
+    }
+    plain = ps.simulate_constellation([day], step_s=60, info_bitrate_bps=1e6, generated_bps=1e4)
+    setup = ps.simulate_constellation([day], step_s=60, info_bitrate_bps=1e6, generated_bps=1e4, setup_s=120)
+    assert plain.satellites[1]["served_min_per_day"] == 4.0
+    assert setup.satellites[1]["served_min_per_day"] == 2.0  # samples 5-6
+    assert setup.satellites[1]["conflict_min_per_day"] == 2.0  # waiting for the antenna
+    assert setup.satellites[0]["served_min_per_day"] == 2.0
