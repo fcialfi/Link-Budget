@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Statistics: on-board memory per satellite (On-board Memory [GB], lbtool.py --memory-gb): share used, autonomy without contacts, data lost when full; EPS-Sterna: 4 GB (Mission Data partition).
+
 ## 1.3.0
 
 ### Statistics

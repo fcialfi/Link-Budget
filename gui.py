@@ -1236,6 +1236,8 @@ class LinkBudgetApp:
             min_pass = payload.get("min_pass_min")
             self.stats_min_pass_var.set("" if min_pass is None else f"{min_pass:g}")
             self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
+            memory = payload.get("memory_gb")
+            self.stats_memory_var.set("" if memory is None else f"{memory:g}")
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
@@ -1912,6 +1914,7 @@ class LinkBudgetApp:
         self.stats_latency_pct_var = tk.StringVar(value="")
         self.stats_setup_var = tk.StringVar(value="")
         self.stats_min_pass_var = tk.StringVar(value="")
+        self.stats_memory_var = tk.StringVar(value="")
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -1933,6 +1936,10 @@ class LinkBudgetApp:
              "on ground, e.g. 60."),
             ("Within [% of data]", self.stats_latency_pct_var,
              "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
+            ("On-board Memory [GB]", self.stats_memory_var,
+             "Optional, with the on-board data rates: memory of each satellite for these data, in gigabytes "
+             "(e.g. 4 for one 4 GB partition). Gives the share used, the hours without contacts until it "
+             "is full, and the data lost when it fills (new data discarded)."),
             ("Min Pass Duration [min]", self.stats_min_pass_var,
              "Contacts (usable minutes of one satellite over one station) shorter than this are not used: "
              "too short to be worth scheduling (acquisition, lock, start of the dump). Empty: 0, all used."),
@@ -2204,6 +2211,9 @@ class LinkBudgetApp:
         setup_min = _number(self.stats_setup_var, "Antenna Setup [min]") or 0.0
         if setup_min < 0:
             raise ValueError("The antenna setup time must be positive.")
+        memory_gb = _number(self.stats_memory_var, "On-board Memory [GB]")
+        if memory_gb is not None and memory_gb <= 0:
+            raise ValueError("The on-board memory must be greater than 0 GB.")
         min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
         if min_pass < 0:
             raise ValueError("The minimum pass duration must be positive.")
@@ -2217,6 +2227,7 @@ class LinkBudgetApp:
             "flows_kbps": given,
             "setup_s": setup_min * 60.0,
             "min_pass_s": min_pass * 60.0,
+            "memory_bits": memory_gb * 8e9 if memory_gb else None,
         }
         return inputs
 
@@ -2291,6 +2302,7 @@ class LinkBudgetApp:
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
                     latency_at_pass_end=inputs["latency_at_pass_end"],
+                    memory_bits=budget["memory_bits"] if budget else None,
                 )
                 # One antenna per site, the others backups, unless the backups are used too.
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
@@ -2358,6 +2370,19 @@ class LinkBudgetApp:
                 + ("✓ met" if s["latency_requirement_met"] else "✗ NOT met")
             )
 
+        def _memory_line():
+            if "memory_mb" not in s:
+                return None
+            text = (
+                f"Memory ({s['memory_mb'] / 1000:g} GB per satellite): max {s['max_memory_use_pct']:.1f} % used, "
+                f"full after {s['memory_autonomy_h']:.1f} h without contacts"
+            )
+            if s.get("lost_mb"):
+                text += f"    ✗ MEMORY FULL: {s['lost_mb']:.0f} MB lost ({s['lost_pct']:.1f} % of the data)"
+            else:
+                text += "    ✓ no data lost"
+            return text
+
         if constellation:
             lines = [
                 f"{s['satellites']} satellites, {s['stations']} stations: served {s['served_min_per_day']:.1f} "
@@ -2373,6 +2398,8 @@ class LinkBudgetApp:
                 )
                 if "latency_requirement_min" in s:
                     lines.append(_latency_line())
+                if _memory_line():
+                    lines.append(_memory_line())
             else:
                 lines.append("Enter the on-board data rates for the memory, the volume and the latency.")
             self.stats_summary_var.set("\n".join(lines))
@@ -2408,6 +2435,8 @@ class LinkBudgetApp:
                     f"Data latency: mean {_fmt(s['mean_latency_min'])} min, max {_fmt(s['max_latency_min'])} min    "
                     + ("✓ the downlink keeps up" if keeps_up else "✗ the memory keeps filling: the downlink does not keep up")
                 )
+                if _memory_line():
+                    lines.append(_memory_line())
             else:
                 lines.append(
                     "Downloaded = capacity (no on-board data given: enter the instrument, HKTM and other data "
@@ -2693,6 +2722,8 @@ class LinkBudgetApp:
             if budget["latency_requirement"]:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
+            if budget.get("memory_bits"):
+                rows.append(("On-board memory", f"{budget['memory_bits'] / 8e9:g} GB per satellite"))
             rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
             rows.append(("Latency counted", "at the end of each pass (dump complete)"
                          if inputs.get("latency_at_pass_end") else "when each bit comes down"))
@@ -5316,7 +5347,8 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
-            for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var)):
+            for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
+                             ("memory_gb", self.stats_memory_var)):
                 try:
                     if var.get().strip():
                         panel_values[key] = float(var.get())
