@@ -265,6 +265,7 @@ import link_core
 import licensing
 import static_report
 import statistics_report
+import mission_schema
 
 # Add path of the current script (works also in PyInstaller .exe)
 if getattr(sys, 'frozen', False):
@@ -1351,7 +1352,7 @@ class LinkBudgetApp:
 
         file_path = filedialog.askopenfilename(
             title="Select Ground Stations File",
-            filetypes=[("Text Files", "*.txt"), ("CSV Files", "*.csv"), ("All Files", "*.*")],
+            filetypes=[("CSV Files", "*.csv"), ("Text Files", "*.txt"), ("All Files", "*.*")],
         )
         if not file_path:
             return
@@ -1361,6 +1362,11 @@ class LinkBudgetApp:
         except Exception as exc:
             messagebox.showerror("Ground Stations", f"Unable to load ground stations: {exc}")
             return
+
+        self._after_ground_stations_loaded(stations, file_path)
+
+    def _after_ground_stations_loaded(self, stations: dict, file_path: str) -> None:
+        """Refresh the station menus and lists after (re)loading the catalogue."""
 
         self.current_gs_file = os.path.abspath(file_path)
         self._refresh_statistics_stations()
@@ -1374,11 +1380,262 @@ class LinkBudgetApp:
                 self.gs_var.set(next(iter(stations)))
         self.set_analysis_stale()
 
+    # ------------------------------------------------------------------
+    # Editors: ground stations and mission parameters
+    # ------------------------------------------------------------------
+
+    def edit_ground_stations(self) -> None:
+        """Table of the ground station catalogue: add, edit, delete, save as CSV."""
+
+        columns = calculations.STATION_COLUMNS
+        headings = {
+            "name": "Name", "latitude_deg": "Latitude [deg]", "longitude_deg": "Longitude [deg]",
+            "altitude_m": "Altitude [m]", "antenna_diameter_m": "Diameter [m]", "gt_dbk": "G/T [dB/K]",
+            "gt_elevation_deg": "G/T El. [deg]", "tsys_k": "Tsys [K]", "antennas": "Antennas",
+        }
+        rows = calculations.ground_station_rows()
+        win = tk.Toplevel(self.root)
+        win.title("Ground Stations")
+        win.geometry("1180x460")
+        ttk.Label(
+            win,
+            text="Optional columns may be left empty: Diameter scales the mission G/T; G/T, G/T El. and Tsys "
+                 "are the station's own measured values (they replace the mission G/T); Antennas counts the "
+                 "backups too. Double-click a row to edit it. Saved as CSV (opens in Excel).",
+            wraplength=1010, justify="left", foreground=PALETTE["text_muted"],
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+        table = ttk.Treeview(win, columns=columns, show="headings", height=12)
+        for col in columns:
+            table.heading(col, text=headings[col])
+            table.column(col, width=150 if col == "name" else 118, anchor="w" if col == "name" else "center")
+        table.pack(fill=tk.BOTH, expand=True, padx=10)
+        status = tk.StringVar(value=f"File: {calculations.GROUND_STATIONS_FILE}")
+
+        def _fmt(value):
+            return "" if value is None else (f"{value:g}" if isinstance(value, float) else str(value))
+
+        def _fill():
+            table.delete(*table.get_children())
+            for k, row in enumerate(rows):
+                table.insert("", tk.END, iid=str(k), values=[_fmt(row.get(c)) for c in columns])
+
+        def _form(row=None):
+            dialog = tk.Toplevel(win)
+            dialog.title("Ground Station")
+            dialog.transient(win)
+            entries = {}
+            for k, col in enumerate(columns):
+                ttk.Label(dialog, text=headings[col] + ("" if k < 4 else "  (optional)")).grid(
+                    row=k, column=0, sticky="w", padx=8, pady=3)
+                entry = ttk.Entry(dialog, width=24)
+                entry.insert(0, _fmt((row or {}).get(col)))
+                entry.grid(row=k, column=1, padx=8, pady=3)
+                entries[col] = entry
+            result = {}
+
+            def _ok():
+                values = {}
+                try:
+                    for k, col in enumerate(columns):
+                        text = entries[col].get().strip()
+                        if col == "name":
+                            if not text:
+                                raise ValueError("The name is required.")
+                            values[col] = text
+                        elif not text:
+                            if k < 4:
+                                raise ValueError(f"{headings[col]} is required.")
+                            values[col] = None
+                        elif col == "antennas":
+                            values[col] = int(float(text))
+                        else:
+                            values[col] = float(text.replace(",", "."))
+                except ValueError as exc:
+                    messagebox.showerror("Ground Station", str(exc), parent=dialog)
+                    return
+                result.update(values)
+                dialog.destroy()
+
+            buttons = ttk.Frame(dialog)
+            buttons.grid(row=len(columns), column=0, columnspan=2, pady=8)
+            ttk.Button(buttons, text="OK", command=_ok).pack(side=tk.LEFT, padx=4)
+            ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=4)
+            dialog.grab_set()
+            win.wait_window(dialog)
+            return result or None
+
+        def _selected():
+            sel = table.selection()
+            return int(sel[0]) if sel else None
+
+        def _add():
+            row = _form()
+            if row:
+                rows.append(row)
+                _fill()
+                status.set("Station added: press Save to keep it.")
+
+        def _edit(_event=None):
+            k = _selected()
+            if k is None:
+                return
+            row = _form(rows[k])
+            if row:
+                rows[k] = row
+                _fill()
+                status.set("Station changed: press Save to keep it.")
+
+        def _delete():
+            k = _selected()
+            if k is not None and messagebox.askyesno("Ground Stations", f"Delete {rows[k]['name']}?", parent=win):
+                rows.pop(k)
+                _fill()
+                status.set("Station deleted: press Save to keep it.")
+
+        def _save():
+            path = calculations.GROUND_STATIONS_FILE
+            if not path.lower().endswith(".csv"):
+                path = os.path.splitext(path)[0] + ".csv"
+            try:
+                calculations.write_ground_stations(path, rows)
+                stations = reload_ground_stations(path)
+            except Exception as exc:
+                messagebox.showerror("Ground Stations", f"Could not save: {exc}", parent=win)
+                return
+            self._after_ground_stations_loaded(stations, path)
+            status.set(f"Saved to {path}")
+
+        table.bind("<Double-1>", _edit)
+        bar = ttk.Frame(win)
+        bar.pack(fill=tk.X, padx=10, pady=8)
+        for text, command in (("Add...", _add), ("Edit...", _edit), ("Delete", _delete), ("Save", _save),
+                              ("Close", win.destroy)):
+            ttk.Button(bar, text=text, command=command).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(bar, textvariable=status, foreground=PALETTE["text_muted"]).pack(side=tk.LEFT, padx=(12, 0))
+        _fill()
+
+    def edit_mission_parameters(self) -> None:
+        """Table of the selected mission's parameters.json, grouped, with units and descriptions."""
+
+        path = self.current_param_file
+        if self.current_sat is not None and self.catalogue is not None:
+            path = self.catalogue.mission_file(self.current_sat, missions.PARAMETERS_FILE)
+        if not path:
+            messagebox.showinfo("Mission Parameters", "Select a mission first.")
+            return
+        payload = {}
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as exc:
+                messagebox.showerror("Mission Parameters", f"Could not read {path}: {exc}")
+                return
+        win = tk.Toplevel(self.root)
+        name = self.current_sat.name if self.current_sat else os.path.basename(os.path.dirname(path))
+        win.title(f"Mission Parameters – {name}")
+        win.geometry("1100x640")
+        ttk.Label(
+            win,
+            text=f"{path}\nDouble-click a value to change it (empty removes it); Save writes the file and "
+                 "loads the values in the window. The static link budget sections are listed by key.",
+            justify="left", foreground=PALETTE["text_muted"], wraplength=1060,
+        ).pack(anchor="w", padx=10, pady=(8, 4))
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=10)
+        table = ttk.Treeview(body, columns=("value", "unit", "description"), show="tree headings")
+        table.heading("#0", text="Parameter")
+        table.heading("value", text="Value")
+        table.heading("unit", text="Unit")
+        table.heading("description", text="Description")
+        table.column("#0", width=260)
+        table.column("value", width=170)
+        table.column("unit", width=70, anchor="center")
+        table.column("description", width=560)
+        scroll = ttk.Scrollbar(body, orient="vertical", command=table.yview)
+        table.configure(yscrollcommand=scroll.set)
+        table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        status = tk.StringVar(value="")
+        rows: dict[str, dict] = {}
+
+        def _fill():
+            table.delete(*table.get_children())
+            rows.clear()
+            groups = {}
+            for k, row in enumerate(mission_schema.rows(payload)):
+                if row["group"] not in groups:
+                    groups[row["group"]] = table.insert("", tk.END, text=row["group"], open=True)
+                iid = f"r{k}"
+                rows[iid] = row
+                table.insert(groups[row["group"]], tk.END, iid=iid, text=row["label"],
+                             values=(mission_schema.format_value(row["value"]), row["unit"], row["description"]))
+
+        def _edit(_event=None):
+            sel = table.selection()
+            if not sel or sel[0] not in rows:
+                return
+            row = rows[sel[0]]
+            dialog = tk.Toplevel(win)
+            dialog.title(row["label"])
+            dialog.transient(win)
+            hint = {"list": "values separated by commas", "bool": "yes or no"}.get(row["kind"], "")
+            ttk.Label(dialog, text=f"{row['group']} · {row['label']}" + (f" [{row['unit']}]" if row["unit"] else "")
+                      ).pack(anchor="w", padx=10, pady=(10, 2))
+            if row["description"] or hint:
+                ttk.Label(dialog, text="  ".join(t for t in (row["description"], f"({hint})" if hint else "") if t),
+                          foreground=PALETTE["text_muted"], wraplength=420).pack(anchor="w", padx=10)
+            entry = ttk.Entry(dialog, width=48)
+            entry.insert(0, mission_schema.format_value(row["value"]))
+            entry.pack(padx=10, pady=8)
+            entry.focus_set()
+
+            def _ok(_e=None):
+                try:
+                    value = mission_schema.parse_value(entry.get(), row["kind"])
+                except ValueError as exc:
+                    messagebox.showerror("Mission Parameters", str(exc), parent=dialog)
+                    return
+                mission_schema.set_path(payload, row["path"], value)
+                dialog.destroy()
+                _fill()
+                status.set("Changed: press Save to write the file.")
+
+            entry.bind("<Return>", _ok)
+            bar = ttk.Frame(dialog)
+            bar.pack(pady=(0, 10))
+            ttk.Button(bar, text="OK", command=_ok).pack(side=tk.LEFT, padx=4)
+            ttk.Button(bar, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=4)
+            dialog.grab_set()
+
+        def _save():
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                    f.write("\n")
+            except Exception as exc:
+                messagebox.showerror("Mission Parameters", f"Could not save: {exc}", parent=win)
+                return
+            if self.current_sat is not None:
+                self.select_satellite(self.current_sat.name)
+            else:
+                self._apply_parameters_file(path)
+            status.set(f"Saved and loaded: {path}")
+
+        table.bind("<Double-1>", _edit)
+        bar = ttk.Frame(win)
+        bar.pack(fill=tk.X, padx=10, pady=8)
+        for text, command in (("Edit...", _edit), ("Save", _save), ("Close", win.destroy)):
+            ttk.Button(bar, text=text, command=command).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(bar, textvariable=status, foreground=PALETTE["text_muted"]).pack(side=tk.LEFT, padx=(12, 0))
+        _fill()
+
     def _load_startup_defaults(self):
         """Auto-load a default TLE and parameters file at startup.
 
         Mirrors how the ground station catalogue is already picked up
-        automatically from ``ground_stations.txt``: on launch, look for a
+        automatically from ``ground_stations.csv``: on launch, look for a
         ``tle.txt`` and a ``parameters.json`` next to the executable / in
         the working directory / next to the source, and pre-fill the TLE
         and parameter fields if found. Either file is entirely optional --
@@ -1394,7 +1651,7 @@ class LinkBudgetApp:
             self.gs_file_var.set(
                 f"Ground stations: {os.path.abspath(gs_path)}"
                 if gs_path and os.path.isfile(gs_path)
-                else "Ground stations: built-in list (ground_stations.txt not found)"
+                else "Ground stations: built-in list (ground_stations.csv not found)"
             )
 
         catalogue_path = calculations.resolve_optional_data_file(
@@ -1994,7 +2251,7 @@ class LinkBudgetApp:
         _add_tooltip(
             self.stats_station_list,
             "The stations of the network. Each one uses its horizon mask and antenna diameter "
-            "(ground_stations.txt); at each instant the best station is used.",
+            "(ground_stations.csv); at each instant the best station is used.",
         )
         self._refresh_statistics_stations()
         self.stats_constellation_var = tk.BooleanVar(value=True)
@@ -2027,7 +2284,7 @@ class LinkBudgetApp:
         _add_tooltip(
             backup_check,
             "Normally one antenna per site is used and the others are backups. Checked: every antenna of a "
-            "station (last column of ground_stations.txt) serves a satellite at the same time, a what-if "
+            "station (last column of ground_stations.csv) serves a satellite at the same time, a what-if "
             "for the constellation statistics.",
         )
 
@@ -3719,7 +3976,7 @@ class LinkBudgetApp:
                     ),
                     L(
                         "Antenna Diameter GS [m]", self.d_gs_entry,
-                        "Used for a station without diameter in ground_stations.txt (5th column): "
+                        "Used for a station without diameter in ground_stations.csv (5th column): "
                         "by the ITU-R atmospheric model, for the G/T scaling"
                         + (" and for the default Rx beamwidth." if rx_is_ground_station else "."),
                     ),
@@ -6470,6 +6727,10 @@ class LinkBudgetApp:
         ttk.Label(combo_line, text="Satellite", width=12).pack(side=tk.LEFT, padx=5)
         self.satellite_combo = ttk.Combobox(combo_line, state="readonly", width=60)
         self.satellite_combo.pack(side=tk.LEFT, padx=(6, 12))
+        mission_btn = ttk.Button(combo_line, text="Mission Parameters...", command=self.edit_mission_parameters)
+        mission_btn.pack(side=tk.LEFT)
+        _add_tooltip(mission_btn, "Show and edit all the parameters of the selected mission "
+                                  "(missions/<satellite>/parameters.json) as a table, with units and descriptions.")
         self.satellite_combo.bind("<<ComboboxSelected>>", self._on_satellite_chosen)
         _add_tooltip(
             self.satellite_combo,
@@ -6626,6 +6887,10 @@ class LinkBudgetApp:
         )
         mask_btn = ttk.Button(pass_row, text="Horizon Mask", command=self.show_horizon_mask)
         mask_btn.pack(side=tk.LEFT, padx=(12, 0))
+        stations_btn = ttk.Button(pass_row, text="Edit Stations...", command=self.edit_ground_stations)
+        stations_btn.pack(side=tk.LEFT, padx=(6, 0))
+        _add_tooltip(stations_btn, "Show and edit the ground station catalogue (ground_stations.csv) as a "
+                                   "table: position, antenna diameter, own G/T and Tsys, number of antennas.")
         _add_tooltip(
             mask_btn,
             "Plot the horizon mask of the station: horizon_masks\\<station>.txt next to the program, two "
@@ -6633,8 +6898,9 @@ class LinkBudgetApp:
         )
         _add_tooltip(
             load_gs_btn,
-            "Load a custom ground station catalogue (name, latitude, longitude, altitude) from a "
-            ".txt/.csv file. Replaces the choices in the Ground Station dropdown above.",
+            "Load another ground station catalogue (CSV with the header name, latitude_deg, longitude_deg, "
+            "altitude_m and the optional columns; the old .txt without header is read too). Replaces the "
+            "choices in the Ground Station dropdown above. Edit Stations... edits the catalogue as a table.",
         )
 
         self.gs_file_var = tk.StringVar(value="Ground stations: none loaded")
@@ -6800,7 +7066,7 @@ class LinkBudgetApp:
                     "G/T Reference Diameter [m]",
                     "gt_ref_diameter_entry",
                     "Antenna diameter the G/T GS refers to. For a station with another diameter (5th column "
-                    "of ground_stations.txt, or Antenna Diameter GS) the G/T is scaled by 20 log10(D/Dref): "
+                    "of ground_stations.csv, or Antenna Diameter GS) the G/T is scaled by 20 log10(D/Dref): "
                     "same feed and receiver. Empty: no scaling.",
                 ),
                 ("G/T Reference Elevation [deg]", "gt_ref_el_entry", "Elevation at which the G/T GS is specified."),
