@@ -21,8 +21,9 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Frame, Image, KeepTogether, NextPageTemplate,
-                                PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from reportlab.pdfgen.canvas import FILL_NON_ZERO
+from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame, Image, KeepTogether,
+                                NextPageTemplate, PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
 from reportlab.platypus.tableofcontents import TableOfContents
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +48,7 @@ HEAD_BG = colors.HexColor("#e6e6e6")
 GROUP_BG = colors.HexColor("#e3f0fa")
 ROW_ALT = colors.HexColor("#f5f9fd")
 BORDER = colors.HexColor("#c8c8c8")
+EQ_BG = colors.HexColor("#f7f9fc")
 
 
 # --------------------------------------------------------------------------
@@ -85,6 +87,7 @@ S = {
     "cell_mono": ParagraphStyle("cell_mono", parent=BASE, fontName=MONO, fontSize=8, leading=11, spaceAfter=0),
     "code": ParagraphStyle("code", parent=BASE, fontName=MONO, fontSize=8.5, leading=11.5, backColor=HEAD_BG,
                            borderPadding=(4, 6, 4, 6), leftIndent=6, rightIndent=6, spaceBefore=3, spaceAfter=8),
+    "eq_note": ParagraphStyle("eq_note", parent=BASE, fontSize=8.5, leading=11, textColor=MUTED, spaceAfter=0),
     "toc1": ParagraphStyle("toc1", parent=BASE, fontName=BOLD, fontSize=10, leading=13, leftIndent=0,
                            spaceAfter=0, spaceBefore=4),
     "toc2": ParagraphStyle("toc2", parent=BASE, fontSize=9, leading=11.5, leftIndent=16, spaceAfter=0),
@@ -142,6 +145,91 @@ def CODE(text):
     return Paragraph(text.replace("\n", "<br/>"), S["code"])
 
 
+class MathFlowable(Flowable):
+    """A formula written in TeX notation, drawn as vector glyph outlines (matplotlib mathtext, STIX)."""
+
+    def __init__(self, tex, size=11.0):
+        super().__init__()
+        import matplotlib
+        from matplotlib.textpath import TextPath
+
+        matplotlib.rcParams["mathtext.fontset"] = "stix"  # typeset like TeX (Times-like)
+        self.tex = tex
+        self.path = TextPath((0, 0), f"${tex}$", size=size)
+        ext = self.path.get_extents()
+        self.x0, self.y0 = ext.x0, ext.y0
+        self.width, self.height = ext.width, ext.height
+
+    def wrap(self, avail_width, avail_height):
+        # Scaled down to fit a narrow table column.
+        self.scale = min(1.0, avail_width / self.width) if self.width else 1.0
+        return self.width * self.scale, self.height * self.scale + 4
+
+    def draw(self):
+        from matplotlib.path import Path as MPath
+
+        canv = self.canv
+        pen = canv.beginPath()
+        dx, dy = -self.x0, -self.y0 + 2
+        last = (0.0, 0.0)
+        for vertices, code in self.path.iter_segments(curves=True, simplify=False):
+            pts = [(vertices[k] + dx, vertices[k + 1] + dy) for k in range(0, len(vertices), 2)]
+            if code == MPath.MOVETO:
+                pen.moveTo(*pts[0])
+            elif code == MPath.LINETO:
+                pen.lineTo(*pts[0])
+            elif code == MPath.CURVE3:
+                (cx, cy), (x, y) = pts
+                # Quadratic to cubic Bézier.
+                pen.curveTo(last[0] + 2 / 3 * (cx - last[0]), last[1] + 2 / 3 * (cy - last[1]),
+                            x + 2 / 3 * (cx - x), y + 2 / 3 * (cy - y), x, y)
+            elif code == MPath.CURVE4:
+                pen.curveTo(*pts[0], *pts[1], *pts[2])
+            elif code == MPath.CLOSEPOLY:
+                pen.close()
+                continue
+            last = pts[-1]
+        canv.saveState()
+        canv.scale(getattr(self, "scale", 1.0), getattr(self, "scale", 1.0))
+        canv.setFillColor(TEXT)
+        canv.drawPath(pen, stroke=0, fill=1, fillMode=FILL_NON_ZERO)
+        canv.restoreState()
+
+
+def EQN(rows, width_cm=16.5, note_cm=5.6):
+    """A block of displayed formulas: each row is TeX, or (TeX, note).
+
+    The note goes beside the formula, or below it when the formula is too wide.
+    """
+    rows = [r if isinstance(r, tuple) else (r, "") for r in rows]
+    total = width_cm * cm
+    formula_w = total - note_cm * cm
+    data, style = [], [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ("BACKGROUND", (0, 0), (-1, -1), EQ_BG),
+        ("LINEBEFORE", (0, 0), (0, -1), 2, ACCENT),
+    ]
+    for tex, note in rows:
+        math = MathFlowable(tex)
+        note_par = Paragraph(note, S["eq_note"]) if note else ""
+        if math.width + 18 <= formula_w:
+            data.append([math, note_par])
+        else:
+            data.append([math, ""])
+            style.append(("SPAN", (0, len(data) - 1), (1, len(data) - 1)))
+            if note:
+                data.append([note_par, ""])
+                style.append(("SPAN", (0, len(data) - 1), (1, len(data) - 1)))
+                style.append(("TOPPADDING", (0, len(data) - 1), (-1, len(data) - 1), 0))
+    table = Table(data, colWidths=[formula_w, total - formula_w], spaceBefore=2, spaceAfter=8, hAlign="LEFT")
+    table.setStyle(TableStyle(style))
+    return table
+
+
 _FIGURES = [0]
 
 
@@ -170,7 +258,8 @@ def TABLE(rows, widths_cm, header=True, mono_cols=(), bold_cols=(0,)):
                 style = "cell_bold"
             else:
                 style = "cell"
-            cells.append(Paragraph(str(cell), S[style]))
+            # A formula (or a list of flowables) goes in as it is.
+            cells.append(cell if isinstance(cell, (Flowable, list)) else Paragraph(str(cell), S[style]))
         data.append(cells)
     table = Table(data, colWidths=[w * cm for w in widths_cm], repeatRows=1 if header else 0)
     style = [
@@ -759,53 +848,78 @@ def content():
         "and the value used when a field is empty; chapter 11 does the same for the statistics."))
     story += H2("Geometry")
     story.append(P(
-        "Spherical Earth (R = 6378.137 km), circular orbit at altitude h. For an elevation el, the slant range "
-        "is d = √((R+h)² − ((R+h_GS)·cos el)²) − (R+h_GS)·sin el and the angle from the satellite nadir to the "
-        "station is η = asin((R+h_GS)·cos el / (R+h)). In the pass analysis elevation, range and angle come from "
-        "the orbit propagation (Skyfield)."))
+        "Spherical Earth (R = 6378.137 km), circular orbit at altitude h. For an elevation el, the slant range d "
+        "and the angle η from the satellite nadir to the station are:"))
+    story.append(EQN([
+        (r"d = \sqrt{(R + h)^2 - (R + h_{\mathrm{GS}})^2 \cos^2 \mathrm{el}} - (R + h_{\mathrm{GS}}) \sin \mathrm{el}", ""),
+        (r"\eta = \arcsin\left[\dfrac{(R + h_{\mathrm{GS}}) \cos \mathrm{el}}{R + h}\right]", ""),
+    ]))
+    story.append(P("In the pass analysis elevation, range and angle come from the orbit propagation (Skyfield)."))
     story += H2("Propagation")
-    story += BUL([
-        "Free space loss: FSL = 20·log10(d[km]) + 20·log10(f[GHz]) + 92.45 dB.",
-        "Atmospheric attenuation (ITU-R P.618 slant path at the station location): gas (P.676), cloud (P.840), "
-        "rain (P.618/P.837) exceeded for p = 100 − availability [%], optional tropospheric scintillation. Clear "
-        "sky: gas only; rain faded: gas, cloud and rain.",
-        "Polarisation mismatch between co-rotating elliptical antennas from the axial ratios (voltage ratios "
-        "r = 10^(AR/20)), co-polar value.",
-    ])
+    story.append(EQN([
+        (r"L_{\mathrm{FS}} = 20\,\log_{10} d_{\mathrm{km}} + 20\,\log_{10} f_{\mathrm{GHz}} + 92.45\ \mathrm{dB}",
+         "Free space loss."),
+        (r"A = A_g + \sqrt{(A_r + A_c)^2 + A_s^2}, \quad p = 100 - \mathrm{availability}",
+         "ITU-R P.618 at the station: gas (P.676), cloud (P.840), rain (P.618/P.837) exceeded p %, optional "
+         "tropospheric scintillation. Clear sky: gas only."),
+        (r"L_{\mathrm{pol}} = -20\,\log_{10} \dfrac{2\,(r_1 + r_2)}{(1 + r_1)(1 + r_2)}, \quad r = 10^{AR/20}",
+         "Polarisation mismatch of co-rotating elliptical antennas, co-polar value."),
+    ]))
     story += H2("Ionospheric scintillation")
     story.append(P(
         "From the S4 index measured at a reference frequency (GPS L1 1575.42 MHz by default), as in the ESA "
-        "method for L-band downlinks: S4 is scaled to the link frequency as f^−1.5, the peak-to-peak power fluctuation "
-        "is 27.5·S4^1.26 dB and the fade is half of it. The geomagnetic latitude (dipole) gives the zone: "
-        "equatorial (&lt; 20°), mid-latitude (&lt; 58°), auroral oval (&lt; 72°), polar cap."))
+        "method for L-band downlinks:"))
+    story.append(EQN([
+        (r"S_4(f) = S_{4,\mathrm{ref}} \left(\dfrac{f}{f_{\mathrm{ref}}}\right)^{-1.5}, \quad "
+         r"L_{\mathrm{iono}} = \dfrac{27.5\, S_4^{1.26}}{2}\ \mathrm{dB}",
+         "The fade is half of the peak-to-peak fluctuation."),
+    ]))
+    story.append(P(
+        "The geomagnetic latitude (dipole) gives the zone: equatorial (&lt; 20°), mid-latitude (&lt; 58°), "
+        "auroral oval (&lt; 72°), polar cap."))
     story += H2("Antennas")
-    story += BUL([
-        "Satellite antenna: the pattern gives the absolute gain (dBi) at the angle from nadir η; outside the "
-        "table the gain is 0 dBi. Downlink EIRP = Tx chain + G(η); uplink G/T = G/T SAT − (G_peak − G(η)).",
-        "Ground station antenna: tracks the satellite; optional depointing loss 12·(θ/θ3dB)², with "
-        "θ3dB = 70·λ/D.",
-    ])
+    story.append(EQN([
+        (r"\mathrm{EIRP}(\eta) = P_{\mathrm{Tx}} - L_{\mathrm{circuit}} - L_{\mathrm{VSWR}} + G(\eta)",
+         "Downlink: the pattern gives the gain at the angle from nadir η (0 dBi outside the table)."),
+        (r"(G/T)_{\mathrm{SAT}}(\eta) = (G/T)_{\mathrm{SAT}} - \left[G_{\mathrm{peak}} - G(\eta)\right]", "Uplink."),
+        (r"L_{\mathrm{point}} = 12 \left(\dfrac{\theta}{\theta_{3\mathrm{dB}}}\right)^2, \quad "
+         r"\theta_{3\mathrm{dB}} = 70\, \dfrac{\lambda}{D}",
+         "Ground antenna depointing (static link budget); along the passes it tracks the satellite."),
+    ]))
     story += H2("Carrier to noise and Eb/No")
-    story.append(P(
-        "Rx power = EIRP − FSL − atmospheric − other − ionospheric − polarisation − multipath − pointing losses. "
-        "S/No = Rx power + G/T + 228.6 dBHz; C/No = S/No − demodulator loss − modulation degradation (combined "
-        "with C/Io when given). Eb/No = C/No − 10·log10(R_frame), with the transfer frame bit rate R_frame = "
-        "coded bit rate / coding factor = coded bit rate × formatting factor / overhead. Data Recovery Margin = "
-        "Eb/No − required Eb/No."))
+    story.append(EQN([
+        (r"P_{\mathrm{Rx}} = \mathrm{EIRP} - L_{\mathrm{FS}} - A - L_{\mathrm{other}} - L_{\mathrm{iono}} - "
+         r"L_{\mathrm{pol}} - L_{\mathrm{mp}} - L_{\mathrm{point}}", "Received power [dBW]."),
+        (r"S/N_0 = P_{\mathrm{Rx}} + G/T + 228.6", "Boltzmann constant: −228.6 dBW/K/Hz."),
+        (r"C/N_0 = S/N_0 - L_{\mathrm{demod}} - L_{\mathrm{mod}}",
+         "Combined with C/I<sub>0</sub> when given (pass analysis)."),
+        (r"R_{\mathrm{frame}} = \dfrac{R_c}{OH}\, F", "Transfer frame bit rate."),
+        (r"E_b/N_0 = C/N_0 - 10\,\log_{10} R_{\mathrm{frame}}, \quad M = E_b/N_0 - (E_b/N_0)_{\mathrm{req}}",
+         "M: Data Recovery Margin."),
+    ]))
     story += H2("Power flux density")
+    story.append(EQN([
+        (r"\mathrm{PFD} = \mathrm{EIRP} - 10\,\log_{10}\left(4 \pi d^2\right)\ [\mathrm{dBW/m^2}]",
+         "No atmospheric loss credit (conservative)."),
+        (r"\mathrm{PFD}_{4\mathrm{kHz}} = \mathrm{PFD} - 10\,\log_{10} \dfrac{B}{4\ \mathrm{kHz}}, \quad "
+         r"B = \dfrac{R_c\,(1 + \alpha)}{\eta_s}", "Occupied bandwidth B."),
+        (r"M_{\mathrm{PFD}} = \mathrm{limit}(\mathrm{el}) - \mathrm{PFD}_{4\mathrm{kHz}} \geq 0",
+         "ITU Radio Regulations Art. 21: the 0–5° limit up to 5°, the 25–90° limit from 25°, linear between."),
+    ]))
     story.append(P(
-        "PFD = EIRP − 10·log10(4π·d²) [dBW/m²], without atmospheric loss (conservative). Referred to the 4 kHz "
-        "bandwidth of the ITU limits: PFD(4 kHz) = PFD − 10·log10(B / 4 kHz), with the occupied bandwidth B. "
-        "PFD margin = limit − PFD(4 kHz) ≥ 0 dB (ITU Radio Regulations Art. 21). The limit is the 0–5° value up "
-        "to 5° of elevation, the 25–90° value from 25°, linear in between. Along the passes the PFD is "
-        "computed at every sample with the EIRP of the pattern towards the station; the contact list gives the "
-        "minimum PFD margin of each pass and flags a pass that exceeds the limit."))
+        "Along the passes the PFD is computed at every sample with the EIRP of the pattern towards the station; "
+        "the contact list gives the minimum PFD margin of each pass and flags a pass that exceeds the limit."))
     story += H2("Statistical margins")
     story.append(P(
         "Each tolerance with adverse limit a = −adverse and favourable limit b = +favourable contributes a mean "
-        "and a variance: TRI mean (a+b)/3, variance (a²+b²−ab)/18; UNI mean (a+b)/2, variance (b−a)²/12; GAU "
-        "mean (a+b)/2, variance ((b−a)/6)². Contributions are independent: means and variances add. MEAN − 3σ "
-        "= nominal margin + Σ mean − 3·√Σ variance; Worst Case RSS = nominal margin − √Σ adverse²."))
+        "μ and a variance σ²; contributions are independent, so means and variances add:"))
+    story.append(EQN([
+        (r"\mathrm{TRI}: \ \mu = \dfrac{a + b}{3},\ \sigma^2 = \dfrac{a^2 + b^2 - ab}{18} \qquad "
+         r"\mathrm{UNI}: \ \mu = \dfrac{a + b}{2},\ \sigma^2 = \dfrac{(b - a)^2}{12}", ""),
+        (r"\mathrm{GAU}: \ \mu = \dfrac{a + b}{2},\ \sigma^2 = \left(\dfrac{b - a}{6}\right)^2", "Limits at ±3σ."),
+        (r"M_{-3\sigma} = M_{\mathrm{nom}} + \sum_k \mu_k - 3 \sqrt{\sum_k \sigma_k^2}, \quad "
+         r"M_{\mathrm{RSS}} = M_{\mathrm{nom}} - \sqrt{\sum_k \mathrm{adv}_k^2}", "MEAN − 3σ and Worst Case RSS."),
+    ]))
 
     # 10, 11 ---------------------------------------------------------------
     import reference

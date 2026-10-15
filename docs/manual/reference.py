@@ -146,7 +146,7 @@ def chapters(m, root=None):
             text = text.replace("§" + name, tokens[name])
         return text
 
-    H1, H2, H3, CODE = m.H1, m.H2, m.H3, m.CODE
+    H1, H2, H3 = m.H1, m.H2, m.H3
 
     def P(text):
         return m.P(T(text))
@@ -158,14 +158,18 @@ def chapters(m, root=None):
         return m.BUL([T(item) for item in items])
 
     def TABLE(rows, *args, **kwargs):
-        return m.TABLE([[T(str(cell)) for cell in row] for row in rows], *args, **kwargs)
+        return m.TABLE([[T(cell) if isinstance(cell, str) else cell for cell in row] for row in rows],
+                       *args, **kwargs)
 
-    def EQ(*lines):
-        text = T("\n".join(lines)).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return CODE(text.replace("  ", "&nbsp; "))
+    def M(tex):
+        """A formula in a table cell."""
+        return m.MathFlowable(tex, size=9.5)
+
+    def EQ(*rows):
+        return m.EQN([(tex, T(note)) for tex, note in rows])
 
     W4 = [3.0, 4.6, 1.7, 7.2]  # parameter tables: name, key / unit, empty value, use
-    W3 = [4.2, 4.8, 7.5]  # result tables: name, formula, notes
+    W3 = [3.8, 6.4, 6.3]  # result tables: name, formula, notes
 
     story = []
 
@@ -234,24 +238,30 @@ def chapters(m, root=None):
     ], W4, mono_cols=(1,))
     story.append(P("The elements of the synthetic TLE are computed as follows:"))
     story.append(EQ(
-        "n  = √(μ / a³)                      p = a (1 − e²)",
-        "SSO inclination:  cos i = − (dΩ/dt)_SSO / (1.5 · n · J2 · (R / p)²)",
-        "RAAN = α_sun(epoch) + 15° · (LTAN − 12 h)          (α_sun: right ascension of the Sun)",
-        "mean anomaly M = u − ω              (u: argument of latitude at the epoch)",
-        "k = 0.75 · J2 · (R / p)²",
-        "dM/dt = n · (1 + k · √(1 − e²) · (3 cos² i − 1))      dω/dt = n · k · (5 cos² i − 1)",
-        "nodal period T = 2π / (dM/dt + dω/dt)",
+        (r"n = \sqrt{\mu / a^3}, \quad p = a\,(1 - e^2)", "Mean motion and semi-latus rectum."),
+        (r"\cos i_{\mathrm{SSO}} = -\dfrac{\dot{\Omega}_{\mathrm{SSO}}}{1.5\, n\, J_2\, (R/p)^2}",
+         "Sun-synchronous inclination, when the inclination is empty."),
+        (r"\Omega = \alpha_{\odot}(t_0) + 15^{\circ}\,(\mathrm{LTAN} - 12\,\mathrm{h})",
+         "RAAN; α<sub>⊙</sub>: right ascension of the Sun at the epoch t<sub>0</sub>."),
+        (r"M_0 = u - \omega", "Mean anomaly; u: argument of latitude of the satellite at the epoch."),
+        (r"k = \dfrac{3}{4}\, J_2 \left(\dfrac{R}{p}\right)^2", ""),
+        (r"\dot{M} = n \left[1 + k \sqrt{1 - e^2}\,(3\cos^2 i - 1)\right], \quad \dot{\omega} = n\,k\,(5\cos^2 i - 1)",
+         "J2 secular rates of the mean anomaly and of the perigee."),
+        (r"T = \dfrac{2\pi}{\dot{M} + \dot{\omega}}", "Nodal period."),
     ))
     story.append(P(
         "The epoch is 00:00 UTC of the day analysed (of the first day for the statistics); the drag term is 0. "
         "The mean motion written in the TLE is adjusted (up to 5 iterations, to 10⁻¹⁰) until SGP4's own "
-        "dM/dt + dω/dt equals 2π / T: SGP4 then flies the J2 nodal period, and the pass times stay right over the "
+        "Ṁ + ω̇ equals 2π / T: SGP4 then flies the J2 nodal period, and the pass times stay right over the "
         "analysed days (a Keplerian mean motion would drift by about a minute per orbit). The Sun right "
         "ascension uses the low-precision formulae of the Astronomical Almanac (section §sun)."))
     story.append(P(
         "<b>Constellation</b> (<i>link_core.constellation_members</i>): with P planes in the LTAN list, the "
         "satellite j = 1…N of plane p = 0…P−1 has the argument of latitude at the epoch"))
-    story.append(EQ("u = (j − 1) · 360° / N + p · phasing    (mod 360°)"))
+    story.append(EQ(
+        (r"u_{p,j} = (j - 1)\,\dfrac{360^{\circ}}{N} + p\,\Delta u \quad (\mathrm{mod}\ 360^{\circ})",
+         "Δu: phasing between planes."),
+    ))
     story.append(P(
         "An extra satellite \"LTAN@u\" is added with that plane and that u, numbered after the regular "
         "satellites of its plane. The satellites are named \"&lt;mission&gt; &lt;LTAN&gt; #j\" and get the "
@@ -296,8 +306,9 @@ def chapters(m, root=None):
         "and minimum elevation, one point per line, interpolated linearly with wrap-around at North) give the "
         "visibility of each sample:"))
     story.append(EQ(
-        "required(t) = max(Min Elevation, mask(azimuth(t)))",
-        "in contact  ⇔  elevation(t) ≥ required(t)",
+        (r"\mathrm{el}_{\mathrm{req}}(t) = \max\left[\mathrm{el}_{\min},\ m(\mathrm{az}(t))\right]",
+         "el<sub>min</sub>: Min Elevation; m: horizon mask (0 without one)."),
+        (r"\mathrm{contact}(t) \Leftrightarrow \mathrm{el}(t) \geq \mathrm{el}_{\mathrm{req}}(t)", ""),
     ))
     story.append(P(
         "A <b>contact</b> is a run of consecutive samples in contact. In the pass list it starts at its first "
@@ -316,21 +327,23 @@ def chapters(m, root=None):
          "No refraction."],
         ["Off Boresight Angle η (°)", "angle between −r<sub>sat</sub> (nadir) and r<sub>GS</sub> − r<sub>sat</sub>",
          "The satellite antenna is assumed to point at nadir."],
-        ["Doppler Shift (kHz)", "f<sub>D</sub> = −ṙ / c · f, ṙ = v<sub>rel</sub> · r̂",
+        ["Doppler Shift (kHz)", M(r"f_D = -\dfrac{\dot{r}}{c}\, f, \quad \dot{r} = \mathbf{v}_{\mathrm{rel}} \cdot \hat{\mathbf{r}}"),
          "Downlink frequency; positive when the satellite approaches."],
-        ["Doppler Rate (Hz/s)", "−f · r̈ / c, r̈ = (|v<sub>rel</sub>|² − ṙ²) / r + r̂ · (a<sub>sat</sub> − "
-                                "a<sub>GS</sub>)", "a<sub>sat</sub> = −μ r<sub>sat</sub> / |r<sub>sat</sub>|³, "
+        ["Doppler Rate (Hz/s)", [M(r"\dot{f}_D = -\dfrac{f\, \ddot{r}}{c}"),
+                                 M(r"\ddot{r} = \dfrac{|\mathbf{v}_{\mathrm{rel}}|^2 - \dot{r}^2}{r} + \hat{\mathbf{r}} \cdot (\mathbf{a}_{\mathrm{sat}} - \mathbf{a}_{\mathrm{GS}})")], "a<sub>sat</sub> = −μ r<sub>sat</sub> / |r<sub>sat</sub>|³, "
                                                     "a<sub>GS</sub> = −ω<sub>E</sub>² (x, y, 0): exact at each "
                                                     "sample, also at the closest approach."],
         ["Sun Separation (°)", "angle between the Sun and the satellite seen from the station",
-         "cos θ = sin e₁ sin e₂ + cos e₁ cos e₂ cos(a₁ − a₂)."],
+         M(r"\cos\theta = \sin e_1 \sin e_2 + \cos e_1 \cos e_2 \cos(a_1 - a_2)")],
     ], W3)
     story.append(P(
         "The <b>static</b> link budget has no orbit: it takes a circular orbit at the entered altitude h and a "
         "spherical Earth (<i>calculations.slant_range_from_elevation</i>, <i>off_nadir_angle_deg</i>):"))
     story.append(EQ(
-        "d = √((R + h)² − ((R + h_GS) · cos el)²) − (R + h_GS) · sin el",
-        "η = asin((R + h_GS) · cos el / (R + h))",
+        (r"d = \sqrt{(R + h)^2 - (R + h_{\mathrm{GS}})^2 \cos^2 \mathrm{el}} - (R + h_{\mathrm{GS}}) \sin \mathrm{el}",
+         "Slant range."),
+        (r"\eta = \arcsin\left[\dfrac{(R + h_{\mathrm{GS}}) \cos \mathrm{el}}{R + h}\right]",
+         "Angle from the satellite nadir to the station."),
     ))
 
     # ----------------------------------------------------------------------
@@ -341,13 +354,17 @@ def chapters(m, root=None):
         "the carrier frequency f, the elevation el, the percentage of time p and the antenna diameter D "
         "(scintillation aperture averaging, antenna efficiency 0.5):"))
     story.append(EQ(
-        "p = 100 − Link Availability [%]          (static: limited to 0.001 … 50 %)",
-        "A_g : gas, ITU-R P.676, water vapour density and content of the ITU-R maps at max(1, p) %",
-        "A_c : cloud, ITU-R P.840 at max(1, p) %",
-        "A_r : rain, ITU-R P.618 with R0.01 of P.837 and the rain height of P.839, exceeded p %",
-        "A_s : tropospheric scintillation, ITU-R P.618 (only when Tropospheric scintillation is on)",
-        "A   = A_g + √((A_r + A_c)² + A_s²)",
+        (r"p = 100 - \mathrm{availability}\ [\%]", "Static link budget: limited to 0.001–50 %."),
+        (r"A = A_g + \sqrt{(A_r + A_c)^2 + A_s^2}", "ITU-R P.618-13 total slant-path attenuation."),
     ))
+    story += BUL([
+        "A<sub>g</sub>: gas, ITU-R P.676, with the water vapour density and content of the ITU-R maps at "
+        "max(1, p) %.",
+        "A<sub>c</sub>: cloud, ITU-R P.840 at max(1, p) %.",
+        "A<sub>r</sub>: rain exceeded p % of the time, ITU-R P.618 with R<sub>0.01</sub> of P.837 and the rain "
+        "height of P.839.",
+        "A<sub>s</sub>: tropospheric scintillation, ITU-R P.618, only when Tropospheric scintillation is on.",
+    ])
     story += BUL([
         "<b>Static link budget</b> (<i>atmospheric_attenuation_contributions</i>): <b>Clear Sky</b> column = "
         "A<sub>g</sub> only; <b>Rain Faded</b> column = A with gas, cloud, rain and, when switched on, "
@@ -383,14 +400,19 @@ def chapters(m, root=None):
     story.append(P("The G/T used at a sample or in a column is obtained in four steps "
                    "(<i>link_core.station_gt</i>, <i>calculations.ground_station_gt_dbk</i>):"))
     story.append(EQ(
-        "1. G/T_ref = gt_dbk of the station                         when the catalogue gives it",
-        "           = G/T GS + 20·log(D / D_ref)                     otherwise (0 without D_ref)",
-        "2. T_sky(A) = Tm · (1 − 10^(−A/10)) + Tc · 10^(−A/10)",
-        "   T_sky,ref = T_sky(A_g at the reference elevation, p = 50 %, gas only)",
-        "   T_sky     = T_sky(A_g + A_c + A_r of the sample or column; scintillation excluded)",
-        "3. Tsys = Tsys_ref − T_sky,ref + T_sky",
-        "   G/T  = G/T_ref − 10·log(Tsys / Tsys_ref) − radome loss",
-        "4. pass analysis only: G/T −= Sun Noise (dB)                  (section §sun)",
+        (r"(G/T)_{\mathrm{ref}} = (G/T)_{\mathrm{GS}} + 20\,\log_{10} \dfrac{D}{D_{\mathrm{ref}}}",
+         "Step 1, without the station's own G/T (no scaling without D<sub>ref</sub>); otherwise "
+         "(G/T)<sub>ref</sub> = gt_dbk of the catalogue."),
+        (r"T_{\mathrm{sky}}(A) = T_m \left(1 - 10^{-A/10}\right) + T_c\, 10^{-A/10}",
+         "Step 2: sky noise through an attenuation A [dB]; T<sub>m</sub> = 275 K, T<sub>c</sub> = 2.7 K."),
+        (r"T_{\mathrm{sky,ref}} = T_{\mathrm{sky}}\!\left(A_g(\mathrm{el}_{\mathrm{ref}})\right)",
+         "Clear sky (gas only, p = 50 %) at the reference elevation."),
+        (r"T_{\mathrm{sky}} = T_{\mathrm{sky}}(A_g + A_c + A_r)",
+         "At the sample or column; scintillation radiates no noise and is excluded."),
+        (r"T_{\mathrm{sys}} = T_{\mathrm{sys,ref}} - T_{\mathrm{sky,ref}} + T_{\mathrm{sky}}",
+         "Step 3: receiver and feed noise kept, sky noise replaced."),
+        (r"G/T = (G/T)_{\mathrm{ref}} - 10\,\log_{10} \dfrac{T_{\mathrm{sys}}}{T_{\mathrm{sys,ref}}} - L_{\mathrm{radome}}", ""),
+        (r"G/T \leftarrow G/T - \Delta_{\mathrm{Sun}}", "Step 4, pass analysis only (section §sun)."),
     ))
     story.append(P(
         "<b>Why the G/T changes with the elevation.</b> The G/T GS is a measured or specified value: the antenna "
@@ -457,21 +479,27 @@ def chapters(m, root=None):
         "<b>Solar Flux</b> (key <font face='Courier'>solar_flux_sfu</font>, sfu = 10⁻²² W/m²/Hz, empty: quiet "
         "Sun) is the flux density at the downlink frequency."))
     story.append(EQ(
-        "Sun position (Astronomical Almanac, ≈ 0.01°):  n = JD − 2451545.0",
-        "  L = 280.460° + 0.9856474° n     g = 357.528° + 0.9856003° n",
-        "  λ = L + 1.915° sin g + 0.020° sin 2g     ε = 23.439° − 0.0000004° n",
-        "  α = atan2(cos ε sin λ, cos λ)    δ = asin(sin ε sin λ)",
-        "  GMST = 280.46061837° + 360.98564736629° n     H = GMST + longitude − α",
-        "  elevation and azimuth from H, δ and the station latitude (no refraction)",
-        "Brightness temperature:  T_b = S · 10^-22 · λ² / (2 k Ω_sun)      (Solar Flux S given)",
-        "                         T_b = 120000 · f[GHz]^-0.75 K           (quiet Sun)",
-        "Antenna gain θ from the axis (θ = Sun separation):  θ3dB = 70 λ / D",
-        "  G_peak = G/T_ref + 10·log(Tsys_ref)",
-        "  θ < θ3dB : G(θ) = G_peak − 12 (θ / θ3dB)²",
-        "  θ ≥ θ3dB : G(θ) = min(max(main lobe, side lobe), G_peak)",
-        "  side lobe (ITU-R S.465) = max(32 − 25·log θ, −10) dBi,  θ taken ≥ 1°",
-        "Added noise:  ΔT = T_b · Ω_sun · G(θ)_lin / 4π      (0 when the Sun elevation ≤ −0.2665°)",
-        "Sun Noise (dB) = 10·log(1 + ΔT / Tsys)        G/T and Eb/No drop by this value",
+        (r"n = \mathrm{JD} - 2451545.0", "Days from J2000.0 (Astronomical Almanac, about 0.01°)."),
+        (r"L = 280.460^{\circ} + 0.9856474^{\circ}\, n, \quad g = 357.528^{\circ} + 0.9856003^{\circ}\, n",
+         "Mean longitude and mean anomaly of the Sun."),
+        (r"\lambda_{\odot} = L + 1.915^{\circ} \sin g + 0.020^{\circ} \sin 2g, \quad \varepsilon = 23.439^{\circ} - 0.0000004^{\circ}\, n",
+         "Ecliptic longitude and obliquity."),
+        (r"\alpha = \mathrm{atan2}(\cos\varepsilon \sin\lambda_{\odot},\ \cos\lambda_{\odot}), \quad \delta = \arcsin(\sin\varepsilon \sin\lambda_{\odot})",
+         ""),
+        (r"\mathrm{GMST} = 280.46061837^{\circ} + 360.98564736629^{\circ}\, n, \quad H = \mathrm{GMST} + \lambda_{\mathrm{GS}} - \alpha",
+         "Hour angle; elevation and azimuth from H, δ and the station latitude (no refraction)."),
+        (r"T_b = \dfrac{S \cdot 10^{-22}\, \lambda^2}{2\, k\, \Omega_{\odot}}", "Solar Flux S [sfu] given."),
+        (r"T_b = 120000\, f^{-0.75}\ \mathrm{K}", "Quiet Sun, f in GHz."),
+        (r"\theta_{3\mathrm{dB}} = 70\, \lambda / D, \quad G_{\mathrm{peak}} = (G/T)_{\mathrm{ref}} + 10\,\log_{10} T_{\mathrm{sys,ref}}",
+         "θ: Sun separation from the antenna axis."),
+        (r"G(\theta) = G_{\mathrm{peak}} - 12 \left(\dfrac{\theta}{\theta_{3\mathrm{dB}}}\right)^2",
+         "Main lobe, θ &lt; θ<sub>3dB</sub>."),
+        (r"G(\theta) = \min\left[\max\left(G_{\mathrm{main}},\ G_{\mathrm{side}}\right),\ G_{\mathrm{peak}}\right], \quad G_{\mathrm{side}} = \max\left(32 - 25\,\log_{10} \theta,\ -10\right)",
+         "θ ≥ θ<sub>3dB</sub>: ITU-R S.465 side lobes (θ taken ≥ 1°)."),
+        (r"\Delta T = \dfrac{T_b\, \Omega_{\odot}\, G(\theta)}{4\pi}",
+         "G linear; 0 with the Sun below −0.2665° of elevation."),
+        (r"\Delta_{\mathrm{Sun}} = 10\,\log_{10}\left(1 + \dfrac{\Delta T}{T_{\mathrm{sys}}}\right)",
+         "Sun Noise (dB): G/T and Eb/No drop by this value."),
     ))
     try:
         import calculations as c
@@ -548,31 +576,36 @@ def chapters(m, root=None):
         "loss − VSWR loss of the static tab."))
     story += TABLE([
         ["Column", "Formula", "Notes"],
-        ["Path Loss (dB)", "FSL = 20·log d[km] + 20·log f[GHz] + 92.45", "= 20·log(4π d / λ)."],
+        ["Path Loss (dB)", M(r"L_{\mathrm{FS}} = 20\,\log_{10} d + 20\,\log_{10} f + 92.45"),
+         "d in km, f in GHz; = 20 log(4π d / λ)."],
         ["Atmospheric Att (dB)", "A at the sample elevation", "§atm, rain faded at p."],
         ["S/C Antenna Gain (dBi)", "G(η): antenna_pattern.txt interpolated linearly", "0 dBi outside the table."],
-        ["S/C Antenna Loss (dB)", "G<sub>peak</sub> − G(η) (≥ 0)", "G<sub>peak</sub>: highest gain of the "
-                                                                   "pattern."],
-        ["EIRP (dBW)", "T<sub>chain</sub> + G(η)   (static tab EIRP source 'Tx chain')<br/>"
-                       "EIRP SAT − (G<sub>peak</sub> − G(η))   ('EIRP value')", ""],
+        ["S/C Antenna Loss (dB)", M(r"\max\left[0,\ G_{\mathrm{peak}} - G(\eta)\right]"),
+         "G<sub>peak</sub>: highest gain of the pattern."],
+        ["EIRP (dBW)", [M(r"T_{\mathrm{chain}} + G(\eta)"),
+                        M(r"\mathrm{EIRP}_{\mathrm{SAT}} - \left[G_{\mathrm{peak}} - G(\eta)\right]")],
+         "First: static tab EIRP source 'Tx chain'; second: 'EIRP value'."],
         ["G/T GS (dB/K)", "§gt at the sample elevation, minus the Sun noise", ""],
         ["Link Losses (dB)", "L<sub>link</sub>", "No receive pointing loss: the station tracks."],
-        ["Rx Power (dBW)", "EIRP − FSL − A − Other Att. − L<sub>link</sub>", ""],
-        ["C/(No+Io) (dBHz)", "C/No = Rx Power + G/T + 228.6 − Demod Loss − D<sub>mod</sub>; combined with "
-                             "C/Io when given", ""],
-        ["Eb/No (dB)", "C/(No+Io) − 10·log(R<sub>c</sub> / OH × F)", "Referred to the transfer frame bit rate."],
+        ["Rx Power (dBW)", M(r"P_{\mathrm{Rx}} = \mathrm{EIRP} - L_{\mathrm{FS}} - A - L_{\mathrm{other}} - L_{\mathrm{link}}"), ""],
+        ["C/(No+Io) (dBHz)", [M(r"C/N_0 = P_{\mathrm{Rx}} + G/T + 228.6 - L_{\mathrm{demod}} - D_{\mathrm{mod}}"),
+                              M(r"C/(N_0 + I_0) = -10\,\log_{10}\left(10^{-\dfrac{C/N_0}{10}} + 10^{-\dfrac{C/I_0}{10}}\right)")],
+         "The second line only when C/Io is given."],
+        ["Eb/No (dB)", M(r"E_b/N_0 = C/(N_0 + I_0) - 10\,\log_{10} \dfrac{R_c\, F}{OH}"),
+         "Referred to the transfer frame bit rate."],
         ["Doppler Shift, Doppler Rate", "§geom", "The contact list gives the largest |shift| and |rate| of each "
                                                 "pass."],
-        ["PFD (dBW/m²/4kHz)", "EIRP − 10·log(4π) − 20·log d[m] − 10·log(B / 4000 Hz)", "When the static tab "
+        ["PFD (dBW/m²/4kHz)", M(r"\mathrm{EIRP} - 10\,\log_{10}(4\pi d^2) - 10\,\log_{10} \dfrac{B}{4\,\mathrm{kHz}}"), "d in m. When the static tab "
                                                                                      "has a PFD limit and α, "
                                                                                      "η<sub>s</sub> are set."],
         ["PFD Limit, PFD Margin", "limit(el) (§derived); margin = limit − PFD", "The contact list gives the "
                                                                              "smallest margin of each pass."],
         ["UL Path Loss, UL Atmospheric Att", "as above at f<sub>UL</sub>", ""],
-        ["UL Rx Power (dBW)", "EIRP GS − FSL<sub>UL</sub> − A<sub>UL</sub> − UL Other Att. − (G<sub>peak</sub> − "
-                              "G(η)) − L<sub>link,UL</sub>", "Same satellite antenna pattern."],
-        ["UL C/No (dBHz)", "UL Rx Power + G/T SAT + 228.6 − Demod Loss SAT − D<sub>mod,UL</sub>", ""],
-        ["UL Eb/No (dB)", "UL C/No − 10·log(R<sub>c,UL</sub> / OH<sub>UL</sub> × F<sub>UL</sub>)", ""],
+        ["UL Rx Power (dBW)", [M(r"P_{\mathrm{Rx,UL}} = \mathrm{EIRP}_{\mathrm{GS}} - L_{\mathrm{FS,UL}} - A_{\mathrm{UL}} - L_{\mathrm{other,UL}}"),
+                               M(r"\qquad - \left[G_{\mathrm{peak}} - G(\eta)\right] - L_{\mathrm{link,UL}}")],
+         "Same satellite antenna pattern."],
+        ["UL C/No (dBHz)", M(r"P_{\mathrm{Rx,UL}} + (G/T)_{\mathrm{SAT}} + 228.6 - L_{\mathrm{demod,SAT}} - D_{\mathrm{mod,UL}}"), ""],
+        ["UL Eb/No (dB)", M(r"C/N_{0,\mathrm{UL}} - 10\,\log_{10} \dfrac{R_{c,\mathrm{UL}}\, F_{\mathrm{UL}}}{OH_{\mathrm{UL}}}"), ""],
     ], W3)
 
     # ----------------------------------------------------------------------
@@ -636,73 +669,83 @@ def chapters(m, root=None):
         "Faded (§atm); C/Io is not used in the static budget."))
     story += TABLE([
         ["Row", "Formula", "Notes"],
-        ["Tx Power [dBW]", "10·log P<sub>Tx</sub>[W]", "Tx chain."],
-        ["VSWR Loss [dB]", "−10·log(1 − Γ²), Γ = (VSWR − 1) / (VSWR + 1)", "VSWR 1.5 → 0.177 dB."],
-        ["Effective Gain [dBi]", "Antenna Gain − Circuit Loss − VSWR Loss", ""],
-        ["EIRP [dBW]", "Tx Power + Effective Gain   (Tx chain), else the EIRP field", ""],
-        ["Slant Range [km], Free Space Loss [dB]", "§geom; 20·log d + 20·log f + 92.45", ""],
+        ["Tx Power [dBW]", M(r"10\,\log_{10} P_{\mathrm{Tx}}"), "P<sub>Tx</sub> in W; Tx chain."],
+        ["VSWR Loss [dB]", M(r"-10\,\log_{10}(1 - \Gamma^2), \quad \Gamma = \dfrac{\mathrm{VSWR} - 1}{\mathrm{VSWR} + 1}"),
+         "VSWR 1.5 → 0.177 dB."],
+        ["Effective Gain [dBi]", M(r"G_{\mathrm{eff}} = G_{\mathrm{ant}} - L_{\mathrm{circuit}} - L_{\mathrm{VSWR}}"), ""],
+        ["EIRP [dBW]", M(r"P_{\mathrm{Tx}} + G_{\mathrm{eff}}"), "Tx chain; otherwise the EIRP field."],
+        ["Slant Range [km], Free Space Loss [dB]", M(r"L_{\mathrm{FS}} = 20\,\log_{10} d + 20\,\log_{10} f + 92.45"),
+         "d from §geom, in km; f in GHz."],
         ["Gas / Cloud / Rain / Scintillation, Total Atmospheric Attenuation", "§atm", "Clear: gas only."],
         ["Ionospheric Loss [dB]", "manual, or S4 fade (§derived)", ""],
         ["Polarisation Mismatch Loss [dB]", "entered, or the co-polar value (§derived)", ""],
-        ["Total Propagation Loss [dB]", "FSL + A + ionospheric + polarisation + multipath + other", ""],
-        ["Rx Antenna Pointing Loss [dB]", "12 · (θ<sub>p</sub> / θ<sub>3dB</sub>)²", "Parabolic main-lobe "
+        ["Total Propagation Loss [dB]", M(r"L_{\mathrm{prop}} = L_{\mathrm{FS}} + A + L_{\mathrm{iono}} + L_{\mathrm{pol}} + L_{\mathrm{mp}} + L_{\mathrm{other}}"), ""],
+        ["Rx Antenna Pointing Loss [dB]", M(r"12 \left(\dfrac{\theta_p}{\theta_{3\mathrm{dB}}}\right)^2"), "Parabolic main-lobe "
                                                                                     "approximation."],
-        ["Rx Power [dBW]", "EIRP − Total Propagation Loss − Tx pointing − Rx pointing", ""],
+        ["Rx Power [dBW]", M(r"P_{\mathrm{Rx}} = \mathrm{EIRP} - L_{\mathrm{prop}} - L_{\mathrm{point,Tx}} - L_{\mathrm{point,Rx}}"), ""],
         ["Rx G/T [dB/K]", "§gt for the condition (clear or rain sky noise)", "Uplink: G/T SAT (− roll-off)."],
-        ["Received S/No [dBHz]", "Rx Power + G/T + 228.6", ""],
-        ["C/No after Degradations [dBHz]", "S/No − Receiver Degradation − Modulation Degradation", ""],
-        ["Transfer Frame Bit Rate [dBHz]", "10·log(R<sub>c</sub> / OH × F)", ""],
-        ["Received Eb/No [dB]", "C/No after Degradations − Transfer Frame Bit Rate", ""],
-        ["Data Recovery Margin [dB]", "Received Eb/No − Required Eb/No", "Green when ≥ Required Nominal "
+        ["Received S/No [dBHz]", M(r"S/N_0 = P_{\mathrm{Rx}} + G/T + 228.6"), ""],
+        ["C/No after Degradations [dBHz]", M(r"C/N_0 = S/N_0 - L_{\mathrm{demod}} - L_{\mathrm{mod}}"), ""],
+        ["Transfer Frame Bit Rate [dBHz]", M(r"10\,\log_{10} R_{\mathrm{frame}}, \quad R_{\mathrm{frame}} = \dfrac{R_c\, F}{OH}"), ""],
+        ["Received Eb/No [dB]", M(r"E_b/N_0 = C/N_0 - 10\,\log_{10} R_{\mathrm{frame}}"), ""],
+        ["Data Recovery Margin [dB]", M(r"M = E_b/N_0 - (E_b/N_0)_{\mathrm{req}}"), "Green when ≥ Required Nominal "
                                                                          "Margin."],
         ["Margins with tolerances", "§derived", "MEAN − 3σ and Worst Case RSS ≥ 0 dB."],
-        ["Power Flux Density [dBW/m²]", "EIRP − 10·log(4π d²), d in m", "No atmospheric credit (conservative)."],
-        ["Occupied Bandwidth [kHz]", "B = R<sub>c</sub> (1 + α) / η<sub>s</sub>", ""],
-        ["PFD in 4 kHz", "PFD − 10·log(B / 4 kHz)", "Uniform spectral density."],
-        ["PFD Limit, PFD Margin", "limit(el); limit − PFD in 4 kHz ≥ 0", "§derived."],
+        ["Power Flux Density [dBW/m²]", M(r"\mathrm{EIRP} - 10\,\log_{10}(4\pi d^2)"),
+         "d in m; no atmospheric credit (conservative)."],
+        ["Occupied Bandwidth [kHz]", M(r"B = \dfrac{R_c\,(1 + \alpha)}{\eta_s}"), ""],
+        ["PFD in 4 kHz", M(r"\mathrm{PFD} - 10\,\log_{10} \dfrac{B}{4\,\mathrm{kHz}}"), "Uniform spectral density."],
+        ["PFD Limit, PFD Margin", M(r"M_{\mathrm{PFD}} = \mathrm{limit}(\mathrm{el}) - \mathrm{PFD}_{4\mathrm{kHz}} \geq 0"), "limit(el): §derived."],
     ], W3)
 
     # ----------------------------------------------------------------------
     story += H2("Formulas of the derived losses and margins")
     story.append(H3("CCSDS TM framing (calculations.ccsds_tm_overheads)"))
     story.append(EQ(
-        "frame = 223 · I bytes                                  codeblock = 255 · I bytes",
-        "data field = frame − 6 (primary header) − secondary header − 4 (OCF) − 2 (FECF)",
-        "user data  = data field                                       (no packet length)",
-        "           = data field · (L_pkt − 6 − CUC − PEC) / L_pkt     (with a Source Packet length)",
-        "F (formatting) = frame / user data",
-        "coding = (codeblock + 4 (ASM)) / frame · 2 (convolutional 1/2)",
-        "OH = F · coding        R_frame = R_c / coding        R_info = R_c / OH",
+        (r"L_{\mathrm{frame}} = 223\, I, \quad L_{\mathrm{cb}} = 255\, I", "Transfer frame and RS codeblock [bytes]."),
+        (r"L_{\mathrm{df}} = L_{\mathrm{frame}} - 6 - L_{\mathrm{SH}} - 4_{\mathrm{OCF}} - 2_{\mathrm{FECF}}",
+         "Data field: primary header 6 B, secondary header, OCF and FECF when selected."),
+        (r"L_{\mathrm{user}} = L_{\mathrm{df}}\, \dfrac{L_{\mathrm{pkt}} - 6 - L_{\mathrm{CUC}} - L_{\mathrm{PEC}}}{L_{\mathrm{pkt}}}",
+         "With a Source Packet length; otherwise L<sub>user</sub> = L<sub>df</sub>."),
+        (r"F = \dfrac{L_{\mathrm{frame}}}{L_{\mathrm{user}}}, \quad c = 2\, \dfrac{L_{\mathrm{cb}} + 4}{L_{\mathrm{frame}}}",
+         "Formatting and coding factors (ASM 4 B, convolutional 1/2)."),
+        (r"OH = F\, c, \quad R_{\mathrm{frame}} = \dfrac{R_c}{c}, \quad R_{\mathrm{info}} = \dfrac{R_c}{OH}", ""),
     ))
     story.append(H3("Ionospheric scintillation (calculations.ionospheric_scintillation_fade_db)"))
     story.append(EQ(
-        "S4(f) = S4_ref · (f / f_ref)^-1.5                (ITU-R P.531, valid for S4 < 0.4)",
-        "peak-to-peak fluctuation = 27.5 · S4^1.26 dB      ionospheric loss = half of it",
-        "geomagnetic latitude: sin φm = sin φ sin φp + cos φ cos φp cos(λ − λp)",
-        "zone: equatorial |φm| < 20°, mid-latitude < 58°, auroral oval < 72°, polar cap above",
+        (r"S_4(f) = S_{4,\mathrm{ref}} \left(\dfrac{f}{f_{\mathrm{ref}}}\right)^{-1.5}", "ITU-R P.531, valid for S4 &lt; 0.4."),
+        (r"P_{\mathrm{pp}} = 27.5\, S_4^{1.26}\ \mathrm{dB}, \quad L_{\mathrm{iono}} = P_{\mathrm{pp}} / 2",
+         "Peak-to-peak fluctuation; the loss is half of it."),
+        (r"\sin\phi_m = \sin\phi \sin\phi_p + \cos\phi \cos\phi_p \cos(\lambda - \lambda_p)",
+         "Geomagnetic latitude; zones: equatorial |φ<sub>m</sub>| &lt; 20°, mid-latitude &lt; 58°, auroral "
+         "oval &lt; 72°, polar cap above."),
     ))
     story.append(H3("Polarisation mismatch (calculations.polarisation_mismatch_loss_db)"))
     story.append(EQ(
-        "r1 = 10^(AR_Tx/20)     r2 = 10^(AR_Rx/20)",
-        "co-polar loss = −20·log(2 (r1 + r2) / ((1 + r1)(1 + r2)))      (used)",
-        "best / worst = −10·log(0.5 + (4 r1 r2 ± (r1² − 1)(r2² − 1)) / (2 (1 + r1²)(1 + r2²)))  (shown)",
+        (r"r_1 = 10^{AR_{\mathrm{Tx}}/20}, \quad r_2 = 10^{AR_{\mathrm{Rx}}/20}", "Voltage axial ratios."),
+        (r"L_{\mathrm{pol}} = -20\,\log_{10} \dfrac{2\,(r_1 + r_2)}{(1 + r_1)(1 + r_2)}", "Co-polar value (used)."),
+        (r"L_{\mathrm{best,worst}} = -10\,\log_{10}\left[\dfrac{1}{2} + \dfrac{4 r_1 r_2 \pm (r_1^2 - 1)(r_2^2 - 1)}{2\,(1 + r_1^2)(1 + r_2^2)}\right]",
+         "Range shown for information."),
     ))
     story.append(H3("PFD limit versus elevation (calculations.pfd_limit_at_elevation)"))
     story.append(EQ(
-        "limit(el) = L_low                                   el ≤ 5°",
-        "          = L_low + (L_high − L_low) (el − 5) / 20   5° < el < 25°",
-        "          = L_high                                  el ≥ 25°",
-        "(without L_high: L_low at every elevation)",
+        (r"\mathrm{limit}(\mathrm{el}) = L_{\mathrm{low}}", "el ≤ 5°."),
+        (r"\mathrm{limit}(\mathrm{el}) = L_{\mathrm{low}} + (L_{\mathrm{high}} - L_{\mathrm{low}})\, \dfrac{\mathrm{el} - 5^{\circ}}{20^{\circ}}",
+         "5° &lt; el &lt; 25°."),
+        (r"\mathrm{limit}(\mathrm{el}) = L_{\mathrm{high}}", "el ≥ 25°; without L<sub>high</sub>, L<sub>low</sub> at every elevation."),
     ))
     story.append(H3("Statistical margins (calculations.tolerance_statistics, margin_statistics)"))
     story.append(EQ(
-        "for each tolerance: a = −adverse, b = +favourable (dB of margin)",
-        "  TRI: mean (a + b) / 3   variance (a² + b² − ab) / 18",
-        "  UNI: mean (a + b) / 2   variance (b − a)² / 12",
-        "  GAU: mean (a + b) / 2   variance ((b − a) / 6)²       (limits at ±3σ)",
-        "Margin Mean = nominal + Σ mean      σ = √(Σ variance)",
-        "MEAN − 3σ = Margin Mean − 3σ        Worst Case RSS = nominal − √(Σ adverse²)",
-        "All Favourable = nominal + Σ favourable     All Adverse = nominal − Σ adverse",
+        (r"a = -\mathrm{adv}, \quad b = +\mathrm{fav}", "Limits of each tolerance, in dB of margin."),
+        (r"\mathrm{TRI}: \quad \mu = \dfrac{a + b}{3}, \quad \sigma^2 = \dfrac{a^2 + b^2 - ab}{18}", ""),
+        (r"\mathrm{UNI}: \quad \mu = \dfrac{a + b}{2}, \quad \sigma^2 = \dfrac{(b - a)^2}{12}", ""),
+        (r"\mathrm{GAU}: \quad \mu = \dfrac{a + b}{2}, \quad \sigma^2 = \left(\dfrac{b - a}{6}\right)^2", "Limits at ±3σ."),
+        (r"M_{\mathrm{mean}} = M_{\mathrm{nom}} + \sum_k \mu_k, \quad \sigma = \sqrt{\sum_k \sigma_k^2}",
+         "Independent contributions: means and variances add."),
+        (r"M_{-3\sigma} = M_{\mathrm{mean}} - 3\sigma, \quad M_{\mathrm{RSS}} = M_{\mathrm{nom}} - \sqrt{\sum_k \mathrm{adv}_k^2}",
+         "MEAN − 3σ and Worst Case RSS."),
+        (r"M_{\mathrm{fav}} = M_{\mathrm{nom}} + \sum_k \mathrm{fav}_k, \quad M_{\mathrm{adv}} = M_{\mathrm{nom}} - \sum_k \mathrm{adv}_k",
+         "All Favourable, All Adverse."),
     ))
     story.append(P(
         "Tolerances: Transmitter Power, Tx Antenna Gain, Atmospheric / Propagation Loss, Rx G/T, Receiver "
@@ -813,10 +856,10 @@ def chapters(m, root=None):
 
     story += H2("Usable samples and passes")
     story.append(EQ(
-        "s: satellite, g: station, t: sample",
-        "margin(s, g, t) = Eb/No(s, g, t) − Eb/No_req",
-        "usable(s, g, t) ⇔ in contact(s, g, t) and margin ≥ M_req",
-        "capacity of a usable sample = R_d · 30 s,   R_d = R_c / OH − real-time [bit/s]",
+        (r"m(s, g, t) = E_b/N_0\,(s, g, t) - (E_b/N_0)_{\mathrm{req}}", "s: satellite, g: station, t: sample."),
+        (r"\mathrm{usable}(s, g, t) \Leftrightarrow \mathrm{contact}(s, g, t)\ \wedge\ m(s, g, t) \geq M_{\mathrm{req}}", ""),
+        (r"C = R_d\, \Delta t, \quad R_d = \dfrac{R_c}{OH} - R_{\mathrm{RT}}",
+         "Capacity of a usable sample; Δt = 30 s; R<sub>RT</sub>: real-time TM."),
     ))
     story.append(P(
         "<b>Min Pass Duration</b> (<i>drop_short_contacts</i>): each run of usable samples of one satellite over "
@@ -845,21 +888,25 @@ def chapters(m, root=None):
         "Each satellite starts with an empty memory. At every sample t (<i>aggregate</i>, "
         "<i>simulate_constellation</i>):"))
     story.append(EQ(
-        "memory += G · 30 s                                        (G = instruments + HKTM + other)",
-        "if memory > M_max: lost += memory − M_max, memory = M_max",
-        "take = min(memory, capacity of the sample)   if the satellite is served, else 0",
-        "memory −= take",
+        (r"Q \leftarrow Q + G\, \Delta t", "Q: data on board; G = instruments + HKTM + other."),
+        (r"Q > Q_{\max}:\quad \mathrm{lost} \leftarrow \mathrm{lost} + Q - Q_{\max}, \quad Q \leftarrow Q_{\max}",
+         "Memory full: the new data are lost."),
+        (r"x = \min(Q,\ C)", "Bits downloaded in the sample, when the satellite is served (else 0)."),
+        (r"Q \leftarrow Q - x", ""),
     ))
     story.append(P(
         "The data leave the memory first in, first out. With D the bits downloaded before this sample, the "
-        "bits taken now were generated between D / G and (D + take) / G seconds from the start, uniformly. They "
+        "x bits downloaded now were generated between D / G and (D + x) / G seconds from the start, uniformly. They "
         "reach the ground at t<sub>arr</sub> = end of the sample, or, with <b>Latency at end of pass</b>, at the "
         "end of the pass (the run of served samples) they belong to. Each sample adds a chunk:"))
     story.append(EQ(
-        "chunk = (bits = take,  latency from t_arr − (D + take)/G  to  t_arr − D/G)",
-        "share within L minutes = Σ over chunks of bits · clip((60 L − lat_min) / (lat_max − lat_min), 0, 1) / Σ bits",
-        "latency at X % = smallest L with share(L) ≥ X %      (bisection, 60 steps)",
-        "mean latency = Σ bits · (lat_min + lat_max) / 2 / Σ bits        max latency = largest lat_max",
+        (r"\ell_{\min} = t_{\mathrm{arr}} - \dfrac{D + x}{G}, \quad \ell_{\max} = t_{\mathrm{arr}} - \dfrac{D}{G}",
+         "Latency range of the chunk of x bits."),
+        (r"s(L) = \dfrac{\sum_k x_k\, \mathrm{clip}\left(\frac{60\,L - \ell_{\min,k}}{\ell_{\max,k} - \ell_{\min,k}},\ 0,\ 1\right)}{\sum_k x_k}",
+         "Share of the data on ground within L minutes."),
+        (r"L_X = \min\,\{L : s(L) \geq X\}", "Latency at X % (bisection, 60 steps)."),
+        (r"\bar{\ell} = \dfrac{\sum_k x_k\, (\ell_{\min,k} + \ell_{\max,k})/2}{\sum_k x_k}, \quad \ell_{\mathrm{max}} = \max_k\, \ell_{\max,k}",
+         "Mean and maximum latency."),
     ))
     story.append(P(
         "So <i>'80 % within 67 min'</i> means: of all the bits generated on board and downloaded in the period "
@@ -878,7 +925,7 @@ def chapters(m, root=None):
         ["Downlink capacity [MB/day]", "usable samples × R<sub>d</sub> · 30 s / 8·10⁶ per day (mean, min, max)",
          ""],
         ["Generated [MB/day]", "G · 86400 / 8·10⁶ (× satellites)", ""],
-        ["Downloaded [MB/day]", "Σ take / 8·10⁶ per day", "≤ capacity, ≤ generated."],
+        ["Downloaded [MB/day]", "Σ x / 8·10⁶ per day", "≤ capacity, ≤ generated."],
         ["On board [MB]", "memory at the end of each sample (sum of all satellites); max and final", ""],
         ["Memory use [%]", "100 · largest memory of one satellite / M<sub>max</sub>", ""],
         ["Autonomy [h]", "M<sub>max</sub> / G / 3600: time to fill the memory without contacts", ""],
