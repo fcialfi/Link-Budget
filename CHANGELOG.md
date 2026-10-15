@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Fix: the on-board data rates and the latency requirement of a mission are cleared when another mission without them is selected.
+- EPS-Sterna: minimum elevation 3° in the mission parameters (AWS: 5°); lbtool.py takes it from the mission parameters unless --min-elevation is given.
 - EPS-Sterna: minimum SDA pass duration 4.7 min in the mission parameters.
 - Statistics: minimum pass duration (Min Pass Duration [min], lbtool.py --min-pass): shorter contacts are not used.
 - EPS-Sterna: 64 kbps generated on board (Instrument Data) in the mission parameters.

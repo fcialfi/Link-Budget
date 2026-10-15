@@ -79,5 +79,6 @@
     "Svalbard",
     "Punta Arenas"
   ],
-  "antenna_setup_min": 0.0
+  "antenna_setup_min": 0.0,
+  "min_elevation_deg": 5.0
 }

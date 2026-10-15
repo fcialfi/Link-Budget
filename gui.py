@@ -1224,8 +1224,10 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        # The statistics fields belong to the mission: cleared when its file does not give them.
         latency = payload.get("latency_requirement")
-        if isinstance(latency, dict) and hasattr(self, "stats_latency_var"):
+        if hasattr(self, "stats_latency_var"):
+            latency = latency if isinstance(latency, dict) else {}
             self.stats_latency_var.set("" if latency.get("minutes") is None else f"{latency['minutes']:g}")
             self.stats_latency_pct_var.set("" if latency.get("percent") is None else f"{latency['percent']:g}")
         setup = payload.get("antenna_setup_min")
@@ -1241,7 +1243,8 @@ class LinkBudgetApp:
                 if name in network:
                     self.stats_station_list.selection_set(k)
         flows = payload.get("downlink_data_kbps")
-        if isinstance(flows, dict) and hasattr(self, "stats_instrument_var"):
+        if hasattr(self, "stats_instrument_var"):
+            flows = flows if isinstance(flows, dict) else {}
             for key, var in (
                 ("instruments", self.stats_instrument_var),
                 ("hktm", self.stats_hktm_var),

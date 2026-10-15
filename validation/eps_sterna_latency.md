@@ -71,3 +71,6 @@ parameters; with the 30 s step a contact needs 10 samples, i.e. it acts as
   pass the reference (33 / 61 / 77) lies between 5° and 3°, as with a
   minimum elevation of about 4° or a horizon mask lower than 5° in parts of
   the sky.
+
+Adopted for EPS-Sterna: minimum elevation 3°, minimum pass 4.7 min, 64 kbps:
+Svalbard + Punta Arenas 28.1 / 58.3 / 72.6 min (reference 33 / 61 / 77).

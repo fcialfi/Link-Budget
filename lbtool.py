@@ -106,6 +106,13 @@ def _stations(names: str, params) -> list[link_core.Station]:
     return result
 
 
+def _min_elevation(args, params) -> float:
+    if args.min_elevation is not None:
+        return args.min_elevation
+    value = (params or {}).get("min_elevation_deg")
+    return float(value) if value is not None else calculations.MIN_ELEVATION_DEG
+
+
 def cmd_missions(_args) -> None:
     for sat in _catalogue().satellites:
         print(sat.label)
@@ -116,7 +123,7 @@ def cmd_passes(args) -> None:
     _sat, params, tle = _mission(args.mission, day, args.plane, args.download, args.sat)
     link = _link(params, args)
     (station,) = _stations(args.station, params)
-    analysis = link_core.PassAnalysis(tle, station, link, args.min_elevation)
+    analysis = link_core.PassAnalysis(tle, station, link, _min_elevation(args, params))
     frame = analysis.day(link_core.utc_midnight(day))
     contacts = analysis.contacts(frame)
     if link:
@@ -167,7 +174,7 @@ def cmd_statistics(args) -> None:
             raise SystemExit("--constellation needs a custom-orbit mission (e.g. EPS-Sterna).")
         satellites = link_core.constellation_tles(orbit, link_core.utc_midnight(start), _sat.name)
     analyses = {
-        name: [link_core.PassAnalysis(lines, st, link, args.min_elevation) for st in stations]
+        name: [link_core.PassAnalysis(lines, st, link, _min_elevation(args, params)) for st in stations]
         for name, lines in satellites
     }
 
@@ -234,8 +241,9 @@ def main(argv=None) -> None:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--mission", required=True, help="mission name in satellites.json, e.g. AWS")
-    common.add_argument("--min-elevation", type=float, default=calculations.MIN_ELEVATION_DEG,
-                        help="minimum elevation of a contact [deg] (default 5)")
+    common.add_argument("--min-elevation", type=float,
+                        help="minimum elevation of a contact [deg] (default: min_elevation_deg of the mission "
+                             "parameters, else 5)")
     common.add_argument("--plane", help="LTAN hh:mm of the orbital plane (custom-orbit missions)")
     common.add_argument("--sat", type=int, default=1, help="satellite number in the plane (custom-orbit missions)")
     common.add_argument("-o", "--output", help="CSV file to write")

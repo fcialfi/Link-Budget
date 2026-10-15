@@ -97,5 +97,6 @@
     "hktm": null,
     "other": null
   },
-  "min_pass_min": 4.7
+  "min_pass_min": 4.7,
+  "min_elevation_deg": 3.0
 }
