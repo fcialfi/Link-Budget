@@ -927,6 +927,8 @@ class LinkBudgetApp:
         sat = self.catalogue.find(name) if self.catalogue else None
         if sat is None:
             return
+        if self.current_sat is not sat:
+            self._clear_statistics(f"Satellite changed to {sat.name}: press Compute Statistics.")
         self.current_sat = sat
         self.satellite_combo.set(sat.label)
         self.norad_var.set("" if sat.norad_id is None else str(sat.norad_id))
@@ -1117,6 +1119,14 @@ class LinkBudgetApp:
             "eccentricity": eccentricity,
             "arg_perigee_deg": arg_perigee,
         }
+
+    def _on_analysed_satellite_changed(self) -> None:
+        """Plane or satellite number changed: new TLE; the single-satellite statistics are out of date."""
+
+        self.generate_custom_tle(show_errors=False)
+        inputs = getattr(self, "stats_inputs", None)
+        if inputs is not None and not inputs.get("constellation"):
+            self._clear_statistics("Satellite analysed changed: press Compute Statistics.")
 
     def generate_custom_tle(self, show_errors: bool = True) -> bool:
         """Build the synthetic TLE of the custom orbit, with epoch at the analysed date."""
@@ -2128,6 +2138,23 @@ class LinkBudgetApp:
             (135, 65, 150, 95, 100, 95, 105, 120, 115),
         )
         self.stats_result = None
+
+    def _clear_statistics(self, message: str) -> None:
+        """Remove the results of the last statistics (they belong to another satellite)."""
+
+        if not hasattr(self, "stats_pass_table") or getattr(self, "stats_result", None) is None:
+            return
+        self.stats_result = None
+        self.stats_inputs = None
+        for table in (self.stats_station_table, self.stats_sat_table, self.stats_day_table, self.stats_pass_table):
+            table.delete(*table.get_children())
+        for widget in self.stats_plot_frame.winfo_children():
+            widget.destroy()
+        self.stats_figure = None
+        self.stats_summary_var.set(message)
+        self.stats_status_var.set("")
+        self.stats_export_button.state(["disabled"])
+        self.stats_pdf_button.state(["disabled"])
 
     def _refresh_statistics_stations(self) -> None:
         """Fill the station list of the Statistics tab, keeping the selection."""
@@ -6511,7 +6538,7 @@ class LinkBudgetApp:
         self.orbit_satnum_combo = ttk.Combobox(line2, textvariable=self.orbit_satnum_var, width=3, state="readonly")
         self.orbit_satnum_combo.pack(side=tk.LEFT)
         for combo in (self.orbit_ltan_combo, self.orbit_satnum_combo):
-            combo.bind("<<ComboboxSelected>>", lambda _e: self.generate_custom_tle(show_errors=False))
+            combo.bind("<<ComboboxSelected>>", lambda _e: self._on_analysed_satellite_changed())
             _add_tooltip(combo, "The satellite of the constellation used by the pass analysis (Orbit & Passes, "
                                 "Downlink, Uplink). The Statistics tab can use all of them.")
         orbit_row.grid_remove()
