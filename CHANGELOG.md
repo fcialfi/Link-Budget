@@ -6,6 +6,7 @@
 - Statistics: latency requirement (share of the data on ground within a time).
 - Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes). lbtool.py: --sat.
 - Statistics plots redrawn: contact time, data per day, gaps (or time per satellite) and data latency with the requirement.
+- Sun outage: Sun noise in the ground antenna beam along the passes (Sun position, dish pattern, solar flux), lowering G/T and Eb/No; Sun Separation and Sun Noise columns, passes marked in the contact list and in lbtool.py, included in the statistics.
 - Fix: crash of the statistics on Windows (garbage collection in the worker thread).
 
 ## 1.1.0

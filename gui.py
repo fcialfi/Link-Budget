@@ -1268,6 +1268,7 @@ class LinkBudgetApp:
             "gt_ref_elevation_deg": self.gt_ref_el_entry,
             "tsys_ref_k": self.tsys_ref_entry,
             "radome_loss_db": self.radome_loss_entry,
+            "solar_flux_sfu": self.solar_flux_entry,
             "link_availability_pct": self.LA_entry,
             "other_attenuations_db": self.other_att_entry,
             "uplink_other_attenuations_db": self.other_att_ul_entry,
@@ -2626,6 +2627,8 @@ class LinkBudgetApp:
             pfd_limit_low=pfd_low,
             pfd_limit_high=pfd_high,
             occupied_bandwidth_hz=bandwidth,
+            sun_noise=self.sun_noise_var.get(),
+            solar_flux_sfu=_optional(self.solar_flux_entry, "Solar Flux [sfu]"),
         )
 
     # ------------------------------------------------------------------
@@ -2687,6 +2690,17 @@ class LinkBudgetApp:
             if "PFD Margin (dB)" in self.df_all.columns:
                 pfd_margin = self.df_all.loc[mask, "PFD Margin (dB)"].min()
                 text += f"  ·  min PFD margin {pfd_margin:+.1f} dB" + ("  ✗ PFD EXCEEDED" if pfd_margin < 0 else "")
+            in_contact = mask & self.df_all["Visible"] if "Visible" in self.df_all else mask
+            if "Sun Noise (dB)" in self.df_all.columns and self.df_all.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
+                worst = self.df_all.loc[in_contact, "Sun Noise (dB)"].idxmax()
+                text += (
+                    f"  ·  ☀ SUN NOISE up to {self.df_all.at[worst, 'Sun Noise (dB)']:.1f} dB at "
+                    f"{self.df_all.at[worst, 'Time (UTC)']:%H:%M:%S}"
+                )
+            elif "Sun Noise (dB)" not in self.df_all.columns and "Sun Separation (°)" in self.df_all.columns:
+                closest = self.df_all.loc[in_contact, "Sun Separation (°)"].min()
+                if closest < 5.0:
+                    text += f"  ·  ☀ Sun {closest:.1f}° from the satellite"
             self.contact_listbox.insert(tk.END, text)
 
     def on_contact_select(self, event):
@@ -2786,10 +2800,15 @@ class LinkBudgetApp:
             ("Off Boresight Angle (°)", "Nadir Ang. [°]", "Geometry",
              "Angle from the satellite antenna boresight (nadir) towards the station."),
             ("Doppler Shift (kHz)", "Doppler [kHz]", "Geometry", "Doppler shift of the downlink carrier."),
+            ("Sun Separation (°)", "Sun Sep. [°]", "Geometry",
+             "Angle between the Sun and the satellite seen from the station (the antenna axis)."),
             ("Path Loss (dB)", "FSL [dB]", "Link Budget", "Free space loss."),
             ("Atmospheric Att (dB)", "Atm. [dB]", "Link Budget",
              "ITU-R atmospheric attenuation at this elevation."),
-            ("G/T GS (dB/K)", "G/T [dB/K]", "Link Budget", "Ground station G/T at this elevation."),
+            ("Sun Noise (dB)", "Sun [dB]", "Link Budget",
+             "G/T degradation from the Sun noise in the ground antenna beam (Sun outage)."),
+            ("G/T GS (dB/K)", "G/T [dB/K]", "Link Budget",
+             "Ground station G/T at this elevation, with the Sun noise."),
             ("S/C Antenna Gain (dBi)", "S/C Gain [dBi]", "Link Budget",
              "Satellite antenna gain towards the station, from the pattern."),
             ("EIRP (dBW)", "EIRP [dBW]", "Link Budget", "Satellite EIRP towards the station."),
@@ -6319,6 +6338,13 @@ class LinkBudgetApp:
                     "along the pass (lower at low elevation and in rain). Empty: constant G/T GS.",
                 ),
                 ("Radome Loss [dB]", "radome_loss_entry", "G/T degradation of the radome."),
+                (
+                    "Solar Flux [sfu]",
+                    "solar_flux_entry",
+                    "Solar flux density at the downlink frequency (1 sfu = 1e-22 W/m²/Hz), for the Sun noise "
+                    "when the Sun is near the antenna beam (Sun outage). Typically 100–250 sfu at L/S band at "
+                    "solar maximum. Empty: quiet Sun (about 50 sfu at 1.7 GHz).",
+                ),
             ),
             start=2,
         ):
@@ -6357,10 +6383,22 @@ class LinkBudgetApp:
             "an extrapolation. Ionospheric scintillation (the relevant one at L/S band) comes from "
             "the Static LB tabs (S4 index), with the other link losses.",
         )
+        self.sun_noise_var = tk.BooleanVar(value=True)
+        sun_check = ttk.Checkbutton(
+            atm_frame, text="Sun noise (Sun outage)", variable=self.sun_noise_var, command=self.set_analysis_stale
+        )
+        sun_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(2, 0))
+        _add_tooltip(
+            sun_check,
+            "Noise of the Sun when it is near the ground antenna beam: the antenna temperature rises by "
+            "T_sun·Ω_sun·G(θ)/4π (Gaussian main beam of 70 λ/D, ITU-R S.465 side lobes), lowering G/T and "
+            "Eb/No. Needs the System Noise Temperature. Sun position from the Astronomical Almanac "
+            "low-precision formulae (about 0.01°).",
+        )
         self.atm_label_var = tk.StringVar(
             value=f"Atmospheric Att (dB) @ {MIN_ELEVATION_DEG:g}° El: N/A"
         )
-        ttk.Label(atm_frame, textvariable=self.atm_label_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
+        ttk.Label(atm_frame, textvariable=self.atm_label_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0), padx=5)
         atm_frame.grid_columnconfigure(1, weight=1)
 
         # Baseband Parameters frame

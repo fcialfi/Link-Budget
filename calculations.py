@@ -13,6 +13,7 @@ import astropy.units as u
 import json
 import os
 from scipy.interpolate import interp1d
+from datetime import timezone as _timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:  # annotations only
@@ -510,6 +511,95 @@ def gt_reference_sky_noise_k(
         include_scintillation=False,
     )
     return sky_noise_temperature_k(atm["total"])
+
+
+# --- Sun in the ground station beam (Sun outage) ---------------------------
+
+SUN_ANGULAR_RADIUS_DEG = 0.2665
+_SUN_SOLID_ANGLE_SR = math.pi * math.radians(SUN_ANGULAR_RADIUS_DEG) ** 2
+_BOLTZMANN = 1.380649e-23
+_SPEED_OF_LIGHT = 299792458.0
+
+
+def sun_altaz_deg(lat_deg: float, lon_deg: float, times_utc) -> tuple[np.ndarray, np.ndarray]:
+    """Elevation and azimuth (deg, from North clockwise) of the Sun seen from a place.
+
+    Low-precision solar coordinates of the Astronomical Almanac (about 0.01°
+    from 1950 to 2050), with the Greenwich mean sidereal time; no refraction.
+    ``times_utc`` is a sequence of timezone-aware datetimes.
+    """
+    epoch = np.datetime64("2000-01-01T12:00:00")
+    stamps = np.array([np.datetime64(t.astimezone(_timezone.utc).replace(tzinfo=None), "us") for t in times_utc])
+    n = (stamps - epoch) / np.timedelta64(1, "D")
+    mean_lon = np.radians((280.460 + 0.9856474 * n) % 360.0)
+    anomaly = np.radians((357.528 + 0.9856003 * n) % 360.0)
+    ecl_lon = mean_lon + np.radians(1.915) * np.sin(anomaly) + np.radians(0.020) * np.sin(2 * anomaly)
+    obliquity = np.radians(23.439 - 0.0000004 * n)
+    ra = np.arctan2(np.cos(obliquity) * np.sin(ecl_lon), np.cos(ecl_lon))
+    dec = np.arcsin(np.sin(obliquity) * np.sin(ecl_lon))
+    gmst = np.radians((280.46061837 + 360.98564736629 * n) % 360.0)
+    hour_angle = gmst + math.radians(lon_deg) - ra
+    lat = math.radians(lat_deg)
+    elevation = np.arcsin(np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(hour_angle))
+    azimuth = np.arctan2(
+        -np.cos(dec) * np.sin(hour_angle),
+        np.sin(dec) * np.cos(lat) - np.cos(dec) * np.sin(lat) * np.cos(hour_angle),
+    )
+    return np.degrees(elevation), np.degrees(azimuth) % 360.0
+
+
+def angular_separation_deg(el1, az1, el2, az2) -> np.ndarray:
+    """Angle (deg) between two directions given as elevation and azimuth (deg)."""
+    el1, az1, el2, az2 = (np.radians(np.asarray(v, dtype=float)) for v in (el1, az1, el2, az2))
+    cos_sep = np.sin(el1) * np.sin(el2) + np.cos(el1) * np.cos(el2) * np.cos(az1 - az2)
+    return np.degrees(np.arccos(np.clip(cos_sep, -1.0, 1.0)))
+
+
+def sun_brightness_temperature_k(freq_ghz: float, solar_flux_sfu: Optional[float] = None) -> float:
+    """Brightness temperature (K) of the solar disk at ``freq_ghz``.
+
+    From the solar flux density at that frequency (1 sfu = 1e-22 W/m²/Hz,
+    both polarisations), T = S λ² / (2 k Ω_sun); without it, the quiet Sun
+    T = 120000 f^-0.75 (f in GHz), about 49 sfu at 1.7 GHz. At solar maximum
+    the flux at L/S band is typically 100-250 sfu.
+    """
+    if solar_flux_sfu is None:
+        return 120000.0 * freq_ghz ** -0.75
+    wavelength = _SPEED_OF_LIGHT / (freq_ghz * 1e9)
+    return solar_flux_sfu * 1e-22 * wavelength ** 2 / (2 * _BOLTZMANN * _SUN_SOLID_ANGLE_SR)
+
+
+def ground_antenna_gain_dbi(off_axis_deg, peak_gain_dbi: float, diameter_m: float, freq_ghz: float) -> np.ndarray:
+    """Gain of a ground station dish ``off_axis_deg`` from its axis.
+
+    Gaussian main beam with half-power beamwidth 70 λ/D, and outside it the
+    ITU-R S.465 side-lobe envelope 32 - 25 log10(θ) dBi (at least -10 dBi)
+    when it is above the main beam.
+    """
+    theta = np.maximum(np.asarray(off_axis_deg, dtype=float), 1e-6)
+    wavelength = _SPEED_OF_LIGHT / (freq_ghz * 1e9)
+    beamwidth = 70.0 * wavelength / diameter_m
+    main = peak_gain_dbi - 12.0 * (theta / beamwidth) ** 2
+    side = np.maximum(32.0 - 25.0 * np.log10(np.maximum(theta, 1.0)), -10.0)
+    return np.where(theta < beamwidth, main, np.minimum(np.maximum(main, side), peak_gain_dbi))
+
+
+def sun_noise_temperature_k(
+    separation_deg,
+    sun_elevation_deg,
+    peak_gain_dbi: float,
+    diameter_m: float,
+    freq_ghz: float,
+    solar_flux_sfu: Optional[float] = None,
+) -> np.ndarray:
+    """Antenna noise temperature (K) added by the Sun ``separation_deg`` from the antenna axis.
+
+    The solar disk, small compared with the beam, adds T_sun Ω_sun G(θ) / 4π;
+    nothing when the Sun is below the horizon.
+    """
+    gain = 10 ** (ground_antenna_gain_dbi(separation_deg, peak_gain_dbi, diameter_m, freq_ghz) / 10.0)
+    added = sun_brightness_temperature_k(freq_ghz, solar_flux_sfu) * _SUN_SOLID_ANGLE_SR * gain / (4 * math.pi)
+    return np.where(np.asarray(sun_elevation_deg) > -SUN_ANGULAR_RADIUS_DEG, added, 0.0)
 
 
 # Sections of ``parameters.json`` holding the inputs of the fixed-elevation

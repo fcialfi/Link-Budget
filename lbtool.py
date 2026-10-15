@@ -129,6 +129,8 @@ def cmd_passes(args) -> None:
             text += f"  min Eb/No {frame.loc[in_pass & frame['Visible'], 'Eb/No (dB)'].min():6.2f} dB"
         if "PFD Margin (dB)" in frame:
             text += f"  min PFD margin {frame.loc[in_pass & frame['Visible'], 'PFD Margin (dB)'].min():+5.1f} dB"
+        if "Sun Noise (dB)" in frame and frame.loc[in_pass & frame["Visible"], "Sun Noise (dB)"].max() >= 0.5:
+            text += f"  SUN NOISE up to {frame.loc[in_pass & frame['Visible'], 'Sun Noise (dB)'].max():.1f} dB"
         print(text)
     if args.output:
         frame[frame["Elevation (°)"] > 0].to_csv(args.output, index=False)
