@@ -1719,6 +1719,9 @@ class LinkBudgetApp:
             ),
             wraplength=1060, justify="left",
         ).pack(anchor="w", padx=10, pady=(8, 4))
+        ttk.Button(
+            popup, text="3D View", command=lambda: self._show_constellation_3d(satellites, epoch, orbit)
+        ).pack(anchor="w", padx=10, pady=(0, 6))
         columns = ("Satellite", "LTAN", "RAAN (°)", "Arg. of latitude (°)", "Inclination (°)")
         table = ttk.Treeview(popup, columns=columns, show="headings", height=min(len(satellites), 8))
         for col in columns:
@@ -1771,6 +1774,82 @@ class LinkBudgetApp:
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 10))
         plt.close(fig)
+
+    def _show_constellation_3d(self, satellites, epoch, orbit) -> None:
+        """The orbits around the Earth, the satellites and the stations, with a time slider."""
+
+        from matplotlib.figure import Figure
+        from matplotlib.widgets import Slider
+
+        ts = link_core.load.timescale()
+        minutes = np.arange(0, 101, 1.0)
+        times = ts.utc(epoch.year, epoch.month, epoch.day, 0, minutes)
+        radius = calculations.EARTH_RADIUS_KM
+        colors = list(MATLAB_COLORS.values())
+        tracks = []
+        for name, lines in satellites:
+            sat = link_core.EarthSatellite(lines[0], lines[1], name, ts)
+            plane = name.rsplit(" ", 2)[-2]
+            color = colors[orbit["ltan"].index(plane) % len(colors)] if plane in orbit["ltan"] else colors[0]
+            tracks.append((name, color, sat.at(times).position.km))
+        stations = [
+            (gs, link_core.wgs84.latlon(lat, lon, elevation_m=alt).at(times).position.km)
+            for gs, (lat, lon, alt) in calculations.GROUND_STATIONS.items()
+        ]
+
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Constellation 3D – {self.current_sat.name}")
+        popup.geometry("900x820")
+        ttk.Label(
+            popup,
+            text="Inertial frame (the Earth turns under the orbits). Drag to rotate; move the slider to follow "
+                 "the satellites over the first 100 min of the analysed day (UTC).",
+            wraplength=860, justify="left",
+        ).pack(anchor="w", padx=10, pady=(8, 0))
+        # A plain Figure on its Tk canvas first: the slider and the 3D rotation
+        # connect to the canvas the figure has when they are created.
+        fig = Figure(figsize=(9, 8))
+        canvas = FigureCanvasTkAgg(fig, master=popup)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        ax = fig.add_axes([0.0, 0.08, 1.0, 0.85], projection="3d")
+        u_grid, v_grid = np.mgrid[0:2 * np.pi:36j, 0:np.pi:18j]
+        ax.plot_wireframe(radius * np.cos(u_grid) * np.sin(v_grid), radius * np.sin(u_grid) * np.sin(v_grid),
+                          radius * np.cos(v_grid), color="#9AA5B1", linewidth=0.3)
+        markers, labels = [], []
+        for name, color, pos in tracks:
+            ax.plot(pos[0], pos[1], pos[2], color=color, linewidth=1.0)
+            markers.append(ax.plot([pos[0, 0]], [pos[1, 0]], [pos[2, 0]], "o", color=color, markersize=7)[0])
+            labels.append(ax.text(pos[0, 0], pos[1, 0], pos[2, 0], "  " + name.split(" ", 1)[-1], fontsize=7))
+        station_marks = []
+        for gs, pos in stations:
+            station_marks.append((
+                ax.plot([pos[0, 0]], [pos[1, 0]], [pos[2, 0]], "^", color="black", markersize=5)[0],
+                ax.text(pos[0, 0], pos[1, 0], pos[2, 0], " " + gs, fontsize=6),
+                pos,
+            ))
+        limit = radius + float(orbit["altitude_km"]) + 500
+        for setter in (ax.set_xlim, ax.set_ylim, ax.set_zlim):
+            setter(-limit, limit)
+        ax.set_box_aspect((1, 1, 1))
+        ax.set_axis_off()
+        title = ax.set_title(f"{epoch:%Y-%m-%d} 00:00 UTC", fontsize=9)
+        slider_ax = fig.add_axes([0.15, 0.03, 0.7, 0.03])
+        slider = Slider(slider_ax, "min", 0, minutes[-1], valinit=0, valstep=1)
+
+        def _update(value):
+            k = int(value)
+            for marker, label, (_name, _color, pos) in zip(markers, labels, tracks):
+                marker.set_data_3d([pos[0, k]], [pos[1, k]], [pos[2, k]])
+                label.set_position_3d((pos[0, k], pos[1, k], pos[2, k]))
+            for marker, label, pos in station_marks:
+                marker.set_data_3d([pos[0, k]], [pos[1, k]], [pos[2, k]])
+                label.set_position_3d((pos[0, k], pos[1, k], pos[2, k]))
+            title.set_text(f"{epoch + timedelta(minutes=k):%Y-%m-%d %H:%M} UTC")
+            fig.canvas.draw_idle()
+
+        slider.on_changed(_update)
+        canvas.draw()
+        popup._keep = (fig, slider)  # the slider must stay referenced to keep working
 
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""

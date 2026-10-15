@@ -433,7 +433,9 @@ def content():
     story.append(P(
         "<b>Show Constellation</b> lists every satellite (plane, RAAN, argument of latitude and inclination "
         "at 00:00 UTC of the analysed date) and draws the ground tracks over the first 100 minutes of the day "
-        "with the ground stations, and the satellites in their planes (RAAN against argument of latitude)."))
+        "with the ground stations, and the satellites in their planes (RAAN against argument of latitude). "
+        "<b>3D View</b> draws the orbits around the Earth (inertial frame), the satellites and the stations; "
+        "drag to rotate, and move the slider to follow the satellites over the first 100 minutes of the day."))
     story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 0°.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
