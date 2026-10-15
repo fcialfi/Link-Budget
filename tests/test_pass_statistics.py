@@ -217,3 +217,39 @@ def test_statistics_report_pdf(tmp_path):
     )
     data = path.read_bytes()
     assert data.startswith(b"%PDF") and len(data) > 2000
+
+
+def test_drop_short_contacts_across_midnight():
+    start1 = datetime.datetime(2026, 10, 1, tzinfo=UTC)
+    start2 = datetime.datetime(2026, 10, 2, tzinfo=UTC)
+
+    def samples(start, visible):
+        visible = np.array(visible, dtype=bool)
+        return ps.DaySamples(start, np.where(visible, 20.0, -5.0), visible, np.where(visible, 5.0, np.nan))
+
+    # Contact 1: one sample (dropped); contact 2: two samples before and one after midnight (kept).
+    days = [
+        {"S": {"G": samples(start1, [0, 1, 0, 0, 1, 1])}},
+        {"S": {"G": samples(start2, [1, 0, 0, 0, 0, 0])}},
+    ]
+    kept = ps.drop_short_contacts(days, step_s=60, min_contact_s=120)
+    assert list(kept[0]["S"]["G"].visible) == [False, False, False, False, True, True]
+    assert list(kept[1]["S"]["G"].visible) == [True, False, False, False, False, False]
+    assert days[0]["S"]["G"].visible[1]  # the input is not changed
+    assert ps.drop_short_contacts(days, 60, 0) is days
+
+
+def test_latency_at_pass_end():
+    # Contact in the last two samples: with the dump counted at its end, every bit waits one sample more
+    # when it came down in the first sample of the pass.
+    d1 = _day(1, [0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 5, 5])
+    per_bit = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    at_end = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, latency_at_pass_end=True)
+    assert at_end.summary["max_latency_min"] == pytest.approx(60.0)  # all on ground at the end of the pass
+    assert at_end.summary["mean_latency_min"] > per_bit.summary["mean_latency_min"]
+    day = {"S1": {"G": _sat_day([0, 0, 0, 0, 1, 1])}}
+    c_bit = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    c_end = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4,
+                                      latency_at_pass_end=True)
+    assert c_end.summary["max_latency_min"] == pytest.approx(60.0)
+    assert c_end.summary["mean_latency_min"] > c_bit.summary["mean_latency_min"]

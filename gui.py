@@ -1224,13 +1224,18 @@ class LinkBudgetApp:
 
         if "project_name" in payload:
             self.project_var.set(str(payload["project_name"] or ""))
+        # The statistics fields belong to the mission: cleared when its file does not give them.
         latency = payload.get("latency_requirement")
-        if isinstance(latency, dict) and hasattr(self, "stats_latency_var"):
+        if hasattr(self, "stats_latency_var"):
+            latency = latency if isinstance(latency, dict) else {}
             self.stats_latency_var.set("" if latency.get("minutes") is None else f"{latency['minutes']:g}")
             self.stats_latency_pct_var.set("" if latency.get("percent") is None else f"{latency['percent']:g}")
         setup = payload.get("antenna_setup_min")
         if hasattr(self, "stats_setup_var"):
             self.stats_setup_var.set("" if setup is None else f"{setup:g}")
+            min_pass = payload.get("min_pass_min")
+            self.stats_min_pass_var.set("" if min_pass is None else f"{min_pass:g}")
+            self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
         network = payload.get("statistics_stations")
         if isinstance(network, list) and hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
@@ -1239,7 +1244,8 @@ class LinkBudgetApp:
                 if name in network:
                     self.stats_station_list.selection_set(k)
         flows = payload.get("downlink_data_kbps")
-        if isinstance(flows, dict) and hasattr(self, "stats_instrument_var"):
+        if hasattr(self, "stats_instrument_var"):
+            flows = flows if isinstance(flows, dict) else {}
             for key, var in (
                 ("instruments", self.stats_instrument_var),
                 ("hktm", self.stats_hktm_var),
@@ -1905,6 +1911,7 @@ class LinkBudgetApp:
         self.stats_latency_var = tk.StringVar(value="")
         self.stats_latency_pct_var = tk.StringVar(value="")
         self.stats_setup_var = tk.StringVar(value="")
+        self.stats_min_pass_var = tk.StringVar(value="")
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -1926,6 +1933,9 @@ class LinkBudgetApp:
              "on ground, e.g. 60."),
             ("Within [% of data]", self.stats_latency_pct_var,
              "Share of the downloaded data that must meet the latency requirement, e.g. 90. Empty: 100."),
+            ("Min Pass Duration [min]", self.stats_min_pass_var,
+             "Contacts (usable minutes of one satellite over one station) shorter than this are not used: "
+             "too short to be worth scheduling (acquisition, lock, start of the dump). Empty: 0, all used."),
             ("Antenna Setup [min]", self.stats_setup_var,
              "Time to configure an antenna for another satellite (whole constellation): after a pass the "
              "antenna cannot take a different satellite for this long. Empty: 0."),
@@ -1973,6 +1983,17 @@ class LinkBudgetApp:
             "For a custom-orbit mission with several satellites (planes × satellites per plane): all "
             "satellites together. Each station tracks one satellite at a time; when several are in view, "
             "the one with more data on board is served and the others wait (conflict).",
+        )
+        self.stats_pass_end_var = tk.BooleanVar(value=False)
+        pass_end_check = ttk.Checkbutton(
+            station_box, text="Latency at end of pass", variable=self.stats_pass_end_var
+        )
+        pass_end_check.pack(anchor="w", pady=(2, 0))
+        _add_tooltip(
+            pass_end_check,
+            "Checked: the data downloaded during a pass count as on ground at the end of that pass, when the "
+            "dump is complete and a product can be processed (the usual convention for product timeliness). "
+            "Unchecked: each bit counts as on ground when it comes down. Saved in the parameters file.",
         )
         self.stats_backup_var = tk.BooleanVar(value=False)
         backup_check = ttk.Checkbutton(
@@ -2183,6 +2204,9 @@ class LinkBudgetApp:
         setup_min = _number(self.stats_setup_var, "Antenna Setup [min]") or 0.0
         if setup_min < 0:
             raise ValueError("The antenna setup time must be positive.")
+        min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
+        if min_pass < 0:
+            raise ValueError("The minimum pass duration must be positive.")
         inputs["link"] = link
         inputs["budget"] = {
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
@@ -2192,6 +2216,7 @@ class LinkBudgetApp:
             "generated_bps": sum(given.values()) * 1e3 if given else None,
             "flows_kbps": given,
             "setup_s": setup_min * 60.0,
+            "min_pass_s": min_pass * 60.0,
         }
         return inputs
 
@@ -2242,6 +2267,7 @@ class LinkBudgetApp:
         state = {"done": 0, "total": inputs["days"]}
         use_backups = self.stats_backup_var.get()  # read here: Tk variables stay in the main thread
         inputs["use_backups"] = use_backups
+        inputs["latency_at_pass_end"] = self.stats_pass_end_var.get()
         names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
@@ -2256,10 +2282,15 @@ class LinkBudgetApp:
                 for k in range(inputs["days"]):
                     days.append(day_samples(link_core.utc_midnight(inputs["start"] + timedelta(days=k))))
                     _progress(k + 1, inputs["days"])
+                if budget and budget["min_pass_s"] > 0:
+                    days = pass_statistics.drop_short_contacts(
+                        days, step_s, budget["min_pass_s"], budget["required_margin"]
+                    )
                 kwargs = dict(
                     info_bitrate_bps=budget["info_bitrate_bps"] if budget else None,
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
+                    latency_at_pass_end=inputs["latency_at_pass_end"],
                 )
                 # One antenna per site, the others backups, unless the backups are used too.
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
@@ -2513,7 +2544,78 @@ class LinkBudgetApp:
             ax_time.legend(handles=handles, fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0),
                            ncol=len(handles), frameon=False, borderaxespad=0.2, labelcolor=ink["secondary"])
 
-        # 2. Data on board over time (memory model), else minutes per day.
+        n_days = max(1, len(result.days))
+
+        def _sat_and_station(p):
+            """(satellite, first station) of a pass."""
+            if constellation:
+                sat, _, stations = p.stations.partition(": ")
+            else:
+                sat, stations = "SAT", p.stations
+            return sat, (stations.split(" + ")[0] if stations else "")
+
+        def _gaps_panel(ax):
+            # Time between two contacts of the same satellite (its revisit).
+            by_sat: dict = {}
+            for p in passes:
+                by_sat.setdefault(_sat_and_station(p)[0], []).append(p)
+            gaps = []
+            for sat_passes in by_sat.values():
+                sat_passes.sort(key=lambda p: p.start)
+                gaps += [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(sat_passes, sat_passes[1:])]
+            if gaps:
+                ax.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=series[0], edgecolor="white")
+                worst = max(gaps)
+                ax.axvline(worst, color=ink["muted"], linestyle="--", linewidth=1)
+                ax.annotate(f"longest {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
+                            xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
+                            color=ink["primary"])
+                ax.set_xlim(left=0)
+            else:
+                ax.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
+                        transform=ax.transAxes, fontsize=8, color=ink["secondary"])
+            _style(ax, "Gaps between contacts" + (" of each satellite" if constellation else ""),
+                   "count", "gap [min]")
+            ax.grid(False, axis="x")
+
+        def _station_split_panel(ax):
+            # Contact minutes per satellite (constellation) or per day, split by station.
+            if constellation:
+                rows_ = [r["satellite"] for r in result.satellites]
+                key = lambda p: _sat_and_station(p)[0]  # noqa: E731
+                scale = 1.0 / n_days
+                unit, title_ = "min/day", "Contact time by station"
+            else:
+                rows_ = [f"{d.date:%d %b}" for d in result.days]
+                key = lambda p: f"{p.start:%d %b}"  # noqa: E731
+                scale = 1.0
+                unit, title_ = "min", "Contact time by station"
+            minutes = {(row, st): 0.0 for row in rows_ for st in station_color}
+            for p in passes:
+                row, st = key(p), _sat_and_station(p)[1]
+                if (row, st) in minutes:
+                    minutes[(row, st)] += p.contact_min * scale
+            y = np.arange(len(rows_))
+            left = np.zeros(len(rows_))
+            for st in [st for st in station_color if any(minutes[(r, st)] for r in rows_)]:
+                values = np.array([minutes[(r, st)] for r in rows_])
+                ax.barh(y, values, 0.6, left=left, color=station_color[st], label=st,
+                        edgecolor="white", linewidth=1)
+                left += values
+            if constellation:
+                waiting = np.array([r["conflict_min_per_day"] for r in result.satellites])
+                if waiting.any():
+                    ax.barh(y, waiting, 0.6, left=left, color=ink["muted"], label="Waiting (stations busy)",
+                            edgecolor="white", linewidth=1)
+            ax.set_yticks(y)
+            ax.set_yticklabels(rows_)
+            ax.invert_yaxis()
+            ax.legend(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=3, frameon=False,
+                      labelcolor=ink["secondary"])
+            _style(ax, title_, xlabel=unit)
+            ax.grid(False, axis="y")
+
+        # 2-3. With the memory model: data on board and latency; without it: gaps and station split.
         if result.on_board_series is not None:
             times, on_board = result.on_board_series
             ax_left.plot(times, on_board, color=series[0], linewidth=1.2)
@@ -2530,16 +2632,8 @@ class LinkBudgetApp:
             ax_left.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
             _style(ax_left, "Data on board" + (" (all satellites)" if constellation else ""), "MB")
         else:
-            x = np.arange(len(result.days))
-            minutes = [d.usable_min if budget and d.usable_min is not None else d.contact_min for d in result.days]
-            ax_left.bar(x, minutes, 0.6, color=series[0])
-            step = max(1, int(np.ceil(len(x) / 12)))
-            ax_left.set_xticks(x[::step])
-            ax_left.set_xticklabels([f"{d.date:%d %b}" for d in result.days][::step])
-            _style(ax_left, ("Usable" if budget else "Contact") + " minutes per day", "min/day")
-            ax_left.grid(False, axis="x")
+            _gaps_panel(ax_left)
 
-        # 3. Latency of the data; without it the time per satellite or the gaps.
         if result.latency_chunks:
             top = max(hi for _bits, _lo, hi in result.latency_chunks) / 60.0
             grid_min = np.linspace(0.0, top, 200)
@@ -2562,36 +2656,8 @@ class LinkBudgetApp:
             ax_right.set_ylim(0, 102)
             ax_right.set_xlim(0, top)
             _style(ax_right, "Data latency (share of the data on ground)", "% of data", "latency [min]")
-        elif constellation:
-            sats = result.satellites
-            y = np.arange(len(sats))
-            served = [r["served_min_per_day"] for r in sats]
-            waiting = [r["conflict_min_per_day"] for r in sats]
-            ax_right.barh(y, served, 0.6, color=series[0], label="Served")
-            ax_right.barh(y, waiting, 0.6, left=served, color=series[1], label="Waiting (stations busy)",
-                          edgecolor="white", linewidth=1)
-            ax_right.set_yticks(y)
-            ax_right.set_yticklabels([r["satellite"] for r in sats])
-            ax_right.invert_yaxis()
-            ax_right.legend(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
-                            labelcolor=ink["secondary"])
-            _style(ax_right, "Time per satellite", xlabel="min/day")
-            ax_right.grid(False, axis="y")
         else:
-            gaps = [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(passes, passes[1:])]
-            if gaps:
-                ax_right.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=series[0], edgecolor="white")
-                worst = max(gaps)
-                ax_right.axvline(worst, color=ink["muted"], linestyle="--", linewidth=1)
-                ax_right.annotate(f"longest {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
-                                  xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
-                                  color=ink["primary"])
-                ax_right.set_xlim(left=0)
-            else:
-                ax_right.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
-                              transform=ax_right.transAxes, fontsize=8, color=ink["secondary"])
-            _style(ax_right, "Gaps between contacts", "count", "gap [min]")
-            ax_right.grid(False, axis="x")
+            _station_split_panel(ax_right)
 
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
@@ -2627,6 +2693,9 @@ class LinkBudgetApp:
             if budget["latency_requirement"]:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
+            rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
+            rows.append(("Latency counted", "at the end of each pass (dump complete)"
+                         if inputs.get("latency_at_pass_end") else "when each bit comes down"))
             if inputs["constellation"]:
                 rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
         else:
@@ -5247,11 +5316,13 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
-            try:
-                if self.stats_setup_var.get().strip():
-                    panel_values["antenna_setup_min"] = float(self.stats_setup_var.get())
-            except ValueError:
-                pass
+            for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var)):
+                try:
+                    if var.get().strip():
+                        panel_values[key] = float(var.get())
+                except ValueError:
+                    pass
+            panel_values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
             network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
             if network:
                 panel_values["statistics_stations"] = network

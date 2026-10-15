@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+- Statistics: Latency at end of pass (lbtool.py --latency-at-pass-end): the data of a pass count as on ground when the dump is complete, the convention for product timeliness; on for EPS-Sterna (latency_at_pass_end).
+- Fix: the on-board data rates and the latency requirement of a mission are cleared when another mission without them is selected.
+- EPS-Sterna: minimum elevation 3° in the mission parameters (AWS: 5°); lbtool.py takes it from the mission parameters unless --min-elevation is given.
+- EPS-Sterna: minimum SDA pass duration 4.7 min in the mission parameters.
+- Statistics: minimum pass duration (Min Pass Duration [min], lbtool.py --min-pass): shorter contacts are not used.
+- EPS-Sterna: 64 kbps generated on board (Instrument Data) in the mission parameters.
+- Validation: EPS-Sterna data latency against a reference table (validation/eps_sterna_latency.md): Svalbard + Punta Arenas within 1-4 min.
+- Statistics plots without on-board data: revisit gaps of each satellite and contact time by station.
+
 ## 1.2.0
 
 ### Constellation

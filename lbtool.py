@@ -106,6 +106,13 @@ def _stations(names: str, params) -> list[link_core.Station]:
     return result
 
 
+def _min_elevation(args, params) -> float:
+    if args.min_elevation is not None:
+        return args.min_elevation
+    value = (params or {}).get("min_elevation_deg")
+    return float(value) if value is not None else calculations.MIN_ELEVATION_DEG
+
+
 def cmd_missions(_args) -> None:
     for sat in _catalogue().satellites:
         print(sat.label)
@@ -116,7 +123,7 @@ def cmd_passes(args) -> None:
     _sat, params, tle = _mission(args.mission, day, args.plane, args.download, args.sat)
     link = _link(params, args)
     (station,) = _stations(args.station, params)
-    analysis = link_core.PassAnalysis(tle, station, link, args.min_elevation)
+    analysis = link_core.PassAnalysis(tle, station, link, _min_elevation(args, params))
     frame = analysis.day(link_core.utc_midnight(day))
     contacts = analysis.contacts(frame)
     if link:
@@ -159,6 +166,7 @@ def cmd_statistics(args) -> None:
             min_margin_db=float(margin or 0.0),
             generated_bps=sum(rates) * 1e3 if rates else None,
             latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
+            latency_at_pass_end=bool(args.latency_at_pass_end or (params or {}).get("latency_at_pass_end")),
         )
     satellites = [("SAT", tle)]
     if args.constellation:
@@ -167,7 +175,7 @@ def cmd_statistics(args) -> None:
             raise SystemExit("--constellation needs a custom-orbit mission (e.g. EPS-Sterna).")
         satellites = link_core.constellation_tles(orbit, link_core.utc_midnight(start), _sat.name)
     analyses = {
-        name: [link_core.PassAnalysis(lines, st, link, args.min_elevation) for st in stations]
+        name: [link_core.PassAnalysis(lines, st, link, _min_elevation(args, params)) for st in stations]
         for name, lines in satellites
     }
 
@@ -188,6 +196,9 @@ def cmd_statistics(args) -> None:
     for k in range(args.days):
         days.append(day_samples(link_core.utc_midnight(start + timedelta(days=k))))
         print(f"\r{k + 1}/{args.days} days", end="", file=sys.stderr, flush=True)
+    if link and (args.min_pass or 0) > 0:
+        days = pass_statistics.drop_short_contacts(days, link_core.STEP_S, args.min_pass * 60.0,
+                                                   budget_kwargs["min_margin_db"])
     if args.constellation and link:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
         result = pass_statistics.simulate_constellation(
@@ -231,8 +242,9 @@ def main(argv=None) -> None:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--mission", required=True, help="mission name in satellites.json, e.g. AWS")
-    common.add_argument("--min-elevation", type=float, default=calculations.MIN_ELEVATION_DEG,
-                        help="minimum elevation of a contact [deg] (default 5)")
+    common.add_argument("--min-elevation", type=float,
+                        help="minimum elevation of a contact [deg] (default: min_elevation_deg of the mission "
+                             "parameters, else 5)")
     common.add_argument("--plane", help="LTAN hh:mm of the orbital plane (custom-orbit missions)")
     common.add_argument("--sat", type=int, default=1, help="satellite number in the plane (custom-orbit missions)")
     common.add_argument("-o", "--output", help="CSV file to write")
@@ -258,6 +270,11 @@ def main(argv=None) -> None:
     stats.add_argument("--backup-antennas", action="store_true",
                        help="with --constellation: every antenna of a station serves a satellite at the same "
                             "time (default: one antenna per site, the others backups)")
+    stats.add_argument("--latency-at-pass-end", action="store_true",
+                       help="data on ground at the end of their pass (dump complete); default: the mission "
+                            "parameters' latency_at_pass_end")
+    stats.add_argument("--min-pass", type=float,
+                       help="contacts shorter than this are not used [min] (default 0: all)")
     stats.add_argument("--setup", type=float,
                        help="with --constellation: antenna setup time between satellites [min] "
                             "(default: antenna_setup_min of the mission parameters)")
