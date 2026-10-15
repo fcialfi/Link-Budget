@@ -173,3 +173,15 @@ def test_station_own_gt_replaces_the_scaled_mission_gt(params):
     low = frame.loc[frame["Visible"]].iloc[0]
     # Near 5° the G/T is close to the station's own value (minus the radome).
     assert low["G/T GS (dB/K)"] == pytest.approx(8.0 - 0.25, abs=0.2)
+
+
+def test_constellation_with_extra_satellites():
+    orbit = {"altitude_km": 595.6, "ltan": ["15:30", "19:30"], "satellites_per_plane": 2, "phasing_deg": 90.0,
+             "extra_satellites": ["19:30@45", "02:00@10"]}
+    members = link_core.constellation_members(orbit)
+    assert members == [("15:30", 1, 0.0), ("15:30", 2, 180.0), ("19:30", 1, 90.0), ("19:30", 2, 270.0),
+                       ("19:30", 3, 45.0), ("02:00", 1, 10.0)]
+    sats = link_core.constellation_tles(orbit, DAY, "TEST")
+    assert [name for name, _ in sats][-2:] == ["TEST 19:30 #3", "TEST 02:00 #1"]
+    with pytest.raises(ValueError):
+        link_core.constellation_members(dict(orbit, extra_satellites=["19:30"]))

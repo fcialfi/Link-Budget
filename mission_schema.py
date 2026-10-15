@@ -20,6 +20,8 @@ SCHEMA: list[tuple[str, tuple[str, ...], str, str, str, str]] = [
     ("Orbit", ("orbit", "satellites_per_plane"), "Satellites per plane", "", "int", "Evenly spaced in the plane."),
     ("Orbit", ("orbit", "phasing_deg"), "Phasing between planes", "deg", "float",
      "Shift of the argument of latitude from one plane to the next."),
+    ("Orbit", ("orbit", "extra_satellites"), "Extra satellites", "LTAN@deg", "list",
+     "Single satellites added to the regular ones, e.g. 19:30@120 (plane, argument of latitude at epoch)."),
     ("Downlink", ("frequency_ghz",), "Frequency", "GHz", "float", "Downlink carrier frequency."),
     ("Downlink", ("eirp_sat_dbw",), "EIRP SAT", "dBW", "float", "Satellite EIRP (when not from the Tx chain)."),
     ("Downlink", ("bitrate_mbps",), "Coded bit rate", "Mbps", "float", "Channel bit rate, coding included."),
@@ -35,6 +37,7 @@ SCHEMA: list[tuple[str, tuple[str, ...], str, str, str, str]] = [
     ("Ground station", ("gt_ref_elevation_deg",), "G/T reference elevation", "deg", "float", "Elevation of the G/T GS."),
     ("Ground station", ("tsys_ref_k",), "System noise temperature", "K", "float", "At the G/T reference elevation, clear sky."),
     ("Ground station", ("radome_loss_db",), "Radome loss", "dB", "float", "Subtracted from the G/T."),
+    ("Ground station", ("sun_noise",), "Sun noise", "", "bool", "Sun in the antenna beam along the passes; empty: on."),
     ("Ground station", ("solar_flux_sfu",), "Solar flux", "sfu", "float", "For the Sun noise; empty: quiet Sun."),
     ("Ground station", ("antenna_diameter_m",), "Antenna diameter (default)", "m", "float",
      "For a station without a diameter in the station catalogue."),
@@ -161,3 +164,36 @@ def set_path(payload: dict, path: tuple[str, ...], value: Optional[Any]) -> None
         node.pop(path[-1], None)
     else:
         node[path[-1]] = value
+
+
+def standardize(payload: dict, custom_orbit: bool) -> dict:
+    """The same parameters with every key of the schema, in the schema order.
+
+    A key the mission does not use is written as null, so every
+    parameters.json shows the same keys and where to fill them (e.g. the
+    instrument data rate). The orbit section only for a custom-orbit mission.
+    The static link budget sections and any other key are kept as they are,
+    after the schema keys.
+    """
+    result: dict = {}
+    for _group, path, _label, _unit, _kind, _description in SCHEMA:
+        if path[0] == "orbit" and not custom_orbit and "orbit" not in payload:
+            continue
+        set_path_keep(result, path, get_path(payload, path))
+    for key, value in payload.items():
+        if key not in result:
+            result[key] = value
+        elif isinstance(value, dict) and isinstance(result[key], dict):
+            for sub, sub_value in value.items():  # keys of a schema section not in the schema
+                result[key].setdefault(sub, sub_value)
+    return result
+
+
+def set_path_keep(payload: dict, path: tuple[str, ...], value: Any) -> None:
+    """Set the value at ``path`` (None included), creating the sections it needs."""
+    node = payload
+    for key in path[:-1]:
+        if not isinstance(node.get(key), dict):
+            node[key] = {}
+        node = node[key]
+    node[path[-1]] = value

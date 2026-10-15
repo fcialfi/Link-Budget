@@ -1,5 +1,6 @@
 {
   "project_name": "EPS-Sterna",
+  "norad_id": null,
   "orbit": {
     "altitude_km": 595.6,
     "eccentricity": 0.001214,
@@ -11,33 +12,55 @@
       "23:30"
     ],
     "satellites_per_plane": 2,
-    "phasing_deg": 60.0
+    "phasing_deg": 60.0,
+    "extra_satellites": null
   },
-  "eirp_sat_dbw": 4.51,
-  "eirp_gs_dbw": 30.0,
   "frequency_ghz": 1.707,
-  "uplink_frequency_ghz": 2.0535,
+  "eirp_sat_dbw": 4.51,
+  "bitrate_mbps": 3.57,
+  "overhead": 2.31493,
+  "rolloff": 1.0,
+  "spectral_efficiency_bpshz": 2.0,
+  "demod_loss_db": 1.0,
+  "link_availability_pct": 99.99,
+  "other_attenuations_db": 0.0,
   "c_io_dbhz": null,
   "gt_gs_dbk": 9.9,
   "gt_ref_diameter_m": 3.0,
   "gt_ref_elevation_deg": 5.0,
   "tsys_ref_k": 120.0,
   "radome_loss_db": 0.25,
-  "gt_sat_dbk": 0.5,
+  "sun_noise": null,
+  "solar_flux_sfu": null,
   "antenna_diameter_m": 3.0,
-  "link_availability_pct": 99.99,
-  "other_attenuations_db": 0.0,
-  "uplink_other_attenuations_db": 0.5,
-  "bitrate_mbps": 3.57,
-  "rolloff": 1.0,
-  "demod_loss_db": 1.0,
-  "demod_loss_sat_db": 1.0,
-  "overhead": 2.31493,
-  "spectral_efficiency_bpshz": 2.0,
+  "min_elevation_deg": 3.0,
+  "uplink_frequency_ghz": 2.0535,
+  "eirp_gs_dbw": 30.0,
+  "gt_sat_dbk": 0.5,
   "uplink_bitrate_mbps": 1.0,
-  "uplink_rolloff": 0.35,
   "uplink_overhead": 1.1,
+  "uplink_rolloff": 0.35,
   "uplink_spectral_efficiency_bpshz": 1.5,
+  "demod_loss_sat_db": 1.0,
+  "uplink_other_attenuations_db": 0.5,
+  "downlink_data_kbps": {
+    "instruments": 55.076,
+    "hktm": 3.105,
+    "other": 1.216,
+    "realtime": 4.616
+  },
+  "memory_gb": 4.0,
+  "min_pass_min": 4.7,
+  "antenna_setup_min": 0.0,
+  "latency_at_pass_end": true,
+  "latency_requirement": {
+    "minutes": null,
+    "percent": null
+  },
+  "statistics_stations": [
+    "Svalbard",
+    "Punta Arenas"
+  ],
   "fixed_elevation_downlink": {
     "elevation_deg": 3.0,
     "sat_altitude_km": 628.0,
@@ -86,20 +109,5 @@
     "required_margin_db": 3.0,
     "scintillation": false,
     "gt_from_pattern": true
-  },
-  "statistics_stations": [
-    "Svalbard",
-    "Punta Arenas"
-  ],
-  "antenna_setup_min": 0.0,
-  "downlink_data_kbps": {
-    "instruments": 55.076,
-    "hktm": 3.105,
-    "other": 1.216,
-    "realtime": 4.616
-  },
-  "min_pass_min": 4.7,
-  "min_elevation_deg": 3.0,
-  "latency_at_pass_end": true,
-  "memory_gb": 4.0
+  }
 }
