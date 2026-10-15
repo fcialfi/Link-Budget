@@ -2513,7 +2513,78 @@ class LinkBudgetApp:
             ax_time.legend(handles=handles, fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0),
                            ncol=len(handles), frameon=False, borderaxespad=0.2, labelcolor=ink["secondary"])
 
-        # 2. Data on board over time (memory model), else minutes per day.
+        n_days = max(1, len(result.days))
+
+        def _sat_and_station(p):
+            """(satellite, first station) of a pass."""
+            if constellation:
+                sat, _, stations = p.stations.partition(": ")
+            else:
+                sat, stations = "SAT", p.stations
+            return sat, (stations.split(" + ")[0] if stations else "")
+
+        def _gaps_panel(ax):
+            # Time between two contacts of the same satellite (its revisit).
+            by_sat: dict = {}
+            for p in passes:
+                by_sat.setdefault(_sat_and_station(p)[0], []).append(p)
+            gaps = []
+            for sat_passes in by_sat.values():
+                sat_passes.sort(key=lambda p: p.start)
+                gaps += [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(sat_passes, sat_passes[1:])]
+            if gaps:
+                ax.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=series[0], edgecolor="white")
+                worst = max(gaps)
+                ax.axvline(worst, color=ink["muted"], linestyle="--", linewidth=1)
+                ax.annotate(f"longest {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
+                            xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
+                            color=ink["primary"])
+                ax.set_xlim(left=0)
+            else:
+                ax.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
+                        transform=ax.transAxes, fontsize=8, color=ink["secondary"])
+            _style(ax, "Gaps between contacts" + (" of each satellite" if constellation else ""),
+                   "count", "gap [min]")
+            ax.grid(False, axis="x")
+
+        def _station_split_panel(ax):
+            # Contact minutes per satellite (constellation) or per day, split by station.
+            if constellation:
+                rows_ = [r["satellite"] for r in result.satellites]
+                key = lambda p: _sat_and_station(p)[0]  # noqa: E731
+                scale = 1.0 / n_days
+                unit, title_ = "min/day", "Contact time by station"
+            else:
+                rows_ = [f"{d.date:%d %b}" for d in result.days]
+                key = lambda p: f"{p.start:%d %b}"  # noqa: E731
+                scale = 1.0
+                unit, title_ = "min", "Contact time by station"
+            minutes = {(row, st): 0.0 for row in rows_ for st in station_color}
+            for p in passes:
+                row, st = key(p), _sat_and_station(p)[1]
+                if (row, st) in minutes:
+                    minutes[(row, st)] += p.contact_min * scale
+            y = np.arange(len(rows_))
+            left = np.zeros(len(rows_))
+            for st in [st for st in station_color if any(minutes[(r, st)] for r in rows_)]:
+                values = np.array([minutes[(r, st)] for r in rows_])
+                ax.barh(y, values, 0.6, left=left, color=station_color[st], label=st,
+                        edgecolor="white", linewidth=1)
+                left += values
+            if constellation:
+                waiting = np.array([r["conflict_min_per_day"] for r in result.satellites])
+                if waiting.any():
+                    ax.barh(y, waiting, 0.6, left=left, color=ink["muted"], label="Waiting (stations busy)",
+                            edgecolor="white", linewidth=1)
+            ax.set_yticks(y)
+            ax.set_yticklabels(rows_)
+            ax.invert_yaxis()
+            ax.legend(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=3, frameon=False,
+                      labelcolor=ink["secondary"])
+            _style(ax, title_, xlabel=unit)
+            ax.grid(False, axis="y")
+
+        # 2-3. With the memory model: data on board and latency; without it: gaps and station split.
         if result.on_board_series is not None:
             times, on_board = result.on_board_series
             ax_left.plot(times, on_board, color=series[0], linewidth=1.2)
@@ -2530,16 +2601,8 @@ class LinkBudgetApp:
             ax_left.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
             _style(ax_left, "Data on board" + (" (all satellites)" if constellation else ""), "MB")
         else:
-            x = np.arange(len(result.days))
-            minutes = [d.usable_min if budget and d.usable_min is not None else d.contact_min for d in result.days]
-            ax_left.bar(x, minutes, 0.6, color=series[0])
-            step = max(1, int(np.ceil(len(x) / 12)))
-            ax_left.set_xticks(x[::step])
-            ax_left.set_xticklabels([f"{d.date:%d %b}" for d in result.days][::step])
-            _style(ax_left, ("Usable" if budget else "Contact") + " minutes per day", "min/day")
-            ax_left.grid(False, axis="x")
+            _gaps_panel(ax_left)
 
-        # 3. Latency of the data; without it the time per satellite or the gaps.
         if result.latency_chunks:
             top = max(hi for _bits, _lo, hi in result.latency_chunks) / 60.0
             grid_min = np.linspace(0.0, top, 200)
@@ -2562,36 +2625,8 @@ class LinkBudgetApp:
             ax_right.set_ylim(0, 102)
             ax_right.set_xlim(0, top)
             _style(ax_right, "Data latency (share of the data on ground)", "% of data", "latency [min]")
-        elif constellation:
-            sats = result.satellites
-            y = np.arange(len(sats))
-            served = [r["served_min_per_day"] for r in sats]
-            waiting = [r["conflict_min_per_day"] for r in sats]
-            ax_right.barh(y, served, 0.6, color=series[0], label="Served")
-            ax_right.barh(y, waiting, 0.6, left=served, color=series[1], label="Waiting (stations busy)",
-                          edgecolor="white", linewidth=1)
-            ax_right.set_yticks(y)
-            ax_right.set_yticklabels([r["satellite"] for r in sats])
-            ax_right.invert_yaxis()
-            ax_right.legend(fontsize=7, loc="lower right", bbox_to_anchor=(1.0, 1.0), ncol=2, frameon=False,
-                            labelcolor=ink["secondary"])
-            _style(ax_right, "Time per satellite", xlabel="min/day")
-            ax_right.grid(False, axis="y")
         else:
-            gaps = [(b.start - a.end).total_seconds() / 60.0 for a, b in zip(passes, passes[1:])]
-            if gaps:
-                ax_right.hist(gaps, bins=min(30, max(5, len(gaps) // 4)), color=series[0], edgecolor="white")
-                worst = max(gaps)
-                ax_right.axvline(worst, color=ink["muted"], linestyle="--", linewidth=1)
-                ax_right.annotate(f"longest {worst:.0f} min", (worst, 1), xycoords=("data", "axes fraction"),
-                                  xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7,
-                                  color=ink["primary"])
-                ax_right.set_xlim(left=0)
-            else:
-                ax_right.text(0.5, 0.5, "Fewer than two contacts", ha="center", va="center",
-                              transform=ax_right.transAxes, fontsize=8, color=ink["secondary"])
-            _style(ax_right, "Gaps between contacts", "count", "gap [min]")
-            ax_right.grid(False, axis="x")
+            _station_split_panel(ax_right)
 
         canvas = FigureCanvasTkAgg(fig, master=self.stats_plot_frame)
         canvas.draw()
