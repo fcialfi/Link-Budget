@@ -190,7 +190,9 @@ def cmd_statistics(args) -> None:
         print(f"\r{k + 1}/{args.days} days", end="", file=sys.stderr, flush=True)
     if args.constellation and link:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
-        result = pass_statistics.simulate_constellation(days, link_core.STEP_S, **kwargs)
+        result = pass_statistics.simulate_constellation(
+            days, link_core.STEP_S, antennas=dict(calculations.GROUND_STATION_ANTENNAS), **kwargs
+        )
     else:
         result = pass_statistics.aggregate(
             [pass_statistics.combine_stations(day["SAT"]) for day in days], link_core.STEP_S, **budget_kwargs

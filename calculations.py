@@ -112,8 +112,17 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
 
 def _read_ground_stations(
     file_path: str | None = None,
+    gt_values: Optional[dict] = None,
+    antennas: Optional[dict] = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[str, float]]:
-    """Stations and antenna diameters (when given) of a ground stations file."""
+    """Stations and antenna diameters (when given) of a ground stations file.
+
+    Optional columns after the diameter: the station's own G/T (dB/K), the
+    elevation it refers to (deg, clear sky), the system noise temperature
+    (K) and the number of antennas; filled into ``gt_values`` as {name:
+    {"gt_dbk", "ref_elevation_deg", "tsys_k"}} (None for an empty field) and
+    ``antennas`` as {name: count}.
+    """
 
     # Default to the current GROUND_STATIONS_FILE, which the GUI may have
     # updated at runtime via reload_ground_stations().
@@ -131,17 +140,27 @@ def _read_ground_stations(
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) not in (4, 5):
+            if not 4 <= len(parts) <= 9:
                 raise ValueError(
-                    f"Line {line_no} in {file_path} must have 4 or 5 comma-separated fields"
+                    f"Line {line_no} in {file_path} must have 4 to 9 comma-separated fields: name, latitude, "
+                    "longitude, altitude [, diameter, G/T, G/T elevation, Tsys, antennas]"
                 )
             name, lat_str, lon_str, alt_str = parts[:4]
             try:
                 lat = float(lat_str)
                 lon = float(lon_str)
                 alt = float(alt_str)
-                if len(parts) == 5 and parts[4]:
+                if len(parts) >= 5 and parts[4]:
                     diameters[name] = float(parts[4])
+                extra = ([float(v) if v else None for v in parts[5:8]] + [None, None, None])[:3]
+                if gt_values is not None and extra[0] is not None:
+                    gt_values[name] = {"gt_dbk": extra[0], "ref_elevation_deg": extra[1], "tsys_k": extra[2]}
+                if len(parts) == 9 and parts[8]:
+                    count = int(parts[8])
+                    if count < 1:
+                        raise ValueError("the number of antennas must be at least 1")
+                    if antennas is not None:
+                        antennas[name] = count
             except ValueError as exc:
                 raise ValueError(
                     f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
@@ -161,20 +180,31 @@ def reload_ground_stations(file_path: str) -> dict[str, tuple[float, float, floa
     other modules (e.g. the GUI) immediately see the refreshed catalogue.
     """
 
-    global GROUND_STATIONS_FILE, GROUND_STATIONS, GROUND_STATION_DIAMETERS
+    global GROUND_STATIONS_FILE, GROUND_STATIONS, GROUND_STATION_DIAMETERS, GROUND_STATION_GT
 
     file_path = os.path.abspath(file_path)
-    stations, diameters = _read_ground_stations(file_path)
+    gt_values: dict = {}
+    counts: dict = {}
+    stations, diameters = _read_ground_stations(file_path, gt_values, counts)
     GROUND_STATIONS_FILE = file_path
     GROUND_STATIONS = stations
     GROUND_STATION_DIAMETERS = diameters
+    GROUND_STATION_ANTENNAS.clear()
+    GROUND_STATION_ANTENNAS.update(counts)
+    GROUND_STATION_GT = gt_values
     return stations
 
 
 # Antenna diameter (m) of the stations whose catalogue line gives it.
 GROUND_STATION_DIAMETERS: dict[str, float] = {}
+# Own G/T of the stations whose catalogue line gives it (see _read_ground_stations).
+GROUND_STATION_GT: dict[str, dict] = {}
+# Number of antennas of the stations whose catalogue line gives it (default 1).
+GROUND_STATION_ANTENNAS: dict[str, int] = {}
 try:
-    GROUND_STATIONS, GROUND_STATION_DIAMETERS = _read_ground_stations()
+    GROUND_STATIONS, GROUND_STATION_DIAMETERS = _read_ground_stations(
+        gt_values=GROUND_STATION_GT, antennas=GROUND_STATION_ANTENNAS
+    )
 except Exception as exc:  # pragma: no cover - fallback for packaging/runtime errors
     print(f"Warning: using fallback ground stations: {exc}", file=sys.stderr)
     GROUND_STATIONS = {

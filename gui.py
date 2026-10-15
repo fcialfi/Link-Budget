@@ -1930,8 +1930,8 @@ class LinkBudgetApp:
 
         self.stats_station_table = _small_table(
             station_frame,
-            ("Station", "Served [min/day]", "Volume [MB/day]", "Busy [%]", "Contention [min/day]"),
-            (110, 110, 110, 70, 135),
+            ("Station", "Antennas", "Served [min/day]", "Volume [MB/day]", "Busy [%]", "Contention [min/day]"),
+            (110, 70, 110, 110, 70, 135),
         )
         self.stats_sat_table = _small_table(
             self.stats_sat_frame,
@@ -2144,9 +2144,10 @@ class LinkBudgetApp:
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
                 )
+                antennas = dict(calculations.GROUND_STATION_ANTENNAS)
                 if inputs["constellation"] and budget:
                     state["result"] = pass_statistics.simulate_constellation(
-                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
                     )
                 else:
                     combined = [pass_statistics.combine_stations(day["SAT"]) for day in days]
@@ -2156,7 +2157,7 @@ class LinkBudgetApp:
                     if budget:
                         # Use of each station of the network (one satellite: no conflicts).
                         state["result"].stations = pass_statistics.simulate_constellation(
-                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
                         ).stations
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
@@ -2270,7 +2271,8 @@ class LinkBudgetApp:
         for i, st in enumerate(getattr(result, "stations", []) or []):
             self.stats_station_table.insert(
                 "", "end", tags=("evenrow" if i % 2 == 0 else "oddrow",),
-                values=(st["station"], _fmt(st["served_min_per_day"]), _fmt(st["downloaded_mb_per_day"], 0),
+                values=(st["station"], st.get("antennas", 1), _fmt(st["served_min_per_day"]),
+                        _fmt(st["downloaded_mb_per_day"], 0),
                         _fmt(st["busy_pct"]), _fmt(st["contention_min_per_day"])),
             )
         for i, sat in enumerate(getattr(result, "satellites", []) or []):
@@ -2557,7 +2559,7 @@ class LinkBudgetApp:
         d_text = self.d_gs_entry.get().strip()
         d_gs = calculations.GROUND_STATION_DIAMETERS.get(gs_name) or (float(d_text) if d_text else 3.0)
         _path, mask = self._station_mask(gs_name)
-        return link_core.Station(gs_name, lat, lon, alt_m, d_gs=d_gs, mask=mask)
+        return link_core.Station(gs_name, lat, lon, alt_m, d_gs=d_gs, mask=mask, **link_core.station_gt_fields(gs_name))
 
     def _link_inputs(self) -> "link_core.LinkInputs":
         """The link budget inputs of the Downlink and Uplink tabs (and of the static tabs they use).
@@ -4769,6 +4771,21 @@ class LinkBudgetApp:
 
             info_bitrate_kbps = bitrate_mbps * 1000.0 / overhead if overhead else None
 
+            station_gt_model, station_gt_scaling = None, 0.0
+            if rx_is_ground_station:
+                # The station's own G/T (catalogue) or the G/T GS scaled with the diameter.
+                try:
+                    station = link_core.Station(gs_name, lat_gs, lon_gs, alt_gs_m, d_gs=d_gs,
+                                                **link_core.station_gt_fields(gs_name))
+                    station_gt_model = self._gt_model()
+                    if station.gt_dbk is not None:
+                        gt, station_gt_model = link_core.station_gt(station, gt, None, station_gt_model)
+                    else:
+                        station_gt_scaling = self._gt_scaling_db(d_gs)
+                except ValueError as exc:
+                    _input_error(exc)
+                    return
+
             try:
                 budget = calculate_fixed_elevation_link_budget(
                     freq=freq,
@@ -4790,8 +4807,8 @@ class LinkBudgetApp:
                     required_ebno=required_ebno,
                     ionospheric_s4_ref=iono_s4_ref,
                     ionospheric_s4_ref_freq_mhz=iono_s4_ref_freq,
-                    gt_model=self._gt_model() if rx_is_ground_station else None,
-                    gt_diameter_scaling_db=self._gt_scaling_db(d_gs) if rx_is_ground_station else 0.0,
+                    gt_model=station_gt_model if rx_is_ground_station else None,
+                    gt_diameter_scaling_db=station_gt_scaling if rx_is_ground_station else 0.0,
                     tx_power_w=tx_power_w,
                     antenna_circuit_loss_db=ant_circuit_loss_db,
                     vswr=vswr,

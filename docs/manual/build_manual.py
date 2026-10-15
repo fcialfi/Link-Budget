@@ -330,7 +330,8 @@ def content():
     story += TABLE([
         ["File", "Content"],
         ["license.key", "Licence of the installation (see 2.2). Required when the build checks licences."],
-        ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m), optional antenna diameter (m)."],
+        ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m); optional antenna "
+                                "diameter (m), own G/T, its elevation, Tsys and number of antennas."],
         ["satellites.json", "The satellites of the Satellite menu (chapter 4.1)."],
         ["missions\\<name>\\", "Per mission: parameters.json (project name, link budget parameters, static inputs; chapter "
                                  "9), antenna_pattern.txt and tle.txt (chapter 4.1)."],
@@ -517,7 +518,9 @@ def content():
         "the system figures (served minutes, conflicts, volume, memory, latency and requirement), the Per "
         "Satellite table the figures of each satellite, the Per Station table the use of each station "
         "(served minutes, volume, busy time, minutes with more than one satellite usable).",
-        "The <b>Per Station</b> table is also given for one satellite and several stations.",
+        "The <b>Per Station</b> table is also given for one satellite and several stations. A station with "
+        "several antennas (last column of ground_stations.txt) serves that many satellites at a time; Busy is the "
+        "share of its antenna time in use, Contention the minutes with more satellites usable than antennas.",
     ])
     story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
                  "requirement 90 % within 100 min.")
@@ -781,8 +784,16 @@ def content():
     story += TABLE([
         ["File", "Format"],
         ["tle.txt", "The two TLE lines (an optional name line before them is accepted)."],
-        ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m] and, optionally, antenna diameter [m]; "
-                                "lines starting with # are comments."],
+        ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m] and, "
+                                "optionally (fields may be left empty): antenna diameter [m]; the station's own "
+                                "measured G/T [dB/K, clear sky], which replaces the mission G/T GS scaled with the "
+                                "diameter; the elevation of that G/T [deg] (empty: the mission's G/T Reference "
+                                "Elevation, usually 5°: G/T values are normally given at 5°, clear sky; if it was "
+                                "measured at zenith instead, the low-elevation G/T is about 0.8 dB optimistic at "
+                                "L band); its system noise temperature [K] (empty: the mission's); the number of "
+                                "antennas (default 1), i.e. the satellites the station serves at the same time in "
+                                "the constellation statistics. E.g. Svalbard,78.2232,15.6267,10,3.0,,,,3. Lines "
+                                "starting with # are comments."],
         ["antenna_pattern.txt", "One point per line: angle from nadir [deg], gain [dBi], separated by a "
                                 "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "
                                 "used (66° from nadir at 3° and 628 km)."],

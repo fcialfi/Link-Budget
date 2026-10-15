@@ -47,7 +47,7 @@ def test_load_ground_stations_missing_file(tmp_path):
 def test_load_ground_stations_wrong_field_count(tmp_path):
     gs_file = tmp_path / "ground_stations.txt"
     gs_file.write_text("OnlyThreeFields, 1.0, 2.0\n")
-    with pytest.raises(ValueError, match="4 or 5 comma-separated fields"):
+    with pytest.raises(ValueError, match="4 to 9 comma-separated fields"):
         calculations.load_ground_stations(str(gs_file))
 
 
@@ -1208,3 +1208,20 @@ def test_sun_noise_model():
     assert on_axis == pytest.approx(t_quiet * 6.8e-5 * 10 ** 3.07 / (4 * np.pi), rel=0.01)
     assert calculations.sun_noise_temperature_k(0.0, -5.0, 30.7, 3.0, 1.707) == 0.0
     assert calculations.angular_separation_deg(10, 0, 10, 180) == pytest.approx(160.0)
+
+
+def test_ground_station_own_gt_and_antennas(tmp_path):
+    path = tmp_path / "stations.txt"
+    path.write_text(
+        "# comment\n"
+        "A,10,20,30\n"
+        "B,11,21,31,2.4,8.1,,135,2\n"
+        "C,12,22,32,,,,,3\n",
+        encoding="utf-8",
+    )
+    gt, antennas = {}, {}
+    stations, diameters = calculations._read_ground_stations(str(path), gt, antennas)
+    assert list(stations) == ["A", "B", "C"]
+    assert diameters == {"B": 2.4}
+    assert gt == {"B": {"gt_dbk": 8.1, "ref_elevation_deg": None, "tsys_k": 135.0}}
+    assert antennas == {"B": 2, "C": 3}

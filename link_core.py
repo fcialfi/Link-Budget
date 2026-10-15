@@ -39,6 +39,11 @@ class Station:
     d_gs: float = 3.0
     # Minimum elevation (deg) per azimuth, as (azimuths, elevations), or None.
     mask: Optional[tuple] = None
+    # The station's own G/T (dB/K, clear sky), the elevation it refers to and its
+    # system noise temperature (K); None: the mission's G/T scaled with the diameter.
+    gt_dbk: Optional[float] = None
+    gt_ref_elevation_deg: Optional[float] = None
+    tsys_k: Optional[float] = None
 
     @property
     def alt_km(self) -> float:
@@ -93,8 +98,33 @@ class LinkInputs:
         return self.bitrate_bps / self.overhead
 
     def gt_for(self, station: Station) -> float:
-        """G/T at the reference elevation of the station's antenna (diameter scaling)."""
-        return self.gt_gs + calculations.gt_diameter_scaling_db(station.d_gs, self.gt_ref_diameter_m)
+        """G/T at the reference elevation of the station's antenna (see :func:`station_gt`)."""
+        return station_gt(station, self.gt_gs, self.gt_ref_diameter_m, self.gt_model)[0]
+
+    def gt_model_for(self, station: Station) -> Optional[dict]:
+        """The G/T-versus-elevation inputs for ``station`` (see :func:`station_gt`)."""
+        return station_gt(station, self.gt_gs, self.gt_ref_diameter_m, self.gt_model)[1]
+
+
+def station_gt(
+    station: Station, gt_gs: float, gt_ref_diameter_m: Optional[float], gt_model: Optional[dict]
+) -> tuple[float, Optional[dict]]:
+    """(G/T at the reference elevation, G/T-versus-elevation inputs) of a station.
+
+    The station's own G/T when the catalogue gives it, with its reference
+    elevation and system noise temperature when given and the mission's
+    otherwise (a G/T is usually specified at 5°, clear sky); the radome loss
+    is the mission's. Without its own G/T: the mission's G/T GS scaled with
+    the diameter, 20 log10(D / D_ref).
+    """
+    if station.gt_dbk is None:
+        return gt_gs + calculations.gt_diameter_scaling_db(station.d_gs, gt_ref_diameter_m), gt_model
+    model = dict(gt_model or {"ref_elevation_deg": calculations.MIN_ELEVATION_DEG, "radome_loss_db": 0.0})
+    if station.gt_ref_elevation_deg is not None:
+        model["ref_elevation_deg"] = station.gt_ref_elevation_deg
+    if station.tsys_k is not None:
+        model["tsys_ref_k"] = station.tsys_k
+    return station.gt_dbk, (model if model.get("tsys_ref_k") else None)
 
 
 def _value(section: dict, key: str, default=None):
@@ -236,10 +266,10 @@ class PassAnalysis:
             )
             gt_ref = link.gt_for(st)
             tsys_grid = None
-            if link.gt_model is None:
+            model = link.gt_model_for(st)
+            if model is None:
                 gt_grid = np.full_like(attenuation, gt_ref)
             else:
-                model = link.gt_model
                 if model["tsys_ref_k"] <= 0:
                     raise ValueError("The system noise temperature must be greater than 0 K.")
                 sky_ref = calculations.gt_reference_sky_noise_k(
@@ -271,7 +301,7 @@ class PassAnalysis:
             f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(low, grid, attenuation):.3f} "
             f"at {low:g}° El, {attenuation[-1]:.3f} at 90° (per sample)\n"
         )
-        if self.link.gt_model is None:
+        if self.link.gt_model_for(self.station) is None:
             text += f"G/T GS {gt_grid[0]:g} dB/K at all elevations"
         else:
             text += (
@@ -279,7 +309,16 @@ class PassAnalysis:
                 f"{gt_grid[-1]:.2f} at 90°"
             )
         scaling = calculations.gt_diameter_scaling_db(self.station.d_gs, self.link.gt_ref_diameter_m)
-        if scaling:
+        if self.station.gt_dbk is not None:
+            model = self.link.gt_model_for(self.station) or {}
+            text += (
+                f" (station G/T {self.station.gt_dbk:g} dB/K at "
+                f"{model.get('ref_elevation_deg', calculations.MIN_ELEVATION_DEG):g}°"
+                + ("" if self.station.gt_ref_elevation_deg is not None else ", elevation assumed")
+                + (f", Tsys {model['tsys_ref_k']:g} K" if model.get("tsys_ref_k") else "")
+                + ")"
+            )
+        elif scaling:
             text += f" ({self.station.d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
         if self._sun_applies():
             flux = self.link.solar_flux_sfu
@@ -290,12 +329,12 @@ class PassAnalysis:
         return text
 
     def _sun_applies(self) -> bool:
-        return bool(self.link is not None and self.link.sun_noise and self.link.gt_model is not None)
+        return bool(self.link is not None and self.link.sun_noise and self.link.gt_model_for(self.station) is not None)
 
     def _sun_noise_k(self, separation_deg, sun_elevation_deg):
         """Noise temperature (K) the Sun adds to the station antenna."""
         link = self.link
-        peak_gain = link.gt_for(self.station) + 10 * np.log10(link.gt_model["tsys_ref_k"])
+        peak_gain = link.gt_for(self.station) + 10 * np.log10(link.gt_model_for(self.station)["tsys_ref_k"])
         return calculations.sun_noise_temperature_k(
             separation_deg, sun_elevation_deg, peak_gain, self.station.d_gs, link.freq_ghz, link.solar_flux_sfu
         )
@@ -515,7 +554,16 @@ def station_from_catalogue(name: str, default_diameter_m: float = 3.0) -> Statio
         name, lat, lon, alt_m,
         d_gs=calculations.GROUND_STATION_DIAMETERS.get(name, default_diameter_m),
         mask=calculations.load_horizon_mask(mask_path) if mask_path else None,
+        **station_gt_fields(name),
     )
+
+
+def station_gt_fields(name: str) -> dict:
+    """The station's own G/T fields of the catalogue (empty dict when it gives none)."""
+    own = calculations.GROUND_STATION_GT.get(name)
+    if not own:
+        return {}
+    return {"gt_dbk": own["gt_dbk"], "gt_ref_elevation_deg": own["ref_elevation_deg"], "tsys_k": own["tsys_k"]}
 
 
 def constellation_tles(orbit: dict, epoch: datetime, name: str) -> list[tuple[str, tuple[str, str]]]:
