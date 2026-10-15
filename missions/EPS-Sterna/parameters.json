@@ -94,8 +94,9 @@
   "antenna_setup_min": 0.0,
   "downlink_data_kbps": {
     "instruments": 55.076,
-    "hktm": null,
-    "other": null
+    "hktm": 3.105,
+    "other": 1.216,
+    "realtime": 4.616
   },
   "min_pass_min": 4.7,
   "min_elevation_deg": 3.0,
