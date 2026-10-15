@@ -511,7 +511,8 @@ def content():
         "<b>Antenna Setup</b> (min, whole constellation): time to configure an antenna for another satellite. "
         "After serving a satellite the antenna cannot take a different one for this long (the same satellite "
         "resumes at once); a satellite waiting for it counts as a conflict. Saved in the parameters file "
-        "(antenna_setup_min; 7 min for AWS and EPS-Sterna).",
+        "(antenna_setup_min; 0 by default: the EPS-Sterna requirement gives at most 7 min to configure a "
+        "station for a pass from scratch, a worst case; up to about 3 min it has no effect on SVL+PUN).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
