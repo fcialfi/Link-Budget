@@ -35,7 +35,7 @@ from version import APP_AUTHOR, APP_VERSION  # noqa: E402
 
 TITLE = "Satellite Link Budget Tool"
 SUBTITLE = "User Manual"
-ISSUE = "Issue 1.1"
+ISSUE = "Issue 1.2"
 
 # Colours of the application (MATLAB-like theme).
 HEADER = colors.HexColor("#1f2a36")
@@ -508,6 +508,11 @@ def content():
         "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
         "required time, the time within which the required share arrives, and whether the requirement is met. "
         "Saved in the parameters file (latency_requirement).",
+        "<b>Antenna Setup</b> (min, whole constellation): time to configure an antenna for another satellite. "
+        "After serving a satellite the antenna cannot take a different one for this long (the same satellite "
+        "resumes at once); a satellite waiting for it counts as a conflict. Saved in the parameters file "
+        "(antenna_setup_min; 0 by default: the EPS-Sterna requirement gives at most 7 min to configure a "
+        "station for a pass from scratch, a worst case; up to about 3 min it has no effect on SVL+PUN).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",
@@ -541,7 +546,9 @@ def content():
         "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "
         "gap, data on board) and each pass (times, stations, maximum elevation, minutes, capacity, downloaded "
         "volume, minimum margin; a pass with no usable minute is shown in orange). <b>Export CSV…</b> writes "
-        "the summary and both tables."))
+        "the summary and both tables. <b>Export PDF…</b> writes an A4 report: the verdict on the latency "
+        "requirement, the inputs used, the summary, the plots and the tables per station, satellite, day and "
+        "pass (the first 400 passes; all of them are in the CSV)."))
 
     # 5 -------------------------------------------------------------------
     story += H1("Downlink tab")

@@ -1,19 +1,31 @@
 # Changelog
 
-## Unreleased
-- Statistics of a whole constellation (custom orbit: planes × satellites per plane, phasing): shared stations tracking one satellite at a time, conflicts, per-satellite and per-station figures; also in lbtool.py (--constellation).
-- Statistics: use of each station of the network.
-- Statistics: latency requirement (share of the data on ground within a time).
-- Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes). lbtool.py: --sat.
-- Statistics plots redrawn: contact timeline (per day, or per satellite for a constellation) coloured by station, data on board over time, data latency with the requirement.
+## 1.2.0
+
+### Constellation
+- Statistics of a whole constellation (custom orbit: planes × satellites per plane, phasing): stations tracking one satellite per antenna, conflicts, per-satellite and per-station figures; also in lbtool.py (--constellation).
+- Orbit & Passes: Constellation row with editable planes (LTAN list), satellites per plane and phasing; choice of the satellite analysed (plane, sat #); Show Constellation (table, ground tracks, satellites in their planes) and 3D View with a time slider. lbtool.py: --sat.
+- EPS-Sterna: phasing 60° between the planes (the 6 satellites 60° apart).
+- Antenna setup time between satellites (Antenna Setup [min], lbtool.py --setup; 0 by default, 7 min is the requirement's worst case).
+
+### Ground stations
+- Own measured G/T (with its elevation and Tsys) and number of antennas per station in ground_stations.txt; one antenna per site is used, the others are backups, unless Use backup antennas (--backup-antennas) is checked.
+- Svalbard with 3 antennas; Punta Arenas (Ruta 9 Norte km 28, 2 antennas) added.
+- Statistics network per mission (statistics_stations): Svalbard + Punta Arenas for the global data of AWS and EPS-Sterna.
+
+### Link budget
 - Sun outage: Sun noise in the ground antenna beam along the passes (Sun position, dish pattern, solar flux), lowering G/T and Eb/No; Sun Separation and Sun Noise columns, passes marked in the contact list and in lbtool.py, included in the statistics.
-- EPS-Sterna: phasing 60° between the planes (the 6 satellites 60° apart); statistics network Svalbard + Punta Arenas (global data), saved in the mission parameters (statistics_stations).
-- Show Constellation: 3D View of the orbits, satellites and stations, with a time slider.
-- Ground stations: own measured G/T (with its elevation and Tsys) and number of antennas per station in ground_stations.txt; one antenna per site is used, the others are backups, unless Use backup antennas (--backup-antennas) is checked: then the constellation statistics serve one satellite per antenna. Svalbard with 3 antennas, Punta Arenas (2 antennas) added.
 - Doppler rate (Hz/s) along the passes, from the range acceleration: table column, Doppler plot, largest shift and rate per pass in the contact list and in lbtool.py.
 - Fix: tropospheric scintillation no longer adds sky noise (only gas, cloud and rain absorption radiate noise, ITU-R P.618 §3).
-- Validation: AWS downlink at Svalbard against SatMaster Pro (validation/satmaster_aws_svalbard.md): C/N0 within 0.1 dB in clear sky.
+
+### Statistics
+- Latency requirement (share of the data on ground within a time) and use of each station of the network.
+- New plots: contact timeline (per day, or per satellite for a constellation) coloured by station, data on board over time, data latency with the requirement.
+- PDF report of the statistics (Export PDF…): verdict, inputs, summary, plots, tables per station, satellite, day and pass.
 - Fix: crash of the statistics on Windows (garbage collection in the worker thread).
+
+### Validation
+- AWS downlink at Svalbard against SatMaster Pro (validation/satmaster_aws_svalbard.md): C/N0 within 0.12 dB in clear sky at 3° and 10°, 0.13 dB in rain at 10°.
 
 ## 1.1.0
 

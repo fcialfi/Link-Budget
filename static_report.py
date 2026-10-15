@@ -543,6 +543,69 @@ def _load_logo(path: Optional[str]):
         return None
 
 
+def numbered_canvas(header_text: str, right_text: str, stamp: str, app_version: str, logo, margin_x: float):
+    """ReportLab canvas class drawing the page header band, footer and "Page x of y"."""
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as rl_canvas
+
+    page_w, page_h = A4
+
+    def color(hex_code: str):
+        return colors.HexColor(hex_code)
+
+    class NumberedCanvas(rl_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._pages: list = []
+
+        def showPage(self):
+            self._pages.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total = len(self._pages)
+            for state in self._pages:
+                self.__dict__.update(state)
+                self._decorate(total)
+                super().showPage()
+            super().save()
+
+        def _decorate(self, total: int):
+            self.saveState()
+            self.setFillColor(color(_HEADER))
+            self.rect(0, page_h - 11 * mm, page_w, 11 * mm, stroke=0, fill=1)
+            # MATLAB-blue rule under the band.
+            self.setFillColor(color(_ACCENT))
+            self.rect(0, page_h - 11.6 * mm, page_w, 0.6 * mm, stroke=0, fill=1)
+            text_x = margin_x
+            if logo is not None:
+                image, aspect = logo
+                logo_h = 6.5 * mm
+                self.drawImage(
+                    image, margin_x, page_h - 8.75 * mm, logo_h * aspect, logo_h, mask="auto",
+                )
+                text_x = margin_x + logo_h * aspect + 4 * mm
+            self.setFillColor(colors.white)
+            self.setFont("Helvetica-Bold", 9)
+            self.drawString(text_x, page_h - 7 * mm, header_text)
+            self.setFont("Helvetica", 8.5)
+            self.drawRightString(page_w - margin_x, page_h - 7 * mm, right_text)
+            self.setStrokeColor(color(_BORDER))
+            self.setLineWidth(0.5)
+            self.line(margin_x, 13 * mm, page_w - margin_x, 13 * mm)
+            self.setFillColor(color(_MUTED))
+            self.setFont("Helvetica", 8)
+            tool = f"  ·  Link Budget Tool {app_version}" if app_version else ""
+            self.drawString(margin_x, 9 * mm, f"Generated {stamp}{tool}")
+            self.drawRightString(page_w - margin_x, 9 * mm, f"Page {self._pageNumber} of {total}")
+            self.restoreState()
+
+    return NumberedCanvas
+
+
 def build_static_report_pdf(
     file_path: str,
     budget: Dict[str, Any],
@@ -556,7 +619,6 @@ def build_static_report_pdf(
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.platypus import (
         CondPageBreak,
         KeepTogether,
@@ -815,54 +877,10 @@ def build_static_report_pdf(
     )
     stamp = generated_at.strftime("%Y-%m-%d %H:%M UTC")
 
-    logo = _load_logo(context.logo_path)
-
-    class NumberedCanvas(rl_canvas.Canvas):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._pages: list = []
-
-        def showPage(self):
-            self._pages.append(dict(self.__dict__))
-            self._startPage()
-
-        def save(self):
-            total = len(self._pages)
-            for state in self._pages:
-                self.__dict__.update(state)
-                self._decorate(total)
-                super().showPage()
-            super().save()
-
-        def _decorate(self, total: int):
-            self.saveState()
-            self.setFillColor(color(_HEADER))
-            self.rect(0, page_h - 11 * mm, page_w, 11 * mm, stroke=0, fill=1)
-            # MATLAB-blue rule under the band.
-            self.setFillColor(color(_ACCENT))
-            self.rect(0, page_h - 11.6 * mm, page_w, 0.6 * mm, stroke=0, fill=1)
-            text_x = margin_x
-            if logo is not None:
-                image, aspect = logo
-                logo_h = 6.5 * mm
-                self.drawImage(
-                    image, margin_x, page_h - 8.75 * mm, logo_h * aspect, logo_h, mask="auto",
-                )
-                text_x = margin_x + logo_h * aspect + 4 * mm
-            self.setFillColor(colors.white)
-            self.setFont("Helvetica-Bold", 9)
-            self.drawString(text_x, page_h - 7 * mm, header_text)
-            self.setFont("Helvetica", 8.5)
-            self.drawRightString(page_w - margin_x, page_h - 7 * mm, context.direction.replace("→", "->"))
-            self.setStrokeColor(color(_BORDER))
-            self.setLineWidth(0.5)
-            self.line(margin_x, 13 * mm, page_w - margin_x, 13 * mm)
-            self.setFillColor(color(_MUTED))
-            self.setFont("Helvetica", 8)
-            tool = f"  ·  Link Budget Tool {context.app_version}" if context.app_version else ""
-            self.drawString(margin_x, 9 * mm, f"Generated {stamp}{tool}")
-            self.drawRightString(page_w - margin_x, 9 * mm, f"Page {self._pageNumber} of {total}")
-            self.restoreState()
+    NumberedCanvas = numbered_canvas(
+        header_text, context.direction.replace("→", "->"), stamp, context.app_version,
+        _load_logo(context.logo_path), margin_x,
+    )
 
     doc = SimpleDocTemplate(
         file_path,
