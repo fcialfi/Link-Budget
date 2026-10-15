@@ -529,13 +529,13 @@ def content():
     story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
                  "requirement 90 % within 100 min.")
     story.append(P(
-        "Four plots follow the summary: <b>Contact time per day</b> (contact and usable minutes; dotted: "
-        "mean), <b>Data per day</b> (capacity and downloaded volume, data generated per day, data on board "
-        "at the end of the day; passes per day without link budget), <b>Gaps between contacts</b> (histogram "
-        "with the longest gap) or, for a constellation, <b>Time per satellite</b> (served and waiting minutes "
-        "per day), and <b>Data latency</b> (share of the data on ground within a given latency, with the "
-        "requirement in green when met, red when not) or, without on-board data, the duration of each pass "
-        "against its maximum elevation."))
+        "Three plots follow the summary. <b>Contacts</b>: a timeline, one row per day (for a constellation, one "
+        "row per satellite over the first day), each pass drawn from its start to its end in UTC and coloured by "
+        "its station (grey: no usable minute); the gaps are the white spaces. <b>Data on board</b>: the memory "
+        "occupation along the whole period (all satellites for a constellation), with its maximum; without "
+        "on-board data rates, the usable (or contact) minutes per day. <b>Data latency</b>: the share of the "
+        "data on ground within a given latency, with the requirement and whether it is met; without on-board "
+        "data, the gaps between contacts (or, for a constellation, the time per satellite)."))
     story += FIG("statistics_tables", "Per-day and per-pass tables.")
     story.append(P(
         "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "

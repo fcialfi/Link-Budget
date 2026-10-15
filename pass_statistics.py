@@ -72,6 +72,9 @@ class StatisticsResult:
     # Downloaded chunks: (bits, smallest latency s, largest latency s); the bits
     # of a chunk were generated uniformly over that latency range.
     latency_chunks: list[tuple[float, float, float]] = field(default_factory=list)
+    # Data on board (MB) at the end of every sample, with the sample times; for a
+    # constellation, the total of all satellites. None without the memory model.
+    on_board_series: Optional[tuple[list, np.ndarray]] = None
 
     def latency_fraction(self, latency_min: float) -> Optional[float]:
         """Share (0-1) of the downloaded data that reached the ground within ``latency_min``."""
@@ -300,6 +303,7 @@ def aggregate(
             final_on_board_mb=float(memory_end_bits[-1]) / 8e6,
             **latency,
         )
+        result.on_board_series = (times, memory_end_bits / 8e6)
         if latency_requirement is not None and result.latency_chunks:
             minutes, percent = latency_requirement
             within = float(result.latency_fraction(minutes)) * 100.0
@@ -547,6 +551,7 @@ def simulate_constellation(
         "min_margin_db": min_margin_db,
     }
     if with_memory:
+        result.on_board_series = (times, on_board.sum(axis=0) / 8e6)
         summary.update(
             generated_bps=generated_bps,
             generated_mb_per_day=generated_bps * 86400 / 8e6 * n_sat,
