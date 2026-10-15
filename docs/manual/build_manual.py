@@ -6,12 +6,12 @@
 
 The text lives in this file, the screenshots in docs/manual/img/ (made by
 take_screenshots.py). The version comes from version.py and the
-parameters.json key table from the GUI source, so they always match.
+parameters.json key table from mission_schema.py, so they always match. The
+parameter and statistics reference chapters are in reference.py.
 """
 
 import datetime
 import os
-import re
 import sys
 
 from reportlab.lib import colors
@@ -35,7 +35,7 @@ from version import APP_AUTHOR, APP_VERSION  # noqa: E402
 
 TITLE = "Satellite Link Budget Tool"
 SUBTITLE = "User Manual"
-ISSUE = "Issue 1.4"
+ISSUE = "Issue 1.5"
 
 # Colours of the application (MATLAB-like theme).
 HEADER = colors.HexColor("#1f2a36")
@@ -96,6 +96,7 @@ S = {
 # --------------------------------------------------------------------------
 _chapter = [0]
 _section = [0]
+CALC_CHAPTER = [0]  # number of the "Calculation method" chapter, for the references
 
 
 def _esc(text):
@@ -188,15 +189,6 @@ def TABLE(rows, widths_cm, header=True, mono_cols=(), bold_cols=(0,)):
             style.append(("BACKGROUND", (0, i), (-1, i), ROW_ALT))
     table.setStyle(TableStyle(style))
     return [table, Spacer(1, 8)]
-
-
-def parameter_keys():
-    """parameters.json keys of the main panel, read from the GUI source."""
-    with open(os.path.join(ROOT, "gui.py"), encoding="utf-8") as f:
-        source = f.read()
-    block = source[source.index("def _parameter_entries"):]
-    block = block[:block.index("}")]
-    return re.findall(r'"([a-z_0-9]+)": self\.', block)
 
 
 # --------------------------------------------------------------------------
@@ -335,7 +327,7 @@ def content():
                                 "of antennas. Edit Stations... edits it as a table."],
         ["satellites.json", "The satellites of the Satellite menu (chapter 4.1)."],
         ["missions\\<name>\\", "Per mission: parameters.json (project name, link budget parameters, static inputs; chapter "
-                                 "9), antenna_pattern.txt and tle.txt (chapter 4.1)."],
+                                 "12), antenna_pattern.txt and tle.txt (chapter 4.1)."],
     ], [5, 11.5], mono_cols=(0,), bold_cols=())
     story.append(P(
         "A missing data file is not an error: the related fields stay empty (or the built-in station list and "
@@ -372,10 +364,12 @@ def content():
         ["Tab", "Content"],
         ["Orbit &amp; Passes", "Project name, TLE, date and ground station, data files, the pass analysis and "
                                "the list of passes (chapter 4)."],
-        ["Downlink", "Downlink parameters, and plots and table of the selected pass (chapter 5)."],
-        ["Uplink", "Uplink parameters and table of the selected pass (chapter 6)."],
-        ["Static LB · Downlink", "Fixed-elevation downlink link budget (chapter 7)."],
-        ["Static LB · Uplink", "Fixed-elevation uplink link budget (chapter 7)."],
+        ["Statistics", "Contacts, data volume, on-board memory and latency over several days, stations "
+                       "and satellites (chapter 5)."],
+        ["Downlink", "Downlink parameters, and plots and table of the selected pass (chapter 6)."],
+        ["Uplink", "Uplink parameters and table of the selected pass (chapter 7)."],
+        ["Static LB · Downlink", "Fixed-elevation downlink link budget (chapter 8)."],
+        ["Static LB · Uplink", "Fixed-elevation uplink link budget (chapter 8)."],
     ], [4.5, 12])
     story.append(NOTE(
         "<b>Shared fields.</b> Frequency, EIRP, G/T, bit rate, overhead, roll-off, spectral efficiency, "
@@ -482,7 +476,7 @@ def content():
         "when the TLE, date or station change."))
     story.append(P(
         "<b>Satellite antenna pattern</b>: the gain of the satellite antenna versus the angle from nadir, used "
-        "at every time step (chapter 8.4). It is read from the folder of the selected mission; "
+        "at every time step (chapter 9.4). It is read from the folder of the selected mission; "
         "<b>Load Antenna Pattern…</b> loads another file for the session and <b>Show Antenna Gain</b> plots it. The line below "
         "the buttons shows which pattern is in use."))
 
@@ -716,7 +710,7 @@ def content():
     story.append(H3("Propagation & PFD Limit"))
     story.append(P(
         "<b>Ionospheric loss</b>: <i>Manual</i> or <i>From S4 scintillation index</i> (ITU-R P.531, chapter "
-        "8.3); the page shows the station's geomagnetic latitude and ionospheric zone as guidance for S4. Then "
+        "9.3); the page shows the station's geomagnetic latitude and ionospheric zone as guidance for S4. Then "
         "other attenuations (shared; values ≥ 1 dB are flagged, as they may count the atmospheric losses "
         "twice), polarisation mismatch loss (entered, or computed from the Tx and Rx axial ratios when empty), "
         "multipath losses and, on the downlink, the PFD limits: <b>PFD Limit 0–5° El</b> and, optionally, "
@@ -736,7 +730,7 @@ def content():
         "Optional favourable/adverse deviations (positive dB) of transmitter power, Tx antenna gain, propagation "
         "loss, Rx G/T and receiver degradation, each with a distribution: TRI (triangular, nominal most likely), "
         "UNI (uniform) or GAU (Gaussian with the limits at ±3σ). They give the statistical margins (chapter "
-        "8.7)."))
+        "9.7)."))
     story += H2("Result pages")
     story += FIG("static_summary", "Summary page.")
     story += BUL([
@@ -758,6 +752,10 @@ def content():
 
     # 8 -------------------------------------------------------------------
     story += H1("Calculation method")
+    CALC_CHAPTER[0] = _chapter[0]
+    story.append(P(
+        "A summary of the models. Chapter 10 gives, for every parameter and every result, the exact formula "
+        "and the value used when a field is empty; chapter 11 does the same for the statistics."))
     story += H2("Geometry")
     story.append(P(
         "Spherical Earth (R = 6378.137 km), circular orbit at altitude h. For an elevation el, the slant range "
@@ -808,16 +806,22 @@ def content():
         "mean (a+b)/2, variance ((b−a)/6)². Contributions are independent: means and variances add. MEAN − 3σ "
         "= nominal margin + Σ mean − 3·√Σ variance; Worst Case RSS = nominal margin − √Σ adverse²."))
 
-    # 9 -------------------------------------------------------------------
+    # 10, 11 ---------------------------------------------------------------
+    import reference
+
+    story += reference.chapters(sys.modules[__name__], ROOT)
+
+    # 12 ------------------------------------------------------------------
     story += H1("Data files")
     story += H2("parameters.json")
     story.append(P(
         "A JSON file with the values of the main tabs and two optional sections with the inputs of the static "
-        "tabs (fixed_elevation_downlink, fixed_elevation_uplink). Missing keys are ignored; a null value leaves "
-        "the field empty (e.g. c_io_dbhz: no interferer). Keys of the main tabs:"))
-    keys = ["project_name"] + parameter_keys()
-    rows = [["Keys"]] + [[", ".join(keys[i:i + 4])] for i in range(0, len(keys), 4)]
-    story += TABLE(rows, [16.5], mono_cols=(0,), bold_cols=())
+        "tabs (fixed_elevation_downlink, fixed_elevation_uplink, chapter 10.11). Every save writes all the keys "
+        "below in this order, null when not used; a missing or null key leaves the field empty (e.g. "
+        "c_io_dbhz: no interferer). Selecting another mission empties every field its file does not give. "
+        "Mission Parameters... (Orbit &amp; Passes) shows and edits the file as this table. All the keys:"))
+    story += TABLE([["Group", "Key", "Name [unit]", "Meaning"]] + reference.parameters_json_rows(),
+                   [2.4, 4.6, 4.0, 5.5], mono_cols=(1,), bold_cols=(0,))
     story.append(P(
         "The static sections are best written with <b>Save…</b> in the static tabs rather than by hand."))
     story += H2("Other files")
