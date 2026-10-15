@@ -50,3 +50,7 @@ Leaving out the contacts shorter than 3-4 min brings Svalbard + Punta Arenas
 within 1-3 min of the reference on all three percentiles (4 min: 32.5 / 64.5 /
 77.1), and Svalbard + O'Higgins and the 80 % of Svalbard + Troll close to it;
 the reference probably schedules only passes of a few minutes or more.
+
+With the minimum SDA pass duration of EPS-Sterna, 4.7 min (in the mission
+parameters; with the 30 s step a contact needs 10 samples, i.e. it acts as
+5 min): Svalbard + Punta Arenas 34.8 / 68.2 / 80.7 min, against 33 / 61 / 77.

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- EPS-Sterna: minimum SDA pass duration 4.7 min in the mission parameters.
 - Statistics: minimum pass duration (Min Pass Duration [min], lbtool.py --min-pass): shorter contacts are not used.
 - EPS-Sterna: 64 kbps generated on board (Instrument Data) in the mission parameters.
 - Validation: EPS-Sterna data latency against a reference table (validation/eps_sterna_latency.md): Svalbard + Punta Arenas within 1-4 min.
