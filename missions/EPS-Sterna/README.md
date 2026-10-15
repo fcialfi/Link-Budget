@@ -49,6 +49,7 @@ of 32 kB). The tool uses 4 GB, the Mission Data partition.
 | Minimum SDA pass duration 4.7 min | operations |
 | Antenna setup between satellites: 0 (requirement: station configured for a pass in less than 7 min, from scratch) | requirement; 7 min is the worst case |
 | Latency counted at the end of the pass (dump complete) | matches the reference SMD latency table |
+| Ground products of 30 min of on-board data (fixed blocks from 00:00 UTC); a product is processed when all its data are on ground | user |
 
 ## Requirements
 
@@ -65,6 +66,19 @@ of 32 kB). The tool uses 4 GB, the Mission Data partition.
 | Time left for the ground chain at 80 % (75 − 67) | about 8 min (reference: about 14) |
 | Conflicts between satellites | 0 min/day |
 | On-board memory used | about 1 % of 4 GB; full after about 6 days without contacts |
+
+With the 30-minute ground products (same inputs, 3 days, latency at the end of
+the pass):
+
+| Latency counted from | Mean | 80 % within | Within 75 min |
+|---|---|---|---|
+| no products (each datum when on ground) | 40.3 min | 66.9 min | 85.5 % |
+| each datum's sensing (default) | 54.9 min | 81.7 min | 74.6 % |
+| start of the product's sensing | 69.9 min | 96.5 min | 61.0 % |
+| end of the product's sensing | 39.9 min | 66.5 min | 86.3 % |
+
+The convention of the requirement (from which instant the 75 min of a product
+are counted) decides whether it is met: to be confirmed.
 
 Validation: `validation/eps_sterna_latency.md` (latency) and
 `validation/satmaster_aws_svalbard.md` (static link budget).

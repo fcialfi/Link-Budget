@@ -1289,6 +1289,10 @@ class LinkBudgetApp:
             self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
             memory = payload.get("memory_gb")
             self.stats_memory_var.set("" if memory is None else f"{memory:g}")
+            product = payload.get("product_length_min")
+            self.stats_product_var.set("" if product is None else f"{product:g}")
+            reference = payload.get("product_latency_reference")
+            self.stats_product_ref_var.set(self._PRODUCT_REFERENCES.get(reference, self._PRODUCT_REFERENCES["data"]))
         network = payload.get("statistics_stations")
         if hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data); none when not given.
@@ -2232,6 +2236,8 @@ class LinkBudgetApp:
         self.stats_setup_var = tk.StringVar(value="")
         self.stats_min_pass_var = tk.StringVar(value="")
         self.stats_memory_var = tk.StringVar(value="")
+        self.stats_product_var = tk.StringVar(value="")
+        self.stats_product_ref_var = tk.StringVar(value=self._PRODUCT_REFERENCES["data"])
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -2266,6 +2272,10 @@ class LinkBudgetApp:
             ("Antenna Setup [min]", self.stats_setup_var,
              "Time to configure an antenna for another satellite (whole constellation): after a pass the "
              "antenna cannot take a different satellite for this long. Empty: 0."),
+            ("Product Length [min]", self.stats_product_var,
+             "Optional: the ground processes the data in products of this many minutes of on-board data "
+             "(e.g. 30), fixed blocks from 00:00 UTC. A product is ready when the last of its data is on "
+             "ground; only complete products count. Empty: each datum counts when it is on ground."),
         )
         grid = ttk.Frame(inputs)
         grid.pack(side=tk.LEFT, anchor="n")
@@ -2275,6 +2285,17 @@ class LinkBudgetApp:
             entry = ttk.Entry(grid, textvariable=var, width=12)
             entry.grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 18), pady=2)
             _add_tooltip(entry, tip)
+        row = (len(fields) + 1) // 2
+        ttk.Label(grid, text="Product Latency From").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+        reference_box = ttk.Combobox(grid, textvariable=self.stats_product_ref_var, state="readonly", width=22,
+                                     values=list(self._PRODUCT_REFERENCES.values()))
+        reference_box.grid(row=row, column=1, columnspan=3, sticky="w", pady=2)
+        _add_tooltip(
+            reference_box,
+            "With a Product Length: the instant the latency of the data of a product is counted from. Each "
+            "datum's sensing: every datum from the time it was acquired (share of the data volume). Product "
+            "sensing start / end: every product from the start (strictest) or the end of its sensing.",
+        )
 
         station_box = ttk.Frame(inputs)
         station_box.pack(side=tk.LEFT, anchor="n", padx=(10, 0))
@@ -2582,6 +2603,11 @@ class LinkBudgetApp:
         min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
         if min_pass < 0:
             raise ValueError("The minimum pass duration must be positive.")
+        product_min = _number(self.stats_product_var, "Product Length [min]")
+        if product_min is not None and product_min <= 0:
+            raise ValueError("The product length must be greater than 0 min.")
+        reference = {text: key for key, text in self._PRODUCT_REFERENCES.items()}.get(
+            self.stats_product_ref_var.get(), "data")
         inputs["link"] = link
         inputs["budget"] = {
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
@@ -2595,6 +2621,8 @@ class LinkBudgetApp:
             "setup_s": setup_min * 60.0,
             "min_pass_s": min_pass * 60.0,
             "memory_bits": memory_gb * 8e9 if memory_gb else None,
+            "product_s": product_min * 60.0 if product_min else None,
+            "product_reference": reference,
         }
         return inputs
 
@@ -2670,6 +2698,8 @@ class LinkBudgetApp:
                     latency_requirement=budget["latency_requirement"] if budget else None,
                     latency_at_pass_end=inputs["latency_at_pass_end"],
                     memory_bits=budget["memory_bits"] if budget else None,
+                    product_s=budget["product_s"] if budget else None,
+                    product_reference=budget["product_reference"] if budget else "data",
                 )
                 # One antenna per site, the others backups, unless the backups are used too.
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
@@ -2858,6 +2888,12 @@ class LinkBudgetApp:
     _STATS_INK = {"primary": "#0b0b0b", "secondary": "#52514e", "muted": "#8a8984", "grid": "#e6e5e1"}
 
     _STATS_ALL_DAYS = "All days"
+    # Product latency reference (pass_statistics) -> text of the selector.
+    _PRODUCT_REFERENCES = {
+        "data": "each datum's sensing",
+        "start": "product sensing start",
+        "end": "product sensing end",
+    }
 
     def _redraw_statistics_plot(self) -> None:
         """Draw the plots of the last statistics again (e.g. for another day of the timeline)."""
@@ -3147,6 +3183,9 @@ class LinkBudgetApp:
             rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
             rows.append(("Latency counted", "at the end of each pass (dump complete)"
                          if inputs.get("latency_at_pass_end") else "when each bit comes down"))
+            if budget.get("product_s"):
+                rows.append(("Ground products", f"{budget['product_s'] / 60:g} min of on-board data, latency "
+                             f"from {self._PRODUCT_REFERENCES[budget['product_reference']]}"))
             if inputs["constellation"]:
                 rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
         else:
@@ -3171,13 +3210,15 @@ class LinkBudgetApp:
         if any(value is not None for value in flows.values()):
             values["downlink_data_kbps"] = flows
         for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
-                         ("memory_gb", self.stats_memory_var)):
+                         ("memory_gb", self.stats_memory_var), ("product_length_min", self.stats_product_var)):
             try:
                 if var.get().strip():
                     values[key] = float(var.get())
             except ValueError:
                 pass
         values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
+        values["product_latency_reference"] = {text: key for key, text in self._PRODUCT_REFERENCES.items()}.get(
+            self.stats_product_ref_var.get(), "data")
         network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
         if network:
             values["statistics_stations"] = network
@@ -3214,7 +3255,7 @@ class LinkBudgetApp:
                 with open(path, encoding="utf-8") as f:
                     payload = json.load(f)
             for key in ("downlink_data_kbps", "latency_requirement", "antenna_setup_min", "min_pass_min",
-                        "memory_gb", "statistics_stations"):
+                        "memory_gb", "statistics_stations", "product_length_min"):
                 payload.pop(key, None)  # cleared fields are removed from the file
             payload.update(self._statistics_parameters())
             self._write_parameters(path, payload)

@@ -307,6 +307,9 @@ def chapters(m, root=None):
             (r"t_{\mathrm{arr}}", "Time the chunk reaches the ground (end of sample or of pass)", "s", "§ref_stats.3"),
             (r"\ell_{\min},\ \ell_{\max},\ \bar{\ell}", "Latency range of a chunk; mean latency", "s, min", "§ref_stats.3"),
             (r"s(L),\ L_X", "Share of the data within L minutes; latency at X %", "–, min", "§ref_stats.3"),
+            (r"P,\ k,\ T_k", "Product length; product number; time the product is complete on ground", "min, –, s",
+             "§ref_stats.3"),
+            (r"t_{\mathrm{gen}}", "Time a datum was generated (sensed) on board", "s", "§ref_stats.3"),
         ]),
     ]
     for title, items in groups:
@@ -952,6 +955,11 @@ def chapters(m, root=None):
         ["Min Pass Duration", "min_pass_min [min]", "0", "Shorter usable contacts are not used."],
         ["Antenna Setup", "antenna_setup_min [min]", "0", "Time to configure an antenna for another satellite."],
         ["Latency at end of pass", "latency_at_pass_end", "off", "Data count as on ground when the pass ends."],
+        ["Product Length", "product_length_min [min]", "none", "P: the ground builds products of P minutes of "
+                                                               "on-board data; only complete products count "
+                                                               "(§ref_stats.3)."],
+        ["Product Latency From", "product_latency_reference", "data", "data: each datum's sensing; start / "
+                                                                     "end: of the product's sensing."],
         ["Latency requirement, Within", "latency_requirement.minutes, .percent", "none, 100 %", "Checked on "
                                                                                               "the downloaded "
                                                                                               "data."],
@@ -1013,6 +1021,21 @@ def chapters(m, root=None):
         (r"\bar{\ell} = \dfrac{\sum_k x_k\, (\ell_{\min,k} + \ell_{\max,k})/2}{\sum_k x_k}, \quad \ell_{\mathrm{max}} = \max_k\, \ell_{\max,k}",
          "Mean and maximum latency."),
     ))
+    story.append(P(
+        "<b>Ground products</b> (Product Length P, <i>pass_statistics._chunks</i>): the ground processes the data "
+        "in products of P minutes of on-board data, fixed blocks from 00:00 UTC (product k holds the data "
+        "generated between kP and (k+1)P). A product can be processed only when all its data are on ground, at "
+        "T<sub>k</sub>, the arrival of its last chunk; products not complete at the end of the period are not "
+        "counted. The chunks are split at the block boundaries and their latency is counted from:"))
+    story.append(EQ(
+        (r"\ell = T_k - t_{\mathrm{gen}}, \quad t_{\mathrm{gen}} \in [kP,\ (k+1)P]",
+         "Each datum's sensing (data): every datum waits for the whole product."),
+        (r"\ell = T_k - kP", "Product sensing start (start): the strictest."),
+        (r"\ell = T_k - (k+1)P", "Product sensing end (end)."),
+    ))
+    story.append(P(
+        "With start or end all the data of a product have the same latency, so the share of the data is the "
+        "share of the products (products of equal size)."))
     story.append(P(
         "So <i>'80 % within 67 min'</i> means: of all the bits generated on board and downloaded in the period "
         "(all satellites together for a constellation), 80 % reached the ground at most 67 min after they were "

@@ -53,6 +53,8 @@
   "min_pass_min": 4.7,
   "antenna_setup_min": 0.0,
   "latency_at_pass_end": true,
+  "product_length_min": 30.0,
+  "product_latency_reference": "data",
   "latency_requirement": {
     "minutes": null,
     "percent": null

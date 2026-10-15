@@ -86,7 +86,7 @@ class StatisticsResult:
         for bits, lo, hi in self.latency_chunks:
             if hi <= limit:
                 within += bits
-            elif lo < limit:
+            elif lo < limit:  # here hi > limit > lo
                 within += bits * (limit - lo) / (hi - lo)
         return within / total
 
@@ -165,6 +165,62 @@ def _memory_figures(memory_bits, max_bits_one_satellite, lost_bits, generated_bp
     }
 
 
+PRODUCT_REFERENCES = ("data", "start", "end")
+
+
+def _chunks(raw, product_s: Optional[float] = None, reference: str = "data") -> list[tuple[float, float, float]]:
+    """Latency chunks (bits, smallest latency s, largest latency s) of one satellite.
+
+    ``raw`` lists what came down, first in first out: (bits, generated from s,
+    generated to s, on ground at s), times from the start of the period. Without
+    ``product_s`` each chunk is on ground when it comes down. With it the ground
+    builds products of ``product_s`` seconds of on-board data, fixed blocks from
+    the start of the period (00:00 UTC): a product is complete when the last of
+    its data is on ground, and only complete products are counted. Its data then
+    have the latency from ``reference``: "data", the sensing time of each datum;
+    "start" or "end", the start or end of the product's sensing.
+    """
+    if not product_s:
+        return [(bits, t_arr - g1, t_arr - g0) for bits, g0, g1, t_arr in raw]
+    if reference not in PRODUCT_REFERENCES:
+        raise ValueError(f"Unknown product latency reference '{reference}' (use data, start or end).")
+    pieces = []  # (product, bits, generated from, generated to)
+    arrival: dict[int, float] = {}
+    covered = 0.0  # generation time downloaded so far (first in first out)
+    for bits, g0, g1, t_arr in raw:
+        if bits <= 0 or g1 <= g0:
+            continue
+        covered = max(covered, g1)
+        k = int(g0 // product_s)
+        while True:
+            lo, hi = max(g0, k * product_s), min(g1, (k + 1) * product_s)
+            if hi > lo:
+                pieces.append((k, bits * (hi - lo) / (g1 - g0), lo, hi))
+                arrival[k] = max(arrival.get(k, 0.0), t_arr)
+            if g1 <= (k + 1) * product_s:
+                break
+            k += 1
+    result = []
+    for k, bits, lo, hi in pieces:
+        if covered < (k + 1) * product_s - 1e-6:
+            continue  # product not complete at the end of the period
+        t_arr = arrival[k]
+        if reference == "data":
+            result.append((bits, t_arr - hi, t_arr - lo))
+        else:
+            latency = t_arr - (k * product_s if reference == "start" else (k + 1) * product_s)
+            result.append((bits, latency, latency))
+    return result
+
+
+def _latency_figures(chunks) -> dict:
+    total = sum(c[0] for c in chunks)
+    return {
+        "max_latency_min": max(c[2] for c in chunks) / 60.0 if chunks else None,
+        "mean_latency_min": sum(c[0] * (c[1] + c[2]) / 2 for c in chunks) / total / 60.0 if total else None,
+    }
+
+
 def drop_short_contacts(
     days: list[dict[str, dict[str, DaySamples]]],
     step_s: float,
@@ -225,6 +281,8 @@ def aggregate(
     latency_requirement: Optional[tuple[float, float]] = None,
     latency_at_pass_end: bool = False,
     memory_bits: Optional[float] = None,
+    product_s: Optional[float] = None,
+    product_reference: str = "data",
 ) -> StatisticsResult:
     """Passes, daily figures and a summary from the samples of consecutive days.
 
@@ -238,6 +296,8 @@ def aggregate(
 
     ``latency_requirement`` = (minutes, percent), e.g. (60, 90) for "90 % of
     the data on ground within 60 min", is checked on the downloaded data.
+    ``product_s`` groups the data on ground into products of that many seconds
+    of on-board data (see :func:`_chunks`).
     """
     days = list(days)
     result = StatisticsResult()
@@ -271,8 +331,7 @@ def aggregate(
         memory = 0.0
         memory_end_bits = np.zeros(n)
         downloaded_total = 0.0
-        latencies_weighted = 0.0
-        max_latency = 0.0
+        raw = []
         generated_per_step = generated_bps * step_s
         # With latency_at_pass_end the data count as on ground at the end of
         # their pass (run of usable samples), when the dump is complete.
@@ -291,20 +350,14 @@ def aggregate(
             if take > 0:
                 # First in, first out: the bits downloaded now were generated
                 # from (downloaded_total) to (downloaded_total + take) / rate.
-                t_now = arrival[i]
-                oldest = downloaded_total / generated_bps
-                newest = (downloaded_total + take) / generated_bps
-                max_latency = max(max_latency, t_now - oldest)
-                latencies_weighted += take * (t_now - (oldest + newest) / 2)
-                result.latency_chunks.append((take, t_now - newest, t_now - oldest))
+                raw.append((take, downloaded_total / generated_bps, (downloaded_total + take) / generated_bps,
+                            arrival[i]))
                 downloaded_total += take
             memory -= take
             downloaded_bits[i] = take
             memory_end_bits[i] = memory
-        latency = {
-            "max_latency_min": max_latency / 60.0 if downloaded_total else None,
-            "mean_latency_min": latencies_weighted / downloaded_total / 60.0 if downloaded_total else None,
-        }
+        result.latency_chunks = _chunks(raw, product_s, product_reference)
+        latency = _latency_figures(result.latency_chunks)
 
     by_date = [DayRecord(d.start.date()) for d in days]
     for k, record in enumerate(by_date):
@@ -433,6 +486,8 @@ def simulate_constellation(
     setup_s: float = 0.0,
     latency_at_pass_end: bool = False,
     memory_bits: Optional[float] = None,
+    product_s: Optional[float] = None,
+    product_reference: str = "data",
 ) -> ConstellationResult:
     """Satellites sharing ground stations whose antennas track one satellite each.
 
@@ -451,7 +506,9 @@ def simulate_constellation(
     different satellite for that long (the same satellite resumes at once).
     ``latency_at_pass_end``: the data downloaded during a pass count as on
     ground at the end of that pass (dump complete), not when each bit comes
-    down (the time a product can be processed).
+    down (the time a product can be processed). ``product_s`` groups each
+    satellite's data on ground into products of that many seconds of on-board
+    data (see :func:`_chunks`).
     """
     result = ConstellationResult()
     if not days:
@@ -488,7 +545,7 @@ def simulate_constellation(
     downloaded = np.zeros((n_sat, n))
     on_board = np.zeros((n_sat, n))
     conflict = np.zeros((n_sat, n), dtype=bool)
-    chunks: list[list] = [[] for _ in range(n_sat)]
+    raw: list[list] = [[] for _ in range(n_sat)]  # (bits, generated from, to, on ground), per satellite
     lost = np.zeros(n_sat)
     setup_steps = int(np.ceil(setup_s / step_s)) if setup_s > 0 else 0
     n_slots = len(slot_station)
@@ -497,9 +554,8 @@ def simulate_constellation(
     pending: list[list] = [[] for _ in range(n_sat)]  # chunks of the pass in progress (latency_at_pass_end)
 
     def _close_pass(s, t_end):
-        for chunk in pending[s]:
-            take, lo, hi, t_now = chunk
-            chunks[s].append((take, lo + t_end - t_now, hi + t_end - t_now))
+        for take, oldest, newest in pending[s]:
+            raw[s].append((take, oldest, newest, t_end))
         pending[s].clear()
 
     for i in range(n):
@@ -564,9 +620,9 @@ def simulate_constellation(
                 oldest = downloaded_total[s] / generated_bps
                 newest = (downloaded_total[s] + take) / generated_bps
                 if latency_at_pass_end:
-                    pending[s].append((take, t_now - newest, t_now - oldest, t_now))
+                    pending[s].append((take, oldest, newest))
                 else:
-                    chunks[s].append((take, t_now - newest, t_now - oldest))
+                    raw[s].append((take, oldest, newest, t_now))
             elif generated_bps <= 0:
                 take = step_bits  # capacity only
             memory[s] -= take if generated_bps > 0 else 0.0
@@ -575,6 +631,7 @@ def simulate_constellation(
         on_board[:, i] = memory
     for s in range(n_sat):
         _close_pass(s, n * step_s)
+    chunks = [_chunks(raw[s], product_s, product_reference) for s in range(n_sat)]
 
     step_min = step_s / 60.0
     with_memory = generated_bps > 0
