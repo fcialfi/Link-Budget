@@ -1,14 +1,19 @@
 # Changelog
 
-## Unreleased
-- Statistics: Latency at end of pass (lbtool.py --latency-at-pass-end): the data of a pass count as on ground when the dump is complete, the convention for product timeliness; on for EPS-Sterna (latency_at_pass_end).
+## 1.3.0
+
+### Statistics
+- Minimum pass duration (Min Pass Duration [min], lbtool.py --min-pass): contacts shorter than it are not used, per satellite and station, also across midnight.
+- Latency at end of pass (lbtool.py --latency-at-pass-end): the data of a pass count as on ground when the dump is complete, the convention for product timeliness.
+- Plots without on-board data rates: revisit gaps of each satellite and contact time by station.
 - Fix: the on-board data rates and the latency requirement of a mission are cleared when another mission without them is selected.
-- EPS-Sterna: minimum elevation 3° in the mission parameters (AWS: 5°); lbtool.py takes it from the mission parameters unless --min-elevation is given.
-- EPS-Sterna: minimum SDA pass duration 4.7 min in the mission parameters.
-- Statistics: minimum pass duration (Min Pass Duration [min], lbtool.py --min-pass): shorter contacts are not used.
-- EPS-Sterna: 64 kbps generated on board (Instrument Data) in the mission parameters.
-- Validation: EPS-Sterna data latency against a reference table (validation/eps_sterna_latency.md): Svalbard + Punta Arenas within 1-4 min.
-- Statistics plots without on-board data: revisit gaps of each satellite and contact time by station.
+
+### EPS-Sterna
+- Mission parameters: 64 kbps generated on board, minimum SDA pass 4.7 min, minimum elevation 3°, latency at end of pass. AWS: minimum elevation 5°.
+- lbtool.py takes the minimum elevation from the mission parameters unless --min-elevation is given.
+
+### Validation
+- EPS-Sterna data latency against the reference SMD latency table (validation/eps_sterna_latency.md): with the data counted at the end of the dump, within 1-3 min for SVL+MCM, SVL+OHI, SVL+TRO and SVL+INU; sensitivity to time step, minimum elevation, margin and minimum pass.
 
 ## 1.2.0
 
