@@ -91,5 +91,10 @@
     "Svalbard",
     "Punta Arenas"
   ],
-  "antenna_setup_min": 0.0
+  "antenna_setup_min": 0.0,
+  "downlink_data_kbps": {
+    "instruments": 64.0,
+    "hktm": null,
+    "other": null
+  }
 }
