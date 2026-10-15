@@ -74,3 +74,32 @@ parameters; with the 30 s step a contact needs 10 samples, i.e. it acts as
 
 Adopted for EPS-Sterna: minimum elevation 3°, minimum pass 4.7 min, 64 kbps:
 Svalbard + Punta Arenas 28.1 / 58.3 / 72.6 min (reference 33 / 61 / 77).
+
+## Table 30 (reference) vs tool, all percentiles
+
+Tool with the adopted EPS-Sterna settings: minimum elevation 3°, minimum pass
+4.7 min, 64 kbps, 7 days from 2026-10-15 (Inuvik for this check only:
+68.3176, −133.5498). Latency [min] at 50 / 60 / 70 / 80 / 90 / 95 / 99 / 100 %.
+
+| Network | Reference | Tool |
+|---|---|---|
+| SVL | 47 56 65 75 84 89 92 96 | 46 56 66 76 88 126 173 191 |
+| SVL+MCM | 24 29 33 38 43 45 48 52 | 16 21 26 31 36 40 77 93 |
+| SVL+OHI | 29 35 41 49 68 81 91 95 | 22 28 34 42 62 74 84 90 |
+| SVL+TRO | 27 32 38 45 55 74 89 94 | 20 25 31 39 54 70 82 86 |
+| **SVL+PUN** | **33 40 49 61 77 85 92 96** | **28 37 46 59 73 80 86 92** |
+| SVL+INU | 47 56 65 75 84 89 95 103 | 36 46 55 64 73 78 84 87 |
+
+- Svalbard only: 50-80 % within 1 min, 90 % within 4 min.
+- Two stations: the tool is 2-7 min earlier on 50-90 %, the same offset in
+  every network, consistent with the reference counting the data at the end
+  of the dump (about half a pass later).
+- SVL+INU: in the reference Inuvik adds nothing to Svalbard (same figures as
+  SVL); in the tool it shortens the latency, since every contact downloads.
+  The reference probably downloads once per orbit (one dump, at the first
+  station of the orbit), which Inuvik, seeing the same orbits as Svalbard,
+  cannot improve.
+- Tails (95-100 %): the tool is longer with Svalbard only and SVL+MCM, where
+  after an orbit without a contact the next pass cannot download two orbits
+  of data at 1.542 Mbps and the memory queues; the reference behaves as if
+  every dump emptied the memory.
