@@ -159,3 +159,18 @@ def test_constellation_two_stations_serve_both():
     assert by_station["B"]["served_min_per_day"] == 2.0
     # Data generated before each dump: everything generated up to the last dump is on ground.
     assert result.summary["downloaded_mb_per_day"] == pytest.approx(2 * 3 * 60 * 1e4 / 8e6)
+
+
+def test_constellation_station_with_two_antennas_serves_both():
+    day = {
+        "S1": {"G": _sat_day([0, 1, 1, 0, 0, 0])},
+        "S2": {"G": _sat_day([0, 1, 1, 1, 0, 0])},
+    }
+    result = ps.simulate_constellation([day], step_s=60, info_bitrate_bps=1e6, generated_bps=1e4,
+                                       antennas={"G": 2})
+    assert result.summary["conflict_min_per_day"] == 0.0
+    station = result.stations[0]
+    assert station["antennas"] == 2
+    assert station["served_min_per_day"] == 5.0
+    assert station["contention_min_per_day"] == 0.0
+    assert station["busy_pct"] == pytest.approx(5 / 12 * 100)

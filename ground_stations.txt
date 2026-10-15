@@ -1,7 +1,14 @@
-# name, latitude_deg, longitude_deg, altitude_m[, antenna_diameter_m]
+# name, latitude_deg, longitude_deg, altitude_m[, antenna_diameter_m, gt_dbk, gt_elevation_deg, tsys_k, antennas]
+# Optional columns, may be left empty:
+#   antenna_diameter_m  scales the mission G/T GS by 20 log10(D / G/T Reference Diameter)
+#   gt_dbk              the station's own measured G/T (clear sky); replaces the mission G/T GS
+#   gt_elevation_deg    elevation of that G/T (empty: the mission's G/T Reference Elevation, usually 5)
+#   tsys_k              system noise temperature at that elevation (empty: the mission's)
+#   antennas            number of antennas, satellites served at the same time (default 1)
 Darmstadt,49.8700,8.6500,144
 Lannion,48.7333,-3.4542,31
 Maspalomas,27.7614,-15.5865,250
 Athens,37.9838,23.7275,70
 Kangerlussuaq,67.0121,-50.7078,50
-Svalbard,78.2232,15.6267,10,3.0
+Svalbard,78.2232,15.6267,10,3.0,,,,3
+Punta Arenas,-52.9381,-70.8573,20,,,,,2

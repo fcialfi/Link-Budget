@@ -1719,6 +1719,9 @@ class LinkBudgetApp:
             ),
             wraplength=1060, justify="left",
         ).pack(anchor="w", padx=10, pady=(8, 4))
+        ttk.Button(
+            popup, text="3D View", command=lambda: self._show_constellation_3d(satellites, epoch, orbit)
+        ).pack(anchor="w", padx=10, pady=(0, 6))
         columns = ("Satellite", "LTAN", "RAAN (°)", "Arg. of latitude (°)", "Inclination (°)")
         table = ttk.Treeview(popup, columns=columns, show="headings", height=min(len(satellites), 8))
         for col in columns:
@@ -1771,6 +1774,82 @@ class LinkBudgetApp:
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=(6, 10))
         plt.close(fig)
+
+    def _show_constellation_3d(self, satellites, epoch, orbit) -> None:
+        """The orbits around the Earth, the satellites and the stations, with a time slider."""
+
+        from matplotlib.figure import Figure
+        from matplotlib.widgets import Slider
+
+        ts = link_core.load.timescale()
+        minutes = np.arange(0, 101, 1.0)
+        times = ts.utc(epoch.year, epoch.month, epoch.day, 0, minutes)
+        radius = calculations.EARTH_RADIUS_KM
+        colors = list(MATLAB_COLORS.values())
+        tracks = []
+        for name, lines in satellites:
+            sat = link_core.EarthSatellite(lines[0], lines[1], name, ts)
+            plane = name.rsplit(" ", 2)[-2]
+            color = colors[orbit["ltan"].index(plane) % len(colors)] if plane in orbit["ltan"] else colors[0]
+            tracks.append((name, color, sat.at(times).position.km))
+        stations = [
+            (gs, link_core.wgs84.latlon(lat, lon, elevation_m=alt).at(times).position.km)
+            for gs, (lat, lon, alt) in calculations.GROUND_STATIONS.items()
+        ]
+
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Constellation 3D – {self.current_sat.name}")
+        popup.geometry("900x820")
+        ttk.Label(
+            popup,
+            text="Inertial frame (the Earth turns under the orbits). Drag to rotate; move the slider to follow "
+                 "the satellites over the first 100 min of the analysed day (UTC).",
+            wraplength=860, justify="left",
+        ).pack(anchor="w", padx=10, pady=(8, 0))
+        # A plain Figure on its Tk canvas first: the slider and the 3D rotation
+        # connect to the canvas the figure has when they are created.
+        fig = Figure(figsize=(9, 8))
+        canvas = FigureCanvasTkAgg(fig, master=popup)
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        ax = fig.add_axes([0.0, 0.08, 1.0, 0.85], projection="3d")
+        u_grid, v_grid = np.mgrid[0:2 * np.pi:36j, 0:np.pi:18j]
+        ax.plot_wireframe(radius * np.cos(u_grid) * np.sin(v_grid), radius * np.sin(u_grid) * np.sin(v_grid),
+                          radius * np.cos(v_grid), color="#9AA5B1", linewidth=0.3)
+        markers, labels = [], []
+        for name, color, pos in tracks:
+            ax.plot(pos[0], pos[1], pos[2], color=color, linewidth=1.0)
+            markers.append(ax.plot([pos[0, 0]], [pos[1, 0]], [pos[2, 0]], "o", color=color, markersize=7)[0])
+            labels.append(ax.text(pos[0, 0], pos[1, 0], pos[2, 0], "  " + name.split(" ", 1)[-1], fontsize=7))
+        station_marks = []
+        for gs, pos in stations:
+            station_marks.append((
+                ax.plot([pos[0, 0]], [pos[1, 0]], [pos[2, 0]], "^", color="black", markersize=5)[0],
+                ax.text(pos[0, 0], pos[1, 0], pos[2, 0], " " + gs, fontsize=6),
+                pos,
+            ))
+        limit = radius + float(orbit["altitude_km"]) + 500
+        for setter in (ax.set_xlim, ax.set_ylim, ax.set_zlim):
+            setter(-limit, limit)
+        ax.set_box_aspect((1, 1, 1))
+        ax.set_axis_off()
+        title = ax.set_title(f"{epoch:%Y-%m-%d} 00:00 UTC", fontsize=9)
+        slider_ax = fig.add_axes([0.15, 0.03, 0.7, 0.03])
+        slider = Slider(slider_ax, "min", 0, minutes[-1], valinit=0, valstep=1)
+
+        def _update(value):
+            k = int(value)
+            for marker, label, (_name, _color, pos) in zip(markers, labels, tracks):
+                marker.set_data_3d([pos[0, k]], [pos[1, k]], [pos[2, k]])
+                label.set_position_3d((pos[0, k], pos[1, k], pos[2, k]))
+            for marker, label, pos in station_marks:
+                marker.set_data_3d([pos[0, k]], [pos[1, k]], [pos[2, k]])
+                label.set_position_3d((pos[0, k], pos[1, k], pos[2, k]))
+            title.set_text(f"{epoch + timedelta(minutes=k):%Y-%m-%d %H:%M} UTC")
+            fig.canvas.draw_idle()
+
+        slider.on_changed(_update)
+        canvas.draw()
+        popup._keep = (fig, slider)  # the slider must stay referenced to keep working
 
     def _on_pass_losses_changed(self) -> None:
         """A loss checkbox changed: show what is applied and flag the budgets."""
@@ -1880,6 +1959,17 @@ class LinkBudgetApp:
             "satellites together. Each station tracks one satellite at a time; when several are in view, "
             "the one with more data on board is served and the others wait (conflict).",
         )
+        self.stats_backup_var = tk.BooleanVar(value=False)
+        backup_check = ttk.Checkbutton(
+            station_box, text="Use backup antennas", variable=self.stats_backup_var
+        )
+        backup_check.pack(anchor="w", pady=(2, 0))
+        _add_tooltip(
+            backup_check,
+            "Normally one antenna per site is used and the others are backups. Checked: every antenna of a "
+            "station (last column of ground_stations.txt) serves a satellite at the same time, a what-if "
+            "for the constellation statistics.",
+        )
 
         buttons = ttk.Frame(inputs)
         buttons.pack(side=tk.RIGHT, anchor="n")
@@ -1930,8 +2020,8 @@ class LinkBudgetApp:
 
         self.stats_station_table = _small_table(
             station_frame,
-            ("Station", "Served [min/day]", "Volume [MB/day]", "Busy [%]", "Contention [min/day]"),
-            (110, 110, 110, 70, 135),
+            ("Station", "Antennas", "Served [min/day]", "Volume [MB/day]", "Busy [%]", "Contention [min/day]"),
+            (110, 70, 110, 110, 70, 135),
         )
         self.stats_sat_table = _small_table(
             self.stats_sat_frame,
@@ -2125,6 +2215,7 @@ class LinkBudgetApp:
         self.stats_button.state(["disabled"])
         self.stats_export_button.state(["disabled"])
         state = {"done": 0, "total": inputs["days"]}
+        use_backups = self.stats_backup_var.get()  # read here: Tk variables stay in the main thread
         names = ", ".join(st.name for st in inputs["stations"])
         self.stats_status_var.set(f"Computing {inputs['days']} days for {names}...")
 
@@ -2144,9 +2235,11 @@ class LinkBudgetApp:
                     min_margin_db=budget["required_margin"] if budget else 0.0,
                     latency_requirement=budget["latency_requirement"] if budget else None,
                 )
+                # One antenna per site, the others backups, unless the backups are used too.
+                antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
                 if inputs["constellation"] and budget:
                     state["result"] = pass_statistics.simulate_constellation(
-                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                        days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
                     )
                 else:
                     combined = [pass_statistics.combine_stations(day["SAT"]) for day in days]
@@ -2156,7 +2249,7 @@ class LinkBudgetApp:
                     if budget:
                         # Use of each station of the network (one satellite: no conflicts).
                         state["result"].stations = pass_statistics.simulate_constellation(
-                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, **kwargs
+                            days, step_s, generated_bps=budget["generated_bps"] or 0.0, antennas=antennas, **kwargs
                         ).stations
             except Exception as exc:  # shown to the user in the main thread
                 state["error"] = exc
@@ -2270,7 +2363,8 @@ class LinkBudgetApp:
         for i, st in enumerate(getattr(result, "stations", []) or []):
             self.stats_station_table.insert(
                 "", "end", tags=("evenrow" if i % 2 == 0 else "oddrow",),
-                values=(st["station"], _fmt(st["served_min_per_day"]), _fmt(st["downloaded_mb_per_day"], 0),
+                values=(st["station"], st.get("antennas", 1), _fmt(st["served_min_per_day"]),
+                        _fmt(st["downloaded_mb_per_day"], 0),
                         _fmt(st["busy_pct"]), _fmt(st["contention_min_per_day"])),
             )
         for i, sat in enumerate(getattr(result, "satellites", []) or []):
@@ -2557,7 +2651,7 @@ class LinkBudgetApp:
         d_text = self.d_gs_entry.get().strip()
         d_gs = calculations.GROUND_STATION_DIAMETERS.get(gs_name) or (float(d_text) if d_text else 3.0)
         _path, mask = self._station_mask(gs_name)
-        return link_core.Station(gs_name, lat, lon, alt_m, d_gs=d_gs, mask=mask)
+        return link_core.Station(gs_name, lat, lon, alt_m, d_gs=d_gs, mask=mask, **link_core.station_gt_fields(gs_name))
 
     def _link_inputs(self) -> "link_core.LinkInputs":
         """The link budget inputs of the Downlink and Uplink tabs (and of the static tabs they use).
@@ -4769,6 +4863,21 @@ class LinkBudgetApp:
 
             info_bitrate_kbps = bitrate_mbps * 1000.0 / overhead if overhead else None
 
+            station_gt_model, station_gt_scaling = None, 0.0
+            if rx_is_ground_station:
+                # The station's own G/T (catalogue) or the G/T GS scaled with the diameter.
+                try:
+                    station = link_core.Station(gs_name, lat_gs, lon_gs, alt_gs_m, d_gs=d_gs,
+                                                **link_core.station_gt_fields(gs_name))
+                    station_gt_model = self._gt_model()
+                    if station.gt_dbk is not None:
+                        gt, station_gt_model = link_core.station_gt(station, gt, None, station_gt_model)
+                    else:
+                        station_gt_scaling = self._gt_scaling_db(d_gs)
+                except ValueError as exc:
+                    _input_error(exc)
+                    return
+
             try:
                 budget = calculate_fixed_elevation_link_budget(
                     freq=freq,
@@ -4790,8 +4899,8 @@ class LinkBudgetApp:
                     required_ebno=required_ebno,
                     ionospheric_s4_ref=iono_s4_ref,
                     ionospheric_s4_ref_freq_mhz=iono_s4_ref_freq,
-                    gt_model=self._gt_model() if rx_is_ground_station else None,
-                    gt_diameter_scaling_db=self._gt_scaling_db(d_gs) if rx_is_ground_station else 0.0,
+                    gt_model=station_gt_model if rx_is_ground_station else None,
+                    gt_diameter_scaling_db=station_gt_scaling if rx_is_ground_station else 0.0,
                     tx_power_w=tx_power_w,
                     antenna_circuit_loss_db=ant_circuit_loss_db,
                     vswr=vswr,

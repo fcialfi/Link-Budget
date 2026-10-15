@@ -159,3 +159,17 @@ def test_doppler_rate_matches_the_derivative_of_the_doppler(params):
     assert inside.sum() > 100
     assert np.allclose(rate[inside], numeric[inside], atol=6.0)  # Doppler rounded to 0.01 kHz in the frame
     assert (rate < 0).all()  # a downlink carrier always drifts down along a pass
+
+
+def test_station_own_gt_replaces_the_scaled_mission_gt(params):
+    link = link_core.link_inputs_from_parameters(params)
+    small = link_core.Station("X", 78.2232, 15.6267, 10.0, d_gs=2.4)
+    own = link_core.Station("X", 78.2232, 15.6267, 10.0, d_gs=2.4, gt_dbk=8.0, tsys_k=150.0)
+    assert link.gt_for(small) == pytest.approx(9.9 - 1.938, abs=0.01)
+    assert link.gt_for(own) == 8.0
+    model = link.gt_model_for(own)
+    assert model["tsys_ref_k"] == 150.0 and model["ref_elevation_deg"] == 5.0  # elevation: the mission's
+    frame = link_core.PassAnalysis(TLE, own, link).day(DAY, budget="visible")
+    low = frame.loc[frame["Visible"]].iloc[0]
+    # Near 5° the G/T is close to the station's own value (minus the radome).
+    assert low["G/T GS (dB/K)"] == pytest.approx(8.0 - 0.25, abs=0.2)
