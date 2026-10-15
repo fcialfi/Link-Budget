@@ -35,7 +35,7 @@ from version import APP_AUTHOR, APP_VERSION  # noqa: E402
 
 TITLE = "Satellite Link Budget Tool"
 SUBTITLE = "User Manual"
-ISSUE = "Issue 1.1"
+ISSUE = "Issue 1.2"
 
 # Colours of the application (MATLAB-like theme).
 HEADER = colors.HexColor("#1f2a36")
@@ -546,7 +546,9 @@ def content():
         "The tables give each day (contacts, contact and usable minutes, capacity, downloaded volume, longest "
         "gap, data on board) and each pass (times, stations, maximum elevation, minutes, capacity, downloaded "
         "volume, minimum margin; a pass with no usable minute is shown in orange). <b>Export CSV…</b> writes "
-        "the summary and both tables."))
+        "the summary and both tables. <b>Export PDF…</b> writes an A4 report: the verdict on the latency "
+        "requirement, the inputs used, the summary, the plots and the tables per station, satellite, day and "
+        "pass (the first 400 passes; all of them are in the CSV)."))
 
     # 5 -------------------------------------------------------------------
     story += H1("Downlink tab")

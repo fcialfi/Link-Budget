@@ -198,3 +198,22 @@ def test_constellation_antenna_setup_time():
     assert setup.satellites[1]["served_min_per_day"] == 2.0  # samples 5-6
     assert setup.satellites[1]["conflict_min_per_day"] == 2.0  # waiting for the antenna
     assert setup.satellites[0]["served_min_per_day"] == 2.0
+
+
+def test_statistics_report_pdf(tmp_path):
+    import statistics_report
+
+    d1 = _day(1, [0, 1, 1, 0, 1, 0], [0, 4.0, 1.0, 0, 5.0, 0], station=["", "G", "G", "", "G", ""])
+    result = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, min_margin_db=2.0, generated_bps=1e4,
+                          latency_requirement=(45.0, 90.0))
+    path = tmp_path / "report.pdf"
+    statistics_report.build_statistics_report_pdf(
+        str(path), result,
+        statistics_report.StatisticsReportContext(
+            title="TEST – Statistics", period="TEST over G, 1 day", settings=[("Satellite", "TEST")],
+            summary_lines=["Passes: 2", "Usable time (margin ≥ 2 dB): 20 min/day"], project="Demo",
+            app_version="9.9.9",
+        ),
+    )
+    data = path.read_bytes()
+    assert data.startswith(b"%PDF") and len(data) > 2000
