@@ -2374,6 +2374,17 @@ class LinkBudgetApp:
             summary_frame, textvariable=self.stats_summary_var, justify="left", font=bold_font, wraplength=1100
         ).pack(anchor="w")
 
+        day_row = ttk.Frame(parent)
+        day_row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(day_row, text="Contacts shown:").pack(side=tk.LEFT)
+        self.stats_day_var = tk.StringVar(value=self._STATS_ALL_DAYS)
+        self.stats_day_combo = ttk.Combobox(day_row, textvariable=self.stats_day_var, state="disabled", width=16,
+                                            values=[self._STATS_ALL_DAYS])
+        self.stats_day_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self.stats_day_combo.bind("<<ComboboxSelected>>", lambda _e: self._redraw_statistics_plot())
+        ttk.Label(day_row, text="(whole constellation: the whole period, or one day in detail)",
+                  foreground=PALETTE["text_muted"]).pack(side=tk.LEFT, padx=(6, 0))
+
         self.stats_plot_frame = ttk.Frame(parent, height=720)
         self.stats_plot_frame.pack(fill=tk.X, pady=(10, 0))
         self.stats_plot_frame.pack_propagate(False)
@@ -2454,6 +2465,9 @@ class LinkBudgetApp:
         for widget in self.stats_plot_frame.winfo_children():
             widget.destroy()
         self.stats_figure = None
+        self._stats_plot_args = None
+        self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS], state="disabled")
+        self.stats_day_var.set(self._STATS_ALL_DAYS)
         self.stats_summary_var.set(message)
         self.stats_status_var.set("")
         self.stats_export_button.state(["disabled"])
@@ -2841,16 +2855,39 @@ class LinkBudgetApp:
     _STATS_SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
     _STATS_INK = {"primary": "#0b0b0b", "secondary": "#52514e", "muted": "#8a8984", "grid": "#e6e5e1"}
 
-    def _draw_statistics_plot(self, result, budget) -> None:
+    _STATS_ALL_DAYS = "All days"
+
+    def _redraw_statistics_plot(self) -> None:
+        """Draw the plots of the last statistics again (e.g. for another day of the timeline)."""
+
+        args = getattr(self, "_stats_plot_args", None)
+        if args is not None and getattr(self, "stats_result", None) is not None:
+            self._draw_statistics_plot(*args, keep_day=True)
+
+    def _draw_statistics_plot(self, result, budget, keep_day: bool = False) -> None:
         """Contact timeline on top; data on board and latency (or gaps / per satellite) below."""
 
         from matplotlib.patches import Patch
+
+        self._stats_plot_args = (result, budget)
+        constellation = bool(getattr(result, "satellites", None))
+        # The day selector: the whole period or one day (one row per satellite).
+        days = [f"{d.date:%Y-%m-%d}" for d in result.days]
+        if constellation and len(days) > 1:
+            self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS] + days, state="readonly")
+            if not keep_day or self.stats_day_var.get() not in days:
+                self.stats_day_var.set(self._STATS_ALL_DAYS)
+        else:
+            self.stats_day_combo.configure(values=[self._STATS_ALL_DAYS], state="disabled")
+            self.stats_day_var.set(self._STATS_ALL_DAYS)
+        chosen_day = self.stats_day_var.get()
+        day_index = days.index(chosen_day) if chosen_day in days else None
+        whole_period = constellation and len(days) > 1 and day_index is None
 
         for widget in self.stats_plot_frame.winfo_children():
             widget.destroy()
         ink = self._STATS_INK
         series = self._STATS_SERIES
-        constellation = bool(getattr(result, "satellites", None))
         # Color follows the station (catalogue order), whatever the selection.
         station_color = {
             name: series[k % len(series)] for k, name in enumerate(calculations.GROUND_STATIONS)
@@ -2875,12 +2912,19 @@ class LinkBudgetApp:
                 ax.spines[side].set_visible(False)
             ax.spines["bottom"].set_color(ink["muted"])
 
-        # 1. Contact timeline: one row per day (one satellite) or per satellite (first day).
+        # 1. Contact timeline: one row per day (one satellite) or per satellite
+        # (whole period, or the chosen day).
         passes = result.passes
+        period_start = datetime.combine(result.days[0].date, datetime.min.time()) if result.days else None
+        span_h = 24.0 * max(1, len(result.days)) if whole_period else 24.0
         if constellation:
-            first_day = result.days[0].date if result.days else None
+            first_day = result.days[day_index or 0].date if result.days else None
             rows = [r["satellite"] for r in result.satellites]
-            title = f"Contacts on {first_day:%d %b %Y} (UTC), one row per satellite"
+            if whole_period:
+                title = (f"Contacts from {result.days[0].date:%d %b} to {result.days[-1].date:%d %b %Y} (UTC), "
+                         "one row per satellite")
+            else:
+                title = f"Contacts on {first_day:%d %b %Y} (UTC), one row per satellite"
         else:
             rows = [f"{d.date:%d %b}" for d in result.days][:31]
             title = "Contacts per day (UTC)" + (" — first 31 days" if len(result.days) > 31 else "")
@@ -2889,7 +2933,7 @@ class LinkBudgetApp:
             label, stations = p.stations, p.stations
             if constellation:
                 label, _, stations = p.stations.partition(": ")
-                if first_day is None or p.start.date() != first_day:
+                if first_day is None or (not whole_period and p.start.date() != first_day):
                     continue
             station = stations.split(" + ")[0] if stations else ""
             usable = p.usable_min is None or p.usable_min > 0
@@ -2899,21 +2943,35 @@ class LinkBudgetApp:
             row = rows.index(label) if constellation else rows.index(f"{p.start:%d %b}") if f"{p.start:%d %b}" in rows else None
             if row is None:
                 continue
-            start_h = p.start.hour + p.start.minute / 60 + p.start.second / 3600
             length_h = (p.end - p.start).total_seconds() / 3600
-            # A pass over midnight continues at the start of the next row.
-            pieces = [(row, start_h, min(length_h, 24 - start_h))]
-            if start_h + length_h > 24 and not constellation and row + 1 < len(rows):
-                pieces.append((row + 1, 0.0, start_h + length_h - 24))
+            if whole_period:
+                start_h = (p.start.replace(tzinfo=None) - period_start).total_seconds() / 3600
+                pieces = [(row, start_h, length_h)]
+            else:
+                start_h = p.start.hour + p.start.minute / 60 + p.start.second / 3600
+                # A pass over midnight continues at the start of the next row.
+                pieces = [(row, start_h, min(length_h, 24 - start_h))]
+                if start_h + length_h > 24 and not constellation and row + 1 < len(rows):
+                    pieces.append((row + 1, 0.0, start_h + length_h - 24))
             for r_, x0, w in pieces:
-                ax_time.broken_barh([(x0, max(w, 0.02))], (r_ - 0.36, 0.72), facecolors=color,
-                                    edgecolor="white", linewidth=0.5)
+                # Over several days a pass is a thin bar: no white edge, which would hide it.
+                ax_time.broken_barh([(x0, max(w, span_h / 1500))], (r_ - 0.36, 0.72), facecolors=color,
+                                    edgecolor="white", linewidth=0 if whole_period else 0.5)
         ax_time.set_ylim(len(rows) - 0.5, -0.5)
         ax_time.set_yticks(range(len(rows)))
         ax_time.set_yticklabels(rows)
-        ax_time.set_xlim(0, 24)
-        ax_time.set_xticks(range(0, 25, 2))
-        ax_time.set_xticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
+        ax_time.set_xlim(0, span_h)
+        if whole_period:
+            n = len(result.days)
+            step = 1 if n <= 10 else 2 if n <= 20 else 7
+            ax_time.set_xticks([24.0 * k for k in range(0, n + 1, step)])
+            ax_time.set_xticklabels([f"{(period_start + timedelta(days=k)):%d %b}" for k in range(0, n + 1, step)])
+            if n <= 10:
+                ax_time.set_xticks([6.0 * k for k in range(4 * n + 1) if k % 4], minor=True)
+                ax_time.tick_params(axis="x", which="minor", length=3, colors=ink["muted"])
+        else:
+            ax_time.set_xticks(range(0, 25, 2))
+            ax_time.set_xticklabels([f"{h:02d}:00" for h in range(0, 25, 2)])
         _style(ax_time, title)
         ax_time.grid(False, axis="y")
         used.sort(key=lambda st: list(station_color).index(st) if st in station_color else len(station_color))
