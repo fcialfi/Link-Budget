@@ -11,7 +11,7 @@
       "23:30"
     ],
     "satellites_per_plane": 2,
-    "phasing_deg": 0.0
+    "phasing_deg": 60.0
   },
   "eirp_sat_dbw": 4.51,
   "eirp_gs_dbw": 30.0,
@@ -86,5 +86,9 @@
     "required_margin_db": 3.0,
     "scintillation": false,
     "gt_from_pattern": true
-  }
+  },
+  "statistics_stations": [
+    "Svalbard",
+    "Punta Arenas"
+  ]
 }

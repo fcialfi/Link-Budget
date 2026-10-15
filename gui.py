@@ -1227,6 +1227,13 @@ class LinkBudgetApp:
         if isinstance(latency, dict) and hasattr(self, "stats_latency_var"):
             self.stats_latency_var.set("" if latency.get("minutes") is None else f"{latency['minutes']:g}")
             self.stats_latency_pct_var.set("" if latency.get("percent") is None else f"{latency['percent']:g}")
+        network = payload.get("statistics_stations")
+        if isinstance(network, list) and hasattr(self, "stats_station_list"):
+            # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
+            self.stats_station_list.selection_clear(0, tk.END)
+            for k, name in enumerate(self.stats_station_list.get(0, tk.END)):
+                if name in network:
+                    self.stats_station_list.selection_set(k)
         flows = payload.get("downlink_data_kbps")
         if isinstance(flows, dict) and hasattr(self, "stats_instrument_var"):
             for key, var in (
@@ -5103,6 +5110,9 @@ class LinkBudgetApp:
                     flows[key] = None
             if any(value is not None for value in flows.values()):
                 panel_values["downlink_data_kbps"] = flows
+            network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
+            if network:
+                panel_values["statistics_stations"] = network
             try:
                 latency = {
                     "minutes": float(self.stats_latency_var.get()) if self.stats_latency_var.get().strip() else None,
