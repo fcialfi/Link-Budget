@@ -436,7 +436,7 @@ def content():
         "with the ground stations, and the satellites in their planes (RAAN against argument of latitude). "
         "<b>3D View</b> draws the orbits around the Earth (inertial frame), the satellites and the stations; "
         "drag to rotate, and move the slider to follow the satellites over the first 100 minutes of the day."))
-    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 0°.")
+    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 60°.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
