@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Statistics: real-time telemetry during the passes (Real-time TM [kbps], lbtool.py --realtime), taken from the downlink bit rate.
+- EPS-Sterna, L-band downlink: payload 55.076 kbps, stored HKTM 3.105 kbps (388.1 B/s), events and system logs 1.216 kbps (882 kB per orbit), real-time HKTM 4.616 kbps (577 B/s) during the passes.
 - EPS-Sterna: instrument data rate 55.076 kbps (was 64 kbps in total).
 - Statistics: on-board memory per satellite (On-board Memory [GB], lbtool.py --memory-gb): share used, autonomy without contacts, data lost when full; EPS-Sterna: 4 GB (Mission Data partition).
 

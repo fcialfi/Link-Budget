@@ -1252,6 +1252,7 @@ class LinkBudgetApp:
                 ("instruments", self.stats_instrument_var),
                 ("hktm", self.stats_hktm_var),
                 ("other", self.stats_other_var),
+                ("realtime", self.stats_realtime_var),
             ):
                 var.set("" if flows.get(key) is None else f"{flows[key]:g}")
         if "norad_id" in payload:
@@ -1910,6 +1911,7 @@ class LinkBudgetApp:
         self.stats_instrument_var = tk.StringVar(value="")
         self.stats_hktm_var = tk.StringVar(value="")
         self.stats_other_var = tk.StringVar(value="")
+        self.stats_realtime_var = tk.StringVar(value="")
         self.stats_latency_var = tk.StringVar(value="")
         self.stats_latency_pct_var = tk.StringVar(value="")
         self.stats_setup_var = tk.StringVar(value="")
@@ -1928,6 +1930,9 @@ class LinkBudgetApp:
              "on-board compression), stored on board and sent on this downlink."),
             ("HKTM Rate [kbps]", self.stats_hktm_var,
              "Optional: housekeeping telemetry stored on board and sent on this downlink."),
+            ("Real-time TM [kbps]", self.stats_realtime_var,
+             "Optional: telemetry sent live during the passes, not stored: it takes this part of the "
+             "downlink bit rate, leaving less for the stored data."),
             ("Other Data [kbps]", self.stats_other_var,
              "Optional: anything else sent on this downlink band (e.g. ancillary data). The uplink "
              "(telecommands) is not part of the volume."),
@@ -2204,6 +2209,9 @@ class LinkBudgetApp:
         if any(v is not None and v < 0 for v in flows.values()):
             raise ValueError("The on-board data rates must be positive.")
         given = {name: value for name, value in flows.items() if value}
+        realtime_kbps = _number(self.stats_realtime_var, "Real-time TM [kbps]") or 0.0
+        if realtime_kbps < 0 or realtime_kbps * 1e3 >= link.info_bitrate_bps:
+            raise ValueError("The real-time TM must be positive and below the information bit rate.")
         latency = _number(self.stats_latency_var, "Latency Requirement [min]")
         latency_pct = _number(self.stats_latency_pct_var, "Within [% of data]")
         if latency is not None and (latency <= 0 or not 0 < (latency_pct or 100.0) <= 100):
@@ -2222,7 +2230,9 @@ class LinkBudgetApp:
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
             "required_ebno": float(required_ebno),
             "required_margin": float(required_margin) if required_margin is not None else 0.0,
-            "info_bitrate_bps": link.info_bitrate_bps,
+            # The real-time telemetry takes its share of the downlink during the passes.
+            "info_bitrate_bps": link.info_bitrate_bps - realtime_kbps * 1e3,
+            "realtime_kbps": realtime_kbps,
             "generated_bps": sum(given.values()) * 1e3 if given else None,
             "flows_kbps": given,
             "setup_s": setup_min * 60.0,
@@ -2719,6 +2729,8 @@ class LinkBudgetApp:
             ]
             if budget["flows_kbps"]:
                 rows.append(("On-board data", " + ".join(f"{k} {v:g} kbps" for k, v in budget["flows_kbps"].items())))
+            if budget.get("realtime_kbps"):
+                rows.append(("Real-time TM", f"{budget['realtime_kbps']:g} kbps during the passes"))
             if budget["latency_requirement"]:
                 minutes, percent = budget["latency_requirement"]
                 rows.append(("Latency requirement", f"{percent:g} % of the data within {minutes:g} min"))
@@ -5340,6 +5352,7 @@ class LinkBudgetApp:
                 ("instruments", self.stats_instrument_var),
                 ("hktm", self.stats_hktm_var),
                 ("other", self.stats_other_var),
+                ("realtime", self.stats_realtime_var),
             ):
                 try:
                     flows[key] = float(var.get()) if var.get().strip() else None

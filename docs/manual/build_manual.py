@@ -508,6 +508,8 @@ def content():
         "60 min for 90 % of the data. The summary gives the share of the downloaded data on ground within the "
         "required time, the time within which the required share arrives, and whether the requirement is met. "
         "Saved in the parameters file (latency_requirement).",
+        "<b>Real-time TM</b> (kbps): telemetry sent live during the passes and not stored (e.g. real-time "
+        "HKTM); it takes that part of the downlink bit rate, leaving less for the stored data.",
         "<b>On-board Memory</b> (GB, with the on-board data rates): memory of each satellite for these data, "
         "e.g. 4 GB for one partition. The summary gives the largest share used, the hours without contacts "
         "until it is full and, if it fills, the data lost (the new data are discarded; the latency of the rest "
