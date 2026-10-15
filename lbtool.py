@@ -162,11 +162,13 @@ def cmd_statistics(args) -> None:
             raise SystemExit("Give --required-ebno (no Required Eb/No in the mission parameters).")
         rates = [r for r in (args.instruments, args.hktm, args.other) if r]
         budget_kwargs = dict(
-            info_bitrate_bps=link.info_bitrate_bps,
+            info_bitrate_bps=link.info_bitrate_bps - (args.realtime or 0.0) * 1e3,
             min_margin_db=float(margin or 0.0),
             generated_bps=sum(rates) * 1e3 if rates else None,
             latency_requirement=(args.latency, args.latency_pct) if args.latency else None,
             latency_at_pass_end=bool(args.latency_at_pass_end or (params or {}).get("latency_at_pass_end")),
+            memory_bits=8e9 * (args.memory_gb if args.memory_gb is not None
+                               else float((params or {}).get("memory_gb") or 0.0)) or None,
         )
     satellites = [("SAT", tle)]
     if args.constellation:
@@ -264,6 +266,8 @@ def main(argv=None) -> None:
     stats.add_argument("--required-margin", type=float, help="dB (default: mission parameters)")
     stats.add_argument("--instruments", type=float, help="instrument data rate on the downlink [kbps]")
     stats.add_argument("--hktm", type=float, help="HKTM rate on the downlink [kbps]")
+    stats.add_argument("--realtime", type=float,
+                       help="telemetry sent live during the passes [kbps], taken from the downlink bit rate")
     stats.add_argument("--other", type=float, help="other data rate on the downlink [kbps]")
     stats.add_argument("--constellation", action="store_true",
                        help="all satellites of a custom-orbit constellation (stations shared, one satellite at a time)")
@@ -273,6 +277,9 @@ def main(argv=None) -> None:
     stats.add_argument("--latency-at-pass-end", action="store_true",
                        help="data on ground at the end of their pass (dump complete); default: the mission "
                             "parameters' latency_at_pass_end")
+    stats.add_argument("--memory-gb", type=float,
+                       help="on-board memory per satellite for these data [GB] (default: memory_gb of the "
+                            "mission parameters)")
     stats.add_argument("--min-pass", type=float,
                        help="contacts shorter than this are not used [min] (default 0: all)")
     stats.add_argument("--setup", type=float,

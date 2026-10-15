@@ -253,3 +253,18 @@ def test_latency_at_pass_end():
                                       latency_at_pass_end=True)
     assert c_end.summary["max_latency_min"] == pytest.approx(60.0)
     assert c_end.summary["mean_latency_min"] > c_bit.summary["mean_latency_min"]
+
+
+def test_memory_capacity_and_loss():
+    # 0.75 MB generated per 10-minute sample, contact only in the last sample: up to 4.5 MB on board.
+    d1 = _day(1, [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 5])
+    roomy = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, memory_bits=8 * 9e6)
+    assert roomy.summary["max_memory_use_pct"] == pytest.approx(3.75 / 9 * 100)  # 3.75 MB before the dump
+    assert roomy.summary["lost_mb"] == 0.0
+    assert roomy.summary["memory_autonomy_h"] == pytest.approx(9e6 * 8 / 1e4 / 3600)
+    small = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, memory_bits=8 * 2e6)
+    assert small.summary["lost_mb"] == pytest.approx(3.75 - 2.0 + 0.0, abs=0.76)
+    assert small.summary["max_memory_use_pct"] == pytest.approx(100.0)
+    day = {"S": {"G": _sat_day([0, 0, 0, 0, 0, 1])}}
+    c = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, memory_bits=8 * 2e6)
+    assert c.summary["lost_mb"] > 0 and c.satellites[0]["lost_mb"] > 0
