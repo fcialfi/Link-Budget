@@ -51,28 +51,29 @@ back-off), carrier spacing factor 2 (at least 1 + roll-off), site altitude in km
 ## 10° elevation
 
 Range 1931.2 km, satellite EIRP 5.07 dBW (pattern 0.56 dBi at 64.2° off nadir),
-antenna noise 14.5 K (clear sky at 10°). SatMaster applied a 5.56 dB per-carrier
-back-off (uplink HPA power no longer on MIN); its C/N0 is corrected by +5.56 dB
-to the same EIRP.
+antenna noise 14.5 K (clear sky at 10°). Uplink HPA power fixed at 2.15 W: with
+MIN SatMaster lowers the uplink until the Eb/No target is just met, and the
+transparent transponder backs off (5.56 dB here); 2.15 W gives IBO 0.
 
 | | Tool | SatMaster | Difference |
 |---|---|---|---|
+| EIRP per carrier [dBW] | 5.07 | 5.06 | 0.01 |
 | Free space loss [dB] | 162.81 | 162.81 | 0.00 |
 | Gas, clear [dB] | 0.19 | 0.20 | 0.01 |
-| System noise, clear [K] | 108.8 | 111.26 | 0.10 dB |
-| **C/N0 clear [dB-Hz]** | **78.06** | **77.96** | **0.10** |
-| Tropospheric scintillation [dB] | 0.44 | 0.49 | 0.05 |
-| System noise, rain [K] | 109.9 | 112.69 | 0.11 dB |
-| **C/N0 rain down [dB-Hz]** | **77.57** | **77.40** | **0.17** |
+| Tropospheric scintillation [dB] | 0.44 | 0.44 | 0.00 |
+| System noise, clear / rain [K] | 108.8 / 109.9 | 111.26 / 112.50 | 0.10 dB |
+| **C/N0 clear [dB-Hz]** | **78.06** | **77.94** | **0.12** |
+| **C/N0 rain down [dB-Hz]** | **77.57** | **77.44** | **0.13** |
+| **Eb/No clear [dB]** | **16.14** | **16.02** | **0.12** |
 
-At 10° the scintillation model is valid and the two tools agree on it; the
-remaining 0.1 dB, the same at 3° and 10°, is the 2.5-2.7 K SatMaster adds to
-the system noise.
+At 10° the scintillation model is valid and the two tools give the same value;
+the remaining 0.1 dB, the same at 3° and 10°, is the 2.5-2.7 K SatMaster adds
+to the system noise.
 
 ## Conclusion
 
 Static downlink budget validated against SatMaster Pro: within 0.1 dB in clear
-sky (3° and 10°), 0.2 dB in rain at 10°, 0.45 dB in rain at 3° where the
+sky (3° and 10°), 0.13 dB in rain at 10°, 0.45 dB in rain at 3° where the
 tropospheric scintillation is extrapolated below 5°.
 
 The comparison showed that the tool added sky noise from the tropospheric
