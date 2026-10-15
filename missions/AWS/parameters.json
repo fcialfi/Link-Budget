@@ -78,5 +78,6 @@
   "statistics_stations": [
     "Svalbard",
     "Punta Arenas"
-  ]
+  ],
+  "antenna_setup_min": 7.0
 }
