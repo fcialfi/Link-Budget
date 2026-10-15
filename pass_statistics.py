@@ -355,8 +355,9 @@ def simulate_constellation(
     min_margin_db: float = 0.0,
     generated_bps: float = 0.0,
     latency_requirement: Optional[tuple[float, float]] = None,
+    antennas: Optional[dict[str, int]] = None,
 ) -> ConstellationResult:
-    """Satellites sharing ground stations that track one satellite at a time.
+    """Satellites sharing ground stations whose antennas track one satellite each.
 
     ``days[k][satellite][station]`` are the samples of day k. Every satellite
     generates ``generated_bps`` into its own memory (empty at the start). At
@@ -366,7 +367,9 @@ def simulate_constellation(
     first, each through its best-margin station still free. A satellite that
     could have downloaded but found its stations busy loses that sample
     (conflict). Latency is first in first out per satellite; the system
-    figures put the data of all satellites together.
+    figures put the data of all satellites together. ``antennas`` gives the
+    number of antennas of a station (default 1): it serves that many
+    satellites at a time.
     """
     result = ConstellationResult()
     if not days:
@@ -388,6 +391,11 @@ def simulate_constellation(
     visible = np.stack([np.stack([joined(s, g, "visible") for g in station_names]) for s in sat_names]).astype(bool)
     elevation = np.stack([np.stack([joined(s, g, "elevation_deg") for g in station_names]) for s in sat_names])
     usable = visible & (np.nan_to_num(margin, nan=-np.inf) >= min_margin_db)
+    n_antennas = np.array([max(1, int((antennas or {}).get(g, 1))) for g in station_names])
+    station_usable = usable  # per station, for the contention figures
+    # One slot per antenna: the scheduling below gives each slot one satellite.
+    slot_station = np.repeat(np.arange(len(station_names)), n_antennas)
+    margin, visible, elevation, usable = (a[:, slot_station, :] for a in (margin, visible, elevation, usable))
 
     n_sat, n_st = len(sat_names), len(station_names)
     step_bits = info_bitrate_bps * step_s
@@ -479,7 +487,7 @@ def simulate_constellation(
         result.satellites.append(record)
         # Service windows of this satellite: runs of served samples.
         for first, last in _groups(served_station[s] >= 0):
-            used = [station_names[g] for g in served_station[s, first : last + 1]]
+            used = [station_names[slot_station[g]] for g in served_station[s, first : last + 1]]
             best_el = [elevation[s, served_station[s, i], i] for i in range(first, last + 1)]
             served_margin = [margin[s, served_station[s, i], i] for i in range(first, last + 1)]
             result.passes.append(
@@ -497,15 +505,19 @@ def simulate_constellation(
             )
     result.passes.sort(key=lambda p: p.start)
 
+    served_at = np.where(served_station >= 0, slot_station[np.maximum(served_station, 0)], -1)
     for g, name in enumerate(station_names):
-        served_here = served_station == g
+        served_here = served_at == g
         result.stations.append({
             "station": name,
+            "antennas": int(n_antennas[g]),
             "served_min_per_day": float(np.count_nonzero(served_here)) * step_min / n_days,
             "downloaded_mb_per_day": float(downloaded[served_here].sum()) / 8e6 / n_days,
-            "busy_pct": float(np.count_nonzero(served_here.any(axis=0))) / n * 100.0,
+            # Share of the antenna time in use.
+            "busy_pct": float(np.count_nonzero(served_here)) / (n * n_antennas[g]) * 100.0,
+            # Minutes with more satellites usable than antennas.
             "contention_min_per_day": float(
-                np.count_nonzero(usable[:, g, :].sum(axis=0) > 1)
+                np.count_nonzero(station_usable[:, g, :].sum(axis=0) > n_antennas[g])
             ) * step_min / n_days,
         })
 

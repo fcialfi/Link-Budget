@@ -112,3 +112,64 @@ def test_command_line_lists_the_missions(capsys):
     lbtool.main(["missions"])
     out = capsys.readouterr().out
     assert "AWS" in out and "EPS-Sterna" in out
+
+
+def test_sun_noise_lowers_gt_and_ebno(params):
+    # 17 May 2026 ~20:53:30 UTC: the Sun is about 0.2° from AWS seen from Svalbard.
+    import datetime as dt
+
+    link = link_core.link_inputs_from_parameters(params)
+    quiet = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    day = link_core.utc_midnight(dt.date(2026, 5, 17))
+    with_sun = link_core.PassAnalysis(TLE, SVALBARD, link).day(day)
+    without = link_core.PassAnalysis(TLE, SVALBARD, quiet).day(day)
+    assert "Sun Noise (dB)" not in without and "Sun Separation (°)" in without
+    sample = with_sun["Sun Noise (dB)"].idxmax()
+    assert with_sun.at[sample, "Sun Separation (°)"] < 1.0
+    assert with_sun.at[sample, "Sun Noise (dB)"] > 5.0
+    drop = without.at[sample, "Eb/No (dB)"] - with_sun.at[sample, "Eb/No (dB)"]
+    assert drop == pytest.approx(with_sun.at[sample, "Sun Noise (dB)"], abs=0.02)
+    # Far from the Sun the noise is negligible.
+    far = with_sun["Sun Separation (°)"] > 30
+    assert with_sun.loc[far, "Sun Noise (dB)"].max() < 0.02
+
+
+def test_scintillation_adds_no_sky_noise(params):
+    # Tropospheric scintillation is a fade, not an absorption: it lowers C but not G/T.
+    plain = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    scint = link_core.link_inputs_from_parameters(dict(params, sun_noise=False))
+    scint.scintillation = True
+    a = link_core.PassAnalysis(TLE, SVALBARD, plain).day(DAY, budget="visible")
+    b = link_core.PassAnalysis(TLE, SVALBARD, scint).day(DAY, budget="visible")
+    seen = a["Visible"]
+    assert (b.loc[seen, "Atmospheric Att (dB)"] > a.loc[seen, "Atmospheric Att (dB)"]).all()
+    assert np.allclose(b.loc[seen, "G/T GS (dB/K)"], a.loc[seen, "G/T GS (dB/K)"], atol=0.011)
+
+
+def test_doppler_rate_matches_the_derivative_of_the_doppler(params):
+    link = link_core.link_inputs_from_parameters(params)
+    analysis = link_core.PassAnalysis(TLE, SVALBARD, link, step_s=1)
+    start = datetime.datetime(2026, 10, 14, 1, 11, tzinfo=datetime.timezone.utc)
+    times = [start + datetime.timedelta(seconds=k) for k in range(240)]
+    frame = analysis.day(DAY, budget="visible", times=times)
+    numeric = np.gradient(frame["Doppler Shift (kHz)"].to_numpy(dtype=float) * 1000.0, 1.0)
+    rate = frame["Doppler Rate (Hz/s)"].to_numpy(dtype=float)
+    inside = np.isfinite(numeric)
+    inside[:5] = False  # edges of the one-sided differences
+    assert inside.sum() > 100
+    assert np.allclose(rate[inside], numeric[inside], atol=6.0)  # Doppler rounded to 0.01 kHz in the frame
+    assert (rate < 0).all()  # a downlink carrier always drifts down along a pass
+
+
+def test_station_own_gt_replaces_the_scaled_mission_gt(params):
+    link = link_core.link_inputs_from_parameters(params)
+    small = link_core.Station("X", 78.2232, 15.6267, 10.0, d_gs=2.4)
+    own = link_core.Station("X", 78.2232, 15.6267, 10.0, d_gs=2.4, gt_dbk=8.0, tsys_k=150.0)
+    assert link.gt_for(small) == pytest.approx(9.9 - 1.938, abs=0.01)
+    assert link.gt_for(own) == 8.0
+    model = link.gt_model_for(own)
+    assert model["tsys_ref_k"] == 150.0 and model["ref_elevation_deg"] == 5.0  # elevation: the mission's
+    frame = link_core.PassAnalysis(TLE, own, link).day(DAY, budget="visible")
+    low = frame.loc[frame["Visible"]].iloc[0]
+    # Near 5° the G/T is close to the station's own value (minus the radome).
+    assert low["G/T GS (dB/K)"] == pytest.approx(8.0 - 0.25, abs=0.2)

@@ -13,6 +13,7 @@ import astropy.units as u
 import json
 import os
 from scipy.interpolate import interp1d
+from datetime import timezone as _timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:  # annotations only
@@ -111,8 +112,17 @@ def load_ground_stations(file_path: str | None = None) -> dict[str, tuple[float,
 
 def _read_ground_stations(
     file_path: str | None = None,
+    gt_values: Optional[dict] = None,
+    antennas: Optional[dict] = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[str, float]]:
-    """Stations and antenna diameters (when given) of a ground stations file."""
+    """Stations and antenna diameters (when given) of a ground stations file.
+
+    Optional columns after the diameter: the station's own G/T (dB/K), the
+    elevation it refers to (deg, clear sky), the system noise temperature
+    (K) and the number of antennas; filled into ``gt_values`` as {name:
+    {"gt_dbk", "ref_elevation_deg", "tsys_k"}} (None for an empty field) and
+    ``antennas`` as {name: count}.
+    """
 
     # Default to the current GROUND_STATIONS_FILE, which the GUI may have
     # updated at runtime via reload_ground_stations().
@@ -130,17 +140,27 @@ def _read_ground_stations(
             if not line or line.startswith("#"):
                 continue
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) not in (4, 5):
+            if not 4 <= len(parts) <= 9:
                 raise ValueError(
-                    f"Line {line_no} in {file_path} must have 4 or 5 comma-separated fields"
+                    f"Line {line_no} in {file_path} must have 4 to 9 comma-separated fields: name, latitude, "
+                    "longitude, altitude [, diameter, G/T, G/T elevation, Tsys, antennas]"
                 )
             name, lat_str, lon_str, alt_str = parts[:4]
             try:
                 lat = float(lat_str)
                 lon = float(lon_str)
                 alt = float(alt_str)
-                if len(parts) == 5 and parts[4]:
+                if len(parts) >= 5 and parts[4]:
                     diameters[name] = float(parts[4])
+                extra = ([float(v) if v else None for v in parts[5:8]] + [None, None, None])[:3]
+                if gt_values is not None and extra[0] is not None:
+                    gt_values[name] = {"gt_dbk": extra[0], "ref_elevation_deg": extra[1], "tsys_k": extra[2]}
+                if len(parts) == 9 and parts[8]:
+                    count = int(parts[8])
+                    if count < 1:
+                        raise ValueError("the number of antennas must be at least 1")
+                    if antennas is not None:
+                        antennas[name] = count
             except ValueError as exc:
                 raise ValueError(
                     f"Invalid numeric value on line {line_no} in {file_path}: {exc}"
@@ -160,20 +180,31 @@ def reload_ground_stations(file_path: str) -> dict[str, tuple[float, float, floa
     other modules (e.g. the GUI) immediately see the refreshed catalogue.
     """
 
-    global GROUND_STATIONS_FILE, GROUND_STATIONS, GROUND_STATION_DIAMETERS
+    global GROUND_STATIONS_FILE, GROUND_STATIONS, GROUND_STATION_DIAMETERS, GROUND_STATION_GT
 
     file_path = os.path.abspath(file_path)
-    stations, diameters = _read_ground_stations(file_path)
+    gt_values: dict = {}
+    counts: dict = {}
+    stations, diameters = _read_ground_stations(file_path, gt_values, counts)
     GROUND_STATIONS_FILE = file_path
     GROUND_STATIONS = stations
     GROUND_STATION_DIAMETERS = diameters
+    GROUND_STATION_ANTENNAS.clear()
+    GROUND_STATION_ANTENNAS.update(counts)
+    GROUND_STATION_GT = gt_values
     return stations
 
 
 # Antenna diameter (m) of the stations whose catalogue line gives it.
 GROUND_STATION_DIAMETERS: dict[str, float] = {}
+# Own G/T of the stations whose catalogue line gives it (see _read_ground_stations).
+GROUND_STATION_GT: dict[str, dict] = {}
+# Number of antennas of the stations whose catalogue line gives it (default 1).
+GROUND_STATION_ANTENNAS: dict[str, int] = {}
 try:
-    GROUND_STATIONS, GROUND_STATION_DIAMETERS = _read_ground_stations()
+    GROUND_STATIONS, GROUND_STATION_DIAMETERS = _read_ground_stations(
+        gt_values=GROUND_STATION_GT, antennas=GROUND_STATION_ANTENNAS
+    )
 except Exception as exc:  # pragma: no cover - fallback for packaging/runtime errors
     print(f"Warning: using fallback ground stations: {exc}", file=sys.stderr)
     GROUND_STATIONS = {
@@ -405,16 +436,20 @@ def atmospheric_attenuation_vs_elevation(
     alt_gs: float,
     include_scintillation: bool = True,
     elevations_deg: np.ndarray = ATMOSPHERE_ELEVATION_GRID_DEG,
-) -> tuple[np.ndarray, np.ndarray]:
+    return_absorptive: bool = False,
+):
     """ITU-R slant path attenuation (dB) at each of ``elevations_deg``.
 
     Returns ``(elevations_deg, attenuation_db)``; use
     :func:`interpolate_vs_elevation` for the samples of a pass. On a model
     error the attenuation at :data:`MIN_ELEVATION_DEG` is used everywhere.
+    With ``return_absorptive`` also the absorptive part (gas + cloud + rain,
+    without scintillation), the one that radiates noise:
+    ``(elevations_deg, attenuation_db, absorptive_db)``.
     """
     elevations = np.asarray(elevations_deg, dtype=float)
     try:
-        _, _, _, _, total = itu.atmospheric_attenuation_slant_path(
+        gas, cloud, rain, _scint, total = itu.atmospheric_attenuation_slant_path(
             lat,
             lon,
             freq_ghz,
@@ -429,12 +464,18 @@ def atmospheric_attenuation_vs_elevation(
             include_scintillation=include_scintillation,
         )
         values = np.asarray(getattr(total, "value", total), dtype=float) * np.ones_like(elevations)
+        absorptive = sum(
+            np.asarray(getattr(part, "value", part), dtype=float) for part in (gas, cloud, rain)
+        ) * np.ones_like(elevations)
     except Exception as e:
         print(f"Error calculating atmospheric attenuation vs elevation: {e}", file=sys.stderr)
         values = np.full_like(
             elevations,
             atmospheric_attenuation(lat, lon, freq_ghz, p, d_gs, alt_gs, include_scintillation),
         )
+        absorptive = np.full_like(elevations, atmospheric_attenuation(lat, lon, freq_ghz, p, d_gs, alt_gs, False))
+    if return_absorptive:
+        return elevations, values, absorptive
     return elevations, values
 
 
@@ -510,6 +551,95 @@ def gt_reference_sky_noise_k(
         include_scintillation=False,
     )
     return sky_noise_temperature_k(atm["total"])
+
+
+# --- Sun in the ground station beam (Sun outage) ---------------------------
+
+SUN_ANGULAR_RADIUS_DEG = 0.2665
+_SUN_SOLID_ANGLE_SR = math.pi * math.radians(SUN_ANGULAR_RADIUS_DEG) ** 2
+_BOLTZMANN = 1.380649e-23
+_SPEED_OF_LIGHT = 299792458.0
+
+
+def sun_altaz_deg(lat_deg: float, lon_deg: float, times_utc) -> tuple[np.ndarray, np.ndarray]:
+    """Elevation and azimuth (deg, from North clockwise) of the Sun seen from a place.
+
+    Low-precision solar coordinates of the Astronomical Almanac (about 0.01°
+    from 1950 to 2050), with the Greenwich mean sidereal time; no refraction.
+    ``times_utc`` is a sequence of timezone-aware datetimes.
+    """
+    epoch = np.datetime64("2000-01-01T12:00:00")
+    stamps = np.array([np.datetime64(t.astimezone(_timezone.utc).replace(tzinfo=None), "us") for t in times_utc])
+    n = (stamps - epoch) / np.timedelta64(1, "D")
+    mean_lon = np.radians((280.460 + 0.9856474 * n) % 360.0)
+    anomaly = np.radians((357.528 + 0.9856003 * n) % 360.0)
+    ecl_lon = mean_lon + np.radians(1.915) * np.sin(anomaly) + np.radians(0.020) * np.sin(2 * anomaly)
+    obliquity = np.radians(23.439 - 0.0000004 * n)
+    ra = np.arctan2(np.cos(obliquity) * np.sin(ecl_lon), np.cos(ecl_lon))
+    dec = np.arcsin(np.sin(obliquity) * np.sin(ecl_lon))
+    gmst = np.radians((280.46061837 + 360.98564736629 * n) % 360.0)
+    hour_angle = gmst + math.radians(lon_deg) - ra
+    lat = math.radians(lat_deg)
+    elevation = np.arcsin(np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(hour_angle))
+    azimuth = np.arctan2(
+        -np.cos(dec) * np.sin(hour_angle),
+        np.sin(dec) * np.cos(lat) - np.cos(dec) * np.sin(lat) * np.cos(hour_angle),
+    )
+    return np.degrees(elevation), np.degrees(azimuth) % 360.0
+
+
+def angular_separation_deg(el1, az1, el2, az2) -> np.ndarray:
+    """Angle (deg) between two directions given as elevation and azimuth (deg)."""
+    el1, az1, el2, az2 = (np.radians(np.asarray(v, dtype=float)) for v in (el1, az1, el2, az2))
+    cos_sep = np.sin(el1) * np.sin(el2) + np.cos(el1) * np.cos(el2) * np.cos(az1 - az2)
+    return np.degrees(np.arccos(np.clip(cos_sep, -1.0, 1.0)))
+
+
+def sun_brightness_temperature_k(freq_ghz: float, solar_flux_sfu: Optional[float] = None) -> float:
+    """Brightness temperature (K) of the solar disk at ``freq_ghz``.
+
+    From the solar flux density at that frequency (1 sfu = 1e-22 W/m²/Hz,
+    both polarisations), T = S λ² / (2 k Ω_sun); without it, the quiet Sun
+    T = 120000 f^-0.75 (f in GHz), about 49 sfu at 1.7 GHz. At solar maximum
+    the flux at L/S band is typically 100-250 sfu.
+    """
+    if solar_flux_sfu is None:
+        return 120000.0 * freq_ghz ** -0.75
+    wavelength = _SPEED_OF_LIGHT / (freq_ghz * 1e9)
+    return solar_flux_sfu * 1e-22 * wavelength ** 2 / (2 * _BOLTZMANN * _SUN_SOLID_ANGLE_SR)
+
+
+def ground_antenna_gain_dbi(off_axis_deg, peak_gain_dbi: float, diameter_m: float, freq_ghz: float) -> np.ndarray:
+    """Gain of a ground station dish ``off_axis_deg`` from its axis.
+
+    Gaussian main beam with half-power beamwidth 70 λ/D, and outside it the
+    ITU-R S.465 side-lobe envelope 32 - 25 log10(θ) dBi (at least -10 dBi)
+    when it is above the main beam.
+    """
+    theta = np.maximum(np.asarray(off_axis_deg, dtype=float), 1e-6)
+    wavelength = _SPEED_OF_LIGHT / (freq_ghz * 1e9)
+    beamwidth = 70.0 * wavelength / diameter_m
+    main = peak_gain_dbi - 12.0 * (theta / beamwidth) ** 2
+    side = np.maximum(32.0 - 25.0 * np.log10(np.maximum(theta, 1.0)), -10.0)
+    return np.where(theta < beamwidth, main, np.minimum(np.maximum(main, side), peak_gain_dbi))
+
+
+def sun_noise_temperature_k(
+    separation_deg,
+    sun_elevation_deg,
+    peak_gain_dbi: float,
+    diameter_m: float,
+    freq_ghz: float,
+    solar_flux_sfu: Optional[float] = None,
+) -> np.ndarray:
+    """Antenna noise temperature (K) added by the Sun ``separation_deg`` from the antenna axis.
+
+    The solar disk, small compared with the beam, adds T_sun Ω_sun G(θ) / 4π;
+    nothing when the Sun is below the horizon.
+    """
+    gain = 10 ** (ground_antenna_gain_dbi(separation_deg, peak_gain_dbi, diameter_m, freq_ghz) / 10.0)
+    added = sun_brightness_temperature_k(freq_ghz, solar_flux_sfu) * _SUN_SOLID_ANGLE_SR * gain / (4 * math.pi)
+    return np.where(np.asarray(sun_elevation_deg) > -SUN_ANGULAR_RADIUS_DEG, added, 0.0)
 
 
 # Sections of ``parameters.json`` holding the inputs of the fixed-elevation
@@ -1342,7 +1472,8 @@ def calculate_fixed_elevation_link_budget(
         condition_gt = gt
         noise: Dict[str, float] = {}
         if gt_model is not None:
-            sky = sky_noise_temperature_k(atm["total"])
+            # Only absorption radiates noise: tropospheric scintillation is left out (ITU-R P.618 §3).
+            sky = sky_noise_temperature_k(atm["gas"] + atm["cloud"] + atm["rain"])
             condition_gt = ground_station_gt_dbk(
                 gt, gt_model["tsys_ref_k"], sky_ref_k, sky, gt_model.get("radome_loss_db", 0.0)
             )
@@ -1503,6 +1634,36 @@ def prepare_topocentric_data(
     return altitudes_deg, slant_ranges_km, doppler_khz, off_boresight_deg
 
 
+
+
+EARTH_MU_KM3_S2 = 398600.4418
+EARTH_ROTATION_RAD_S = 7.2921159e-5
+
+
+def doppler_rate_hz_s(sat: "Satellite", gs: "GroundStation", times: "Time", freq_hz: float) -> np.ndarray:
+    """Rate of change of the Doppler shift (Hz/s) of a carrier at ``freq_hz``.
+
+    From the range acceleration, r'' = (|v|² - r'²)/r + r̂·(a_sat - a_gs),
+    with the relative position and velocity of the satellite seen from the
+    station (inertial frame), the satellite's two-body gravity and the
+    station's centripetal acceleration: Doppler rate = -f r'' / c. Exact at
+    every sample, also at the closest approach where a numerical derivative
+    over the 30 s step would round off the peak.
+    """
+    diff = (sat - gs).at(times)
+    los = diff.position.km
+    rel_vel = diff.velocity.km_per_s
+    distance = np.linalg.norm(los, axis=0)
+    los_unit = los / distance
+    range_rate = np.sum(rel_vel * los_unit, axis=0)
+    r_sat = sat.at(times).position.km
+    a_sat = -EARTH_MU_KM3_S2 * r_sat / np.linalg.norm(r_sat, axis=0) ** 3
+    r_gs = gs.at(times).position.km
+    a_gs = -EARTH_ROTATION_RAD_S ** 2 * np.vstack([r_gs[0], r_gs[1], np.zeros_like(r_gs[2])])
+    range_accel = (np.sum(rel_vel ** 2, axis=0) - range_rate ** 2) / distance + np.sum(
+        los_unit * (a_sat - a_gs), axis=0
+    )
+    return -range_accel / C_KM_S * freq_hz
 
 
 def calculate_link_budget_parameters(

@@ -129,6 +129,11 @@ def cmd_passes(args) -> None:
             text += f"  min Eb/No {frame.loc[in_pass & frame['Visible'], 'Eb/No (dB)'].min():6.2f} dB"
         if "PFD Margin (dB)" in frame:
             text += f"  min PFD margin {frame.loc[in_pass & frame['Visible'], 'PFD Margin (dB)'].min():+5.1f} dB"
+        if "Doppler Rate (Hz/s)" in frame:
+            text += (f"  Doppler ±{frame.loc[in_pass & frame['Visible'], 'Doppler Shift (kHz)'].abs().max():.1f} kHz,"
+                     f" max {frame.loc[in_pass & frame['Visible'], 'Doppler Rate (Hz/s)'].abs().max():.0f} Hz/s")
+        if "Sun Noise (dB)" in frame and frame.loc[in_pass & frame["Visible"], "Sun Noise (dB)"].max() >= 0.5:
+            text += f"  SUN NOISE up to {frame.loc[in_pass & frame['Visible'], 'Sun Noise (dB)'].max():.1f} dB"
         print(text)
     if args.output:
         frame[frame["Elevation (°)"] > 0].to_csv(args.output, index=False)
@@ -185,7 +190,10 @@ def cmd_statistics(args) -> None:
         print(f"\r{k + 1}/{args.days} days", end="", file=sys.stderr, flush=True)
     if args.constellation and link:
         kwargs = dict(budget_kwargs, generated_bps=budget_kwargs.get("generated_bps") or 0.0)
-        result = pass_statistics.simulate_constellation(days, link_core.STEP_S, **kwargs)
+        result = pass_statistics.simulate_constellation(
+            days, link_core.STEP_S,
+            antennas=dict(calculations.GROUND_STATION_ANTENNAS) if args.backup_antennas else {}, **kwargs
+        )
     else:
         result = pass_statistics.aggregate(
             [pass_statistics.combine_stations(day["SAT"]) for day in days], link_core.STEP_S, **budget_kwargs
@@ -245,6 +253,9 @@ def main(argv=None) -> None:
     stats.add_argument("--other", type=float, help="other data rate on the downlink [kbps]")
     stats.add_argument("--constellation", action="store_true",
                        help="all satellites of a custom-orbit constellation (stations shared, one satellite at a time)")
+    stats.add_argument("--backup-antennas", action="store_true",
+                       help="with --constellation: every antenna of a station serves a satellite at the same "
+                            "time (default: one antenna per site, the others backups)")
     stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
     stats.add_argument("--latency-pct", type=float, default=100.0,
                        help="share of the data that must meet it [%%] (default 100)")

@@ -39,6 +39,11 @@ class Station:
     d_gs: float = 3.0
     # Minimum elevation (deg) per azimuth, as (azimuths, elevations), or None.
     mask: Optional[tuple] = None
+    # The station's own G/T (dB/K, clear sky), the elevation it refers to and its
+    # system noise temperature (K); None: the mission's G/T scaled with the diameter.
+    gt_dbk: Optional[float] = None
+    gt_ref_elevation_deg: Optional[float] = None
+    tsys_k: Optional[float] = None
 
     @property
     def alt_km(self) -> float:
@@ -79,6 +84,10 @@ class LinkInputs:
     pfd_limit_low: Optional[float] = None
     pfd_limit_high: Optional[float] = None
     occupied_bandwidth_hz: Optional[float] = None
+    # Sun in the ground antenna beam: noise added to the system noise temperature
+    # (needs gt_model). Solar flux at the downlink frequency in sfu; None: quiet Sun.
+    sun_noise: bool = True
+    solar_flux_sfu: Optional[float] = None
 
     @property
     def p(self) -> float:
@@ -89,8 +98,33 @@ class LinkInputs:
         return self.bitrate_bps / self.overhead
 
     def gt_for(self, station: Station) -> float:
-        """G/T at the reference elevation of the station's antenna (diameter scaling)."""
-        return self.gt_gs + calculations.gt_diameter_scaling_db(station.d_gs, self.gt_ref_diameter_m)
+        """G/T at the reference elevation of the station's antenna (see :func:`station_gt`)."""
+        return station_gt(station, self.gt_gs, self.gt_ref_diameter_m, self.gt_model)[0]
+
+    def gt_model_for(self, station: Station) -> Optional[dict]:
+        """The G/T-versus-elevation inputs for ``station`` (see :func:`station_gt`)."""
+        return station_gt(station, self.gt_gs, self.gt_ref_diameter_m, self.gt_model)[1]
+
+
+def station_gt(
+    station: Station, gt_gs: float, gt_ref_diameter_m: Optional[float], gt_model: Optional[dict]
+) -> tuple[float, Optional[dict]]:
+    """(G/T at the reference elevation, G/T-versus-elevation inputs) of a station.
+
+    The station's own G/T when the catalogue gives it, with its reference
+    elevation and system noise temperature when given and the mission's
+    otherwise (a G/T is usually specified at 5°, clear sky); the radome loss
+    is the mission's. Without its own G/T: the mission's G/T GS scaled with
+    the diameter, 20 log10(D / D_ref).
+    """
+    if station.gt_dbk is None:
+        return gt_gs + calculations.gt_diameter_scaling_db(station.d_gs, gt_ref_diameter_m), gt_model
+    model = dict(gt_model or {"ref_elevation_deg": calculations.MIN_ELEVATION_DEG, "radome_loss_db": 0.0})
+    if station.gt_ref_elevation_deg is not None:
+        model["ref_elevation_deg"] = station.gt_ref_elevation_deg
+    if station.tsys_k is not None:
+        model["tsys_ref_k"] = station.tsys_k
+    return station.gt_dbk, (model if model.get("tsys_ref_k") else None)
 
 
 def _value(section: dict, key: str, default=None):
@@ -226,25 +260,28 @@ class PassAnalysis:
     def _downlink_tables(self):
         if "dl" not in self._tables:
             link, st = self.link, self.station
-            grid, attenuation = calculations.atmospheric_attenuation_vs_elevation(
+            grid, attenuation, absorptive = calculations.atmospheric_attenuation_vs_elevation(
                 st.lat, st.lon, link.freq_ghz, link.p, st.d_gs, st.alt_km,
-                include_scintillation=link.scintillation,
+                include_scintillation=link.scintillation, return_absorptive=True,
             )
             gt_ref = link.gt_for(st)
-            if link.gt_model is None:
+            tsys_grid = None
+            model = link.gt_model_for(st)
+            if model is None:
                 gt_grid = np.full_like(attenuation, gt_ref)
             else:
-                model = link.gt_model
                 if model["tsys_ref_k"] <= 0:
                     raise ValueError("The system noise temperature must be greater than 0 K.")
                 sky_ref = calculations.gt_reference_sky_noise_k(
                     st.lat, st.lon, link.freq_ghz, st.d_gs, st.alt_km, model["ref_elevation_deg"]
                 )
+                # Only absorption radiates noise: scintillation is left out (ITU-R P.618 §3).
+                sky = calculations.sky_noise_temperature_k(absorptive)
                 gt_grid = calculations.ground_station_gt_dbk(
-                    gt_ref, model["tsys_ref_k"], sky_ref,
-                    calculations.sky_noise_temperature_k(attenuation), model.get("radome_loss_db", 0.0),
+                    gt_ref, model["tsys_ref_k"], sky_ref, sky, model.get("radome_loss_db", 0.0),
                 )
-            self._tables["dl"] = (grid, attenuation, gt_grid)
+                tsys_grid = model["tsys_ref_k"] - sky_ref + sky
+            self._tables["dl"] = (grid, attenuation, gt_grid, tsys_grid)
         return self._tables["dl"]
 
     def _uplink_table(self):
@@ -258,13 +295,13 @@ class PassAnalysis:
 
     def atmosphere_summary(self) -> str:
         """One line on the attenuation and G/T used, for the window."""
-        grid, attenuation, gt_grid = self._downlink_tables()
+        grid, attenuation, gt_grid, _tsys = self._downlink_tables()
         low = calculations.MIN_ELEVATION_DEG
         text = (
             f"Atmospheric Att (dB): {calculations.interpolate_vs_elevation(low, grid, attenuation):.3f} "
             f"at {low:g}° El, {attenuation[-1]:.3f} at 90° (per sample)\n"
         )
-        if self.link.gt_model is None:
+        if self.link.gt_model_for(self.station) is None:
             text += f"G/T GS {gt_grid[0]:g} dB/K at all elevations"
         else:
             text += (
@@ -272,9 +309,35 @@ class PassAnalysis:
                 f"{gt_grid[-1]:.2f} at 90°"
             )
         scaling = calculations.gt_diameter_scaling_db(self.station.d_gs, self.link.gt_ref_diameter_m)
-        if scaling:
+        if self.station.gt_dbk is not None:
+            model = self.link.gt_model_for(self.station) or {}
+            text += (
+                f" (station G/T {self.station.gt_dbk:g} dB/K at "
+                f"{model.get('ref_elevation_deg', calculations.MIN_ELEVATION_DEG):g}°"
+                + ("" if self.station.gt_ref_elevation_deg is not None else ", elevation assumed")
+                + (f", Tsys {model['tsys_ref_k']:g} K" if model.get("tsys_ref_k") else "")
+                + ")"
+            )
+        elif scaling:
             text += f" ({self.station.d_gs:g} m antenna: {scaling:+.2f} dB from the reference antenna)"
+        if self._sun_applies():
+            flux = self.link.solar_flux_sfu
+            text += (
+                f"\nSun noise: {'quiet Sun' if flux is None else f'{flux:g} sfu'}, "
+                f"+{self._sun_noise_k(np.array([0.0]), np.array([90.0]))[0]:.0f} K on the antenna axis"
+            )
         return text
+
+    def _sun_applies(self) -> bool:
+        return bool(self.link is not None and self.link.sun_noise and self.link.gt_model_for(self.station) is not None)
+
+    def _sun_noise_k(self, separation_deg, sun_elevation_deg):
+        """Noise temperature (K) the Sun adds to the station antenna."""
+        link = self.link
+        peak_gain = link.gt_for(self.station) + 10 * np.log10(link.gt_model_for(self.station)["tsys_ref_k"])
+        return calculations.sun_noise_temperature_k(
+            separation_deg, sun_elevation_deg, peak_gain, self.station.d_gs, link.freq_ghz, link.solar_flux_sfu
+        )
 
     # --- one day ---
 
@@ -298,13 +361,19 @@ class PassAnalysis:
             self.min_elevation_deg, calculations.mask_elevation_deg(azimuth, self.station.mask)
         )
         visible = np.asarray(altitudes) >= required
+        sun_el, sun_az = calculations.sun_altaz_deg(self.station.lat, self.station.lon, times)
+        sun_sep = calculations.angular_separation_deg(altitudes, azimuth, sun_el, sun_az)
         frame = pd.DataFrame({"Time (UTC)": times})
         if self.link is None:
             frame["Elevation (°)"] = np.round(altitudes, 2)
             frame["Slant Range (km)"] = np.round(slant_ranges, 2)
         else:
             frame = self._budget(frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight,
-                                 visible, budget)
+                                 visible, budget, sun_sep, sun_el)
+        frame["Sun Separation (°)"] = np.round(sun_sep, 2)
+        if self.link is not None:
+            rate = calculations.doppler_rate_hz_s(self.sat, self.gs, sky_times, self.link.freq_ghz * 1e9)
+            frame["Doppler Rate (Hz/s)"] = np.round(rate, 1)
         frame["Azimuth (°)"] = np.round(azimuth, 2)
         frame["Min Elevation (°)"] = np.round(required, 2)
         frame["Visible"] = visible
@@ -312,11 +381,18 @@ class PassAnalysis:
             self._add_pfd(frame)
         return frame
 
-    def _budget(self, frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight, visible, budget):
+    def _budget(self, frame, times, sky_times, altitudes, slant_ranges, dopplers, off_boresight, visible, budget,
+                sun_sep, sun_el):
         link, st = self.link, self.station
-        grid, attenuation, gt_grid = self._downlink_tables()
+        grid, attenuation, gt_grid, tsys_grid = self._downlink_tables()
         atm = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, attenuation)
         gt = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, gt_grid)
+        sun_db = None
+        if self._sun_applies():
+            # The Sun raises the system noise temperature: G/T and Eb/No drop by the same dB.
+            tsys = calculations.interpolate_vs_elevation(np.asarray(altitudes, dtype=float), grid, tsys_grid)
+            sun_db = 10 * np.log10(1.0 + self._sun_noise_k(sun_sep, sun_el) / tsys)
+            gt = gt - sun_db
         ul_atm = None
         ul = link.uplink
         if ul is not None:
@@ -346,6 +422,8 @@ class PassAnalysis:
                 **link.loss_kwargs,
             )
             params["G/T GS (dB/K)"] = float(gt[i])
+            if sun_db is not None:
+                params["Sun Noise (dB)"] = round(float(sun_db[i]), 2)
             for key in _ROUNDED:
                 if params.get(key) is not None:
                     params[key] = round(params[key], _DECIMALS.get(key, 2))
@@ -463,6 +541,8 @@ def link_inputs_from_parameters(params: dict) -> LinkInputs:
         pfd_limit_low=dl_values["pfd_limit"] if dl_values else None,
         pfd_limit_high=dl_values["pfd_limit_high"] if dl_values else None,
         occupied_bandwidth_hz=bitrate * (1 + rolloff) / spectral_eff if rolloff is not None and spectral_eff else None,
+        sun_noise=bool(params.get("sun_noise", True)),
+        solar_flux_sfu=_number(params, "solar_flux_sfu"),
     )
 
 
@@ -474,7 +554,16 @@ def station_from_catalogue(name: str, default_diameter_m: float = 3.0) -> Statio
         name, lat, lon, alt_m,
         d_gs=calculations.GROUND_STATION_DIAMETERS.get(name, default_diameter_m),
         mask=calculations.load_horizon_mask(mask_path) if mask_path else None,
+        **station_gt_fields(name),
     )
+
+
+def station_gt_fields(name: str) -> dict:
+    """The station's own G/T fields of the catalogue (empty dict when it gives none)."""
+    own = calculations.GROUND_STATION_GT.get(name)
+    if not own:
+        return {}
+    return {"gt_dbk": own["gt_dbk"], "gt_ref_elevation_deg": own["ref_elevation_deg"], "tsys_k": own["tsys_k"]}
 
 
 def constellation_tles(orbit: dict, epoch: datetime, name: str) -> list[tuple[str, tuple[str, str]]]:

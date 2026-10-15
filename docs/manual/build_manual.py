@@ -330,7 +330,8 @@ def content():
     story += TABLE([
         ["File", "Content"],
         ["license.key", "Licence of the installation (see 2.2). Required when the build checks licences."],
-        ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m), optional antenna diameter (m)."],
+        ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m); optional antenna "
+                                "diameter (m), own G/T, its elevation, Tsys and number of antennas."],
         ["satellites.json", "The satellites of the Satellite menu (chapter 4.1)."],
         ["missions\\<name>\\", "Per mission: parameters.json (project name, link budget parameters, static inputs; chapter "
                                  "9), antenna_pattern.txt and tle.txt (chapter 4.1)."],
@@ -432,8 +433,10 @@ def content():
     story.append(P(
         "<b>Show Constellation</b> lists every satellite (plane, RAAN, argument of latitude and inclination "
         "at 00:00 UTC of the analysed date) and draws the ground tracks over the first 100 minutes of the day "
-        "with the ground stations, and the satellites in their planes (RAAN against argument of latitude)."))
-    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 0°.")
+        "with the ground stations, and the satellites in their planes (RAAN against argument of latitude). "
+        "<b>3D View</b> draws the orbits around the Earth (inertial frame), the satellites and the stations; "
+        "drag to rotate, and move the slider to follow the satellites over the first 100 minutes of the day."))
+    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 60°.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
@@ -517,7 +520,11 @@ def content():
         "the system figures (served minutes, conflicts, volume, memory, latency and requirement), the Per "
         "Satellite table the figures of each satellite, the Per Station table the use of each station "
         "(served minutes, volume, busy time, minutes with more than one satellite usable).",
-        "The <b>Per Station</b> table is also given for one satellite and several stations.",
+        "The <b>Per Station</b> table is also given for one satellite and several stations. Normally one "
+        "antenna per site is used, the others being backups; with <b>Use backup antennas</b> (lbtool.py: "
+        "--backup-antennas) a station serves as many satellites at a time as its antennas (last column of "
+        "ground_stations.txt). Busy is the share of the antenna time in use, Contention the minutes with more "
+        "satellites usable than antennas.",
     ])
     story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
                  "requirement 90 % within 100 min.")
@@ -560,10 +567,22 @@ def content():
          "T_sky) / Tsys). At low elevation and in rain the G/T is lower. Ground spill-over is not modelled. "
          "Empty: constant G/T."],
         ["Radome Loss [dB]", "G/T degradation of the radome (e.g. 0.25 dB), subtracted from the G/T."],
+        ["Solar Flux [sfu]", "Solar flux density at the downlink frequency, for the Sun noise (1 sfu = "
+                             "1e-22 W/m²/Hz). Typically 100–250 sfu at L/S band at solar maximum. Empty: quiet "
+                             "Sun, T = 120000 × f^−0.75 K (about 80 000 K, 49 sfu, at 1.7 GHz)."],
         ["Link Availability [%]", "Rain and clouds are taken for p = 100 − availability [% of time]."],
         ["Other Attenuations [dB]", "Any further fixed loss."],
         ["Tropospheric scintillation", "ITU-R P.618 tropospheric scintillation; off by default (valid from 5° "
                                        "of elevation and about 4–20 GHz)."],
+        ["Sun noise (Sun outage)", "On by default, with a System Noise Temperature. When the Sun is near the "
+                                   "ground antenna beam it adds T_sun × Ω_sun × G(θ) / 4π to the system noise "
+                                   "temperature (θ: angle Sun–satellite seen from the station; Gaussian main "
+                                   "beam of 70 λ/D, peak gain G/T + 10 log10 Tsys; ITU-R S.465 side lobes "
+                                   "32 − 25 log10 θ outside it). G/T and Eb/No drop by 10 log10(1 + ΔT/Tsys). "
+                                   "Sun position: Astronomical Almanac low-precision formulae (about 0.01°). "
+                                   "A 3 m antenna at 1.7 GHz with the quiet Sun on its axis: +510 K, about "
+                                   "−6 dB with Tsys 150 K. The contact list marks the passes with at least "
+                                   "0.5 dB (☀ SUN NOISE)."],
         ["Coded Bit Rate [Mbps]", "Channel bit rate of the transmitter (coding included)."],
         ["Overhead (coded / info)", "Coded bit rate / information bit rate (coding × formatting)."],
         ["Demodulator Loss [dB]", "Receiver implementation loss."],
@@ -594,7 +613,14 @@ def content():
         ["EIRP (dBW)", "Tx chain + S/C antenna gain (or EIRP SAT at the pattern peak − roll-off)."],
         ["Atmospheric Att (dB)", "ITU-R attenuation at the elevation of the sample (the model is evaluated "
                                  "on an elevation grid and interpolated)."],
-        ["G/T GS (dB/K)", "Ground station G/T at the elevation of the sample (see the parameters)."],
+        ["G/T GS (dB/K)", "Ground station G/T at the elevation of the sample, with the Sun noise (see the "
+                          "parameters)."],
+        ["Sun Separation (°)", "Angle between the Sun and the satellite seen from the station."],
+        ["Doppler Rate (Hz/s)", "Rate of change of the downlink Doppler shift, −f r''/c, from the range "
+                                "acceleration (relative velocity, satellite gravity, station rotation): exact at "
+                                "every sample, peak at the closest approach. Shown dashed in the Doppler plot; "
+                                "the contact list gives the largest Doppler shift and rate of each pass."],
+        ["Sun Noise (dB)", "G/T degradation from the Sun in the antenna beam."],
         ["Link Losses (dB)", "Ionospheric + polarisation + multipath, from the static tab."],
         ["C/(No+Io) (dBHz)", "Carrier to noise (and interference) density after the demodulator losses."],
         ["Eb/No (dB)", "C/(No+Io) − 10·log10(transfer frame bit rate)."],
@@ -762,8 +788,16 @@ def content():
     story += TABLE([
         ["File", "Format"],
         ["tle.txt", "The two TLE lines (an optional name line before them is accepted)."],
-        ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m] and, optionally, antenna diameter [m]; "
-                                "lines starting with # are comments."],
+        ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m] and, "
+                                "optionally (fields may be left empty): antenna diameter [m]; the station's own "
+                                "measured G/T [dB/K, clear sky], which replaces the mission G/T GS scaled with the "
+                                "diameter; the elevation of that G/T [deg] (empty: the mission's G/T Reference "
+                                "Elevation, usually 5°: G/T values are normally given at 5°, clear sky; if it was "
+                                "measured at zenith instead, the low-elevation G/T is about 0.8 dB optimistic at "
+                                "L band); its system noise temperature [K] (empty: the mission's); the number of "
+                                "antennas (default 1), backups included: used by the statistics only with Use "
+                                "backup antennas. E.g. Svalbard,78.2232,15.6267,10,3.0,,,,3. Lines "
+                                "starting with # are comments."],
         ["antenna_pattern.txt", "One point per line: angle from nadir [deg], gain [dBi], separated by a "
                                 "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "
                                 "used (66° from nadir at 3° and 628 km)."],

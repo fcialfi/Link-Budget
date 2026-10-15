@@ -74,5 +74,9 @@
     "required_margin_db": 3.0,
     "scintillation": false,
     "gt_from_pattern": true
-  }
+  },
+  "statistics_stations": [
+    "Svalbard",
+    "Punta Arenas"
+  ]
 }
