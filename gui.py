@@ -949,7 +949,13 @@ class LinkBudgetApp:
                 self._set_link_budget_enabled(False)
                 self.mission_status_var.set(f"Parameters not valid ({exc}): contact analysis only.")
         else:
+            # Nothing of the previous mission stays in the fields.
+            self._apply_parameters({})
             self.current_param_file = self.catalogue.mission_file(sat, missions.PARAMETERS_FILE)
+            if hasattr(self, "stats_source_var"):
+                self.stats_source_var.set(self._statistics_source_text())
+            if self.param_file_var is not None:
+                self.param_file_var.set("Parameters: none")
             self._set_link_budget_enabled(False)
             self.mission_status_var.set(
                 f"No link budget parameters for {sat.name}: contact analysis only. To add the link budget, "
@@ -1236,27 +1242,39 @@ class LinkBudgetApp:
 
         The JSON structure should provide keys such as ``eirp_sat_dbw`` or
         ``frequency_ghz``. See the README for the full schema and example.
-        Missing keys are ignored so the user can provide only the fields
-        they need. The optional ``fixed_elevation_downlink`` /
-        ``fixed_elevation_uplink`` sections hold the inputs of the static
-        (fixed-elevation) link budget tabs, which are refilled from them.
+        Missing keys leave their fields empty (or at their defaults), so
+        nothing is carried over from the mission loaded before. The optional
+        ``fixed_elevation_downlink`` / ``fixed_elevation_uplink`` sections
+        hold the inputs of the static (fixed-elevation) link budget tabs,
+        which are refilled from them (reset to the defaults when missing).
         Raises on any parsing problem, mirroring :meth:`_apply_tle_file`.
         """
 
         with open(file_path, "r", encoding="utf-8") as f:
             payload = json.load(f)
+        if not isinstance(payload, dict):
+            raise ValueError("the parameters file does not hold a JSON object")
+        self._apply_parameters(payload)
+        self.current_param_file = os.path.abspath(file_path)
+        if hasattr(self, "stats_source_var"):
+            self.stats_source_var.set(self._statistics_source_text())
+        if self.param_file_var is not None:
+            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
+
+    def _apply_parameters(self, payload: dict) -> None:
+        """Fill every parameter field from ``payload``; a field it does not give is cleared."""
 
         field_map = self._parameter_entries()
 
         for key, entry in field_map.items():
-            if key in payload and entry is not None:
-                entry.delete(0, tk.END)
-                # null leaves the field empty (e.g. C/Io: no interferer).
-                if payload[key] is not None:
-                    entry.insert(0, str(payload[key]))
+            if entry is None:
+                continue
+            entry.delete(0, tk.END)
+            # Missing or null leaves the field empty (e.g. C/Io: no interferer).
+            if payload.get(key) is not None:
+                entry.insert(0, str(payload[key]))
 
-        if "project_name" in payload:
-            self.project_var.set(str(payload["project_name"] or ""))
+        self.project_var.set(str(payload.get("project_name") or ""))
         # The statistics fields belong to the mission: cleared when its file does not give them.
         latency = payload.get("latency_requirement")
         if hasattr(self, "stats_latency_var"):
@@ -1272,8 +1290,9 @@ class LinkBudgetApp:
             memory = payload.get("memory_gb")
             self.stats_memory_var.set("" if memory is None else f"{memory:g}")
         network = payload.get("statistics_stations")
-        if isinstance(network, list) and hasattr(self, "stats_station_list"):
-            # The mission's station network (e.g. Svalbard + Punta Arenas for the global data).
+        if hasattr(self, "stats_station_list"):
+            # The mission's station network (e.g. Svalbard + Punta Arenas for the global data); none when not given.
+            network = network if isinstance(network, list) else []
             self.stats_station_list.selection_clear(0, tk.END)
             for k, name in enumerate(self.stats_station_list.get(0, tk.END)):
                 if name in network:
@@ -1288,20 +1307,14 @@ class LinkBudgetApp:
                 ("realtime", self.stats_realtime_var),
             ):
                 var.set("" if flows.get(key) is None else f"{flows[key]:g}")
-        if "norad_id" in payload:
-            self.norad_var.set("" if payload["norad_id"] is None else str(payload["norad_id"]))
+        self.norad_var.set("" if payload.get("norad_id") is None else str(payload["norad_id"]))
 
         for section in calculations.FIXED_LINK_BUDGET_SECTIONS.values():
-            if isinstance(payload.get(section), dict):
-                self.static_lb_values[section] = payload[section]
-                if section in self._static_lb_appliers:
-                    self._static_lb_appliers[section](payload[section])
-        self.current_param_file = os.path.abspath(file_path)
-        if hasattr(self, "stats_source_var"):
-            self.stats_source_var.set(self._statistics_source_text())
-
-        if self.param_file_var is not None:
-            self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
+            # A missing section resets the static link budget to its defaults.
+            values = payload.get(section) if isinstance(payload.get(section), dict) else {}
+            self.static_lb_values[section] = values
+            if section in self._static_lb_appliers:
+                self._static_lb_appliers[section](values)
 
         self.update_link_budget_derived()
         self.set_analysis_stale()
