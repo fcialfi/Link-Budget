@@ -541,7 +541,7 @@ def link_inputs_from_parameters(params: dict) -> LinkInputs:
         pfd_limit_low=dl_values["pfd_limit"] if dl_values else None,
         pfd_limit_high=dl_values["pfd_limit_high"] if dl_values else None,
         occupied_bandwidth_hz=bitrate * (1 + rolloff) / spectral_eff if rolloff is not None and spectral_eff else None,
-        sun_noise=bool(params.get("sun_noise", True)),
+        sun_noise=params.get("sun_noise") is not False,  # null or missing: on
         solar_flux_sfu=_number(params, "solar_flux_sfu"),
     )
 

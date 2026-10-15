@@ -1384,6 +1384,15 @@ class LinkBudgetApp:
     # Editors: ground stations and mission parameters
     # ------------------------------------------------------------------
 
+    def _write_parameters(self, path: str, payload: dict) -> None:
+        """Write a parameters.json in the standard form: every known key, null when unused."""
+
+        custom = bool(self.current_sat.custom_orbit) if self.current_sat is not None else "orbit" in payload
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(mission_schema.standardize(payload, custom), f, indent=2, ensure_ascii=False)
+            f.write("\n")
+
     def edit_ground_stations(self) -> None:
         """Table of the ground station catalogue: add, edit, delete, save as CSV."""
 
@@ -1610,10 +1619,7 @@ class LinkBudgetApp:
 
         def _save():
             try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
+                self._write_parameters(path, payload)
             except Exception as exc:
                 messagebox.showerror("Mission Parameters", f"Could not save: {exc}", parent=win)
                 return
@@ -3104,9 +3110,7 @@ class LinkBudgetApp:
                         "memory_gb", "statistics_stations"):
                 payload.pop(key, None)  # cleared fields are removed from the file
             payload.update(self._statistics_parameters())
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-                f.write("\n")
+            self._write_parameters(path, payload)
         except Exception as exc:
             messagebox.showerror("Save Statistics Values", f"Could not save: {exc}")
             return
@@ -5725,6 +5729,8 @@ class LinkBudgetApp:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values
                 )
+                with open(file_path, encoding="utf-8") as f:
+                    self._write_parameters(file_path, json.load(f))
             except Exception as exc:
                 messagebox.showerror("Save Error", f"Unable to save the parameters: {exc}", parent=win)
                 return
