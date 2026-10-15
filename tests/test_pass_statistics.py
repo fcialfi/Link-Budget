@@ -174,3 +174,13 @@ def test_constellation_station_with_two_antennas_serves_both():
     assert station["served_min_per_day"] == 5.0
     assert station["contention_min_per_day"] == 0.0
     assert station["busy_pct"] == pytest.approx(5 / 12 * 100)
+
+
+def test_on_board_series_follows_the_memory():
+    d1 = _day(1, [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 5])
+    result = ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    times, on_board = result.on_board_series
+    assert len(times) == 6 and times[0] == d1.start
+    # 0.75 MB generated per sample, all of it downloaded in the last one.
+    assert on_board == pytest.approx([0.75, 1.5, 2.25, 3.0, 3.75, 0.0])
+    assert ps.aggregate([d1], step_s=600, info_bitrate_bps=1e6).on_board_series is None
