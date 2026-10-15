@@ -1264,6 +1264,8 @@ class LinkBudgetApp:
                 if section in self._static_lb_appliers:
                     self._static_lb_appliers[section](payload[section])
         self.current_param_file = os.path.abspath(file_path)
+        if hasattr(self, "stats_source_var"):
+            self.stats_source_var.set(self._statistics_source_text())
 
         if self.param_file_var is not None:
             self.param_file_var.set(f"Parameters: {os.path.abspath(file_path)}")
@@ -2035,6 +2037,15 @@ class LinkBudgetApp:
         )
         self.stats_pdf_button.pack(fill=tk.X, pady=(6, 0))
         self.stats_pdf_button.state(["disabled"])
+        ttk.Button(buttons, text="Save to Mission", width=14, command=self.save_statistics_to_mission).pack(
+            fill=tk.X, pady=(14, 0)
+        )
+        ttk.Button(buttons, text="Reload", width=14, command=self.reload_statistics_from_mission).pack(
+            fill=tk.X, pady=(6, 0)
+        )
+        self.stats_source_var = tk.StringVar(value="")
+        ttk.Label(buttons, textvariable=self.stats_source_var, foreground=PALETTE["text_muted"],
+                  wraplength=170, justify="left", font=("TkDefaultFont", 8)).pack(anchor="w", pady=(4, 0))
 
         self.stats_progress = ttk.Progressbar(parent, mode="determinate", maximum=1.0)
         self.stats_progress.pack(fill=tk.X, pady=(10, 0))
@@ -2744,6 +2755,84 @@ class LinkBudgetApp:
         else:
             rows.append(("Link budget", "none: contact analysis only"))
         return rows
+
+    def _statistics_parameters(self) -> dict:
+        """The Statistics inputs as parameters.json keys (those given)."""
+
+        values: dict = {}
+        flows = {}
+        for key, var in (
+            ("instruments", self.stats_instrument_var),
+            ("hktm", self.stats_hktm_var),
+            ("other", self.stats_other_var),
+            ("realtime", self.stats_realtime_var),
+        ):
+            try:
+                flows[key] = float(var.get()) if var.get().strip() else None
+            except ValueError:
+                flows[key] = None
+        if any(value is not None for value in flows.values()):
+            values["downlink_data_kbps"] = flows
+        for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
+                         ("memory_gb", self.stats_memory_var)):
+            try:
+                if var.get().strip():
+                    values[key] = float(var.get())
+            except ValueError:
+                pass
+        values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
+        network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
+        if network:
+            values["statistics_stations"] = network
+        try:
+            latency = {
+                "minutes": float(self.stats_latency_var.get()) if self.stats_latency_var.get().strip() else None,
+                "percent": float(self.stats_latency_pct_var.get())
+                if self.stats_latency_pct_var.get().strip() else None,
+            }
+        except ValueError:
+            latency = {"minutes": None}
+        if latency.get("minutes") is not None:
+            values["latency_requirement"] = latency
+        return values
+
+    def _statistics_source_text(self) -> str:
+        path = self.current_param_file
+        return f"Mission values: {path}" if path else "Mission values: none (no parameters file loaded)"
+
+    def save_statistics_to_mission(self) -> None:
+        """Write the Statistics inputs into the parameters file of the selected mission."""
+
+        path = self.current_param_file
+        if not path:
+            path = filedialog.asksaveasfilename(
+                title="Save Statistics Values", defaultextension=".json",
+                filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+            )
+            if not path:
+                return
+        try:
+            payload = {}
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    payload = json.load(f)
+            for key in ("downlink_data_kbps", "latency_requirement", "antenna_setup_min", "min_pass_min",
+                        "memory_gb", "statistics_stations"):
+                payload.pop(key, None)  # cleared fields are removed from the file
+            payload.update(self._statistics_parameters())
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except Exception as exc:
+            messagebox.showerror("Save Statistics Values", f"Could not save: {exc}")
+            return
+        self.current_param_file = os.path.abspath(path)
+        self.stats_source_var.set(f"Mission values saved to {self.current_param_file}")
+
+    def reload_statistics_from_mission(self) -> None:
+        if self.current_param_file and os.path.exists(self.current_param_file):
+            self._apply_parameters_file(self.current_param_file)
+            self.stats_source_var.set(self._statistics_source_text())
 
     def export_statistics_pdf(self) -> None:
         result = getattr(self, "stats_result", None)
@@ -5347,40 +5436,7 @@ class LinkBudgetApp:
             orbit = self._custom_orbit_for_file()
             if orbit is not None:
                 panel_values["orbit"] = orbit
-            flows = {}
-            for key, var in (
-                ("instruments", self.stats_instrument_var),
-                ("hktm", self.stats_hktm_var),
-                ("other", self.stats_other_var),
-                ("realtime", self.stats_realtime_var),
-            ):
-                try:
-                    flows[key] = float(var.get()) if var.get().strip() else None
-                except ValueError:
-                    flows[key] = None
-            if any(value is not None for value in flows.values()):
-                panel_values["downlink_data_kbps"] = flows
-            for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
-                             ("memory_gb", self.stats_memory_var)):
-                try:
-                    if var.get().strip():
-                        panel_values[key] = float(var.get())
-                except ValueError:
-                    pass
-            panel_values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
-            network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
-            if network:
-                panel_values["statistics_stations"] = network
-            try:
-                latency = {
-                    "minutes": float(self.stats_latency_var.get()) if self.stats_latency_var.get().strip() else None,
-                    "percent": float(self.stats_latency_pct_var.get())
-                    if self.stats_latency_pct_var.get().strip() else None,
-                }
-            except ValueError:
-                latency = {"minutes": None}
-            if latency.get("minutes") is not None:
-                panel_values["latency_requirement"] = latency
+            panel_values.update(self._statistics_parameters())
             try:
                 calculations.save_json_section(
                     file_path, section, self.static_lb_values[section], top_level=panel_values

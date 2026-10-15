@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Statistics: Save to Mission and Reload buttons: the statistics inputs are saved in and reloaded from the parameters.json of the selected mission.
+
 ## 1.4.0
 
 ### Statistics
