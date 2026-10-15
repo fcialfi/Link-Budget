@@ -38,6 +38,7 @@ a = Analysis(
         'calculations',
         'static_report',
         'statistics_report',
+        'mission_schema',
         'licensing',
         'version',
         'tle_source',

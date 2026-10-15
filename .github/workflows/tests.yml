@@ -23,6 +23,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyflakes
       - name: Static check (pyflakes)
-        run: pyflakes calculations.py link_core.py pass_statistics.py tle_source.py missions.py static_report.py statistics_report.py lbtool.py version.py
+        run: pyflakes calculations.py link_core.py pass_statistics.py tle_source.py missions.py static_report.py statistics_report.py mission_schema.py lbtool.py version.py
       - name: Tests
         run: pytest -q

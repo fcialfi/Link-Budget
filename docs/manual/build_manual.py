@@ -330,8 +330,9 @@ def content():
     story += TABLE([
         ["File", "Content"],
         ["license.key", "Licence of the installation (see 2.2). Required when the build checks licences."],
-        ["ground_stations.txt", "Ground station catalogue: name, latitude, longitude, altitude (m); optional antenna "
-                                "diameter (m), own G/T, its elevation, Tsys and number of antennas."],
+        ["ground_stations.csv", "Ground station catalogue (CSV with header, opens in Excel): name, latitude, longitude, "
+                                "altitude (m); optional antenna diameter (m), own G/T, its elevation, Tsys and number "
+                                "of antennas. Edit Stations... edits it as a table."],
         ["satellites.json", "The satellites of the Satellite menu (chapter 4.1)."],
         ["missions\\<name>\\", "Per mission: parameters.json (project name, link budget parameters, static inputs; chapter "
                                  "9), antenna_pattern.txt and tle.txt (chapter 4.1)."],
@@ -393,7 +394,11 @@ def content():
         "edited). Each satellite has a folder <b>missions/&lt;name&gt;</b> next to the program:"))
     story += BUL([
         "<b>parameters.json</b>: the link budget parameters of the mission (all the fields of the Downlink, "
-        "Uplink and Static LB tabs). When it is present they are loaded and the link budget is available.",
+        "Uplink and Static LB tabs). When it is present they are loaded and the link budget is available. "
+        "<b>Mission Parameters…</b>, next to the Satellite menu, shows the whole file as a table grouped by "
+        "subject (mission, orbit, downlink, ground station, uplink, statistics, static link budgets), with "
+        "units and descriptions: double-click a value to change it (an empty value removes it), Save writes "
+        "the file and loads the values in the window.",
         "Without parameters.json only the <b>contact analysis</b> is done: the passes with their times, "
         "duration and maximum elevation. The Downlink, Uplink and Static LB tabs are disabled. To add the "
         "link budget, copy the parameters.json of a similar mission (e.g. AWS) into the folder and edit it.",
@@ -454,8 +459,10 @@ def content():
         "The NORAD ID is read from and saved to the parameters file (key norad_id; AWS is 60543). Without "
         "internet access the TLE already loaded is kept: copy the TLE from a web page into tle.txt instead.",
         "<b>Date</b> (YYYY-MM-DD): the day analysed (00:00–24:00 UTC, 30 s step).",
-        "<b>Ground Station</b>: the station of the pass analysis, from the catalogue; <b>Load Ground "
-        "Stations…</b> reads another catalogue. The line below shows which file is in use.",
+        "<b>Ground Station</b>: the station of the pass analysis, from the catalogue (ground_stations.csv); "
+        "<b>Load Ground Stations…</b> reads another catalogue and <b>Edit Stations…</b> shows the catalogue "
+        "as a table to add, change or delete stations (position, diameter, own G/T and Tsys, antennas) and "
+        "save it. The line below shows which file is in use.",
         "<b>Min Elevation [deg]</b> (default 5°) and the station's <b>horizon mask</b>: a sample is in "
         "contact only above both. The mask is the file horizon_masks\\&lt;station&gt;.txt next to the program "
         "(two columns: azimuth from North and minimum elevation, linear between the points; see "
@@ -547,7 +554,7 @@ def content():
         "The <b>Per Station</b> table is also given for one satellite and several stations. Normally one "
         "antenna per site is used, the others being backups; with <b>Use backup antennas</b> (lbtool.py: "
         "--backup-antennas) a station serves as many satellites at a time as its antennas (last column of "
-        "ground_stations.txt). Busy is the share of the antenna time in use, Contention the minutes with more "
+        "ground_stations.csv). Busy is the share of the antenna time in use, Contention the minutes with more "
         "satellites usable than antennas.",
     ])
     story += FIG("statistics_plots", "Statistics plots: AWS over Svalbard, 104 kbps on board, latency "
@@ -582,7 +589,7 @@ def content():
         ["C/Io [dBHz]", "Carrier to interference density. Leave empty when there is no interferer."],
         ["G/T GS [dB/K]", "Ground station figure of merit of the reference antenna, at the reference "
                           "elevation in clear sky (Svalbard 3 m: 9.9 dB/K)."],
-        ["Antenna Diameter GS [m]", "Used for a station without a diameter in ground_stations.txt (5th "
+        ["Antenna Diameter GS [m]", "Used for a station without a diameter in ground_stations.csv (5th "
                                     "column): ITU-R attenuation model, 3 dB beamwidth and G/T scaling."],
         ["G/T Reference Diameter [m]", "Diameter of the antenna the G/T GS refers to. A station with another "
                                        "diameter gets G/T + 20 log10(D / Dref) (same feed and receiver: a "
@@ -815,16 +822,16 @@ def content():
     story += TABLE([
         ["File", "Format"],
         ["tle.txt", "The two TLE lines (an optional name line before them is accepted)."],
-        ["ground_stations.txt", "One station per line: name, latitude [deg], longitude [deg], altitude [m] and, "
-                                "optionally (fields may be left empty): antenna diameter [m]; the station's own "
-                                "measured G/T [dB/K, clear sky], which replaces the mission G/T GS scaled with the "
-                                "diameter; the elevation of that G/T [deg] (empty: the mission's G/T Reference "
-                                "Elevation, usually 5°: G/T values are normally given at 5°, clear sky; if it was "
-                                "measured at zenith instead, the low-elevation G/T is about 0.8 dB optimistic at "
-                                "L band); its system noise temperature [K] (empty: the mission's); the number of "
-                                "antennas (default 1), backups included: used by the statistics only with Use "
-                                "backup antennas. E.g. Svalbard,78.2232,15.6267,10,3.0,,,,3. Lines "
-                                "starting with # are comments."],
+        ["ground_stations.csv", "CSV with the header name, latitude_deg, longitude_deg, altitude_m (required) and the "
+                                "optional columns (cells may be left empty): antenna_diameter_m; gt_dbk, the "
+                                "station's own measured G/T [dB/K, clear sky], which replaces the mission G/T GS "
+                                "scaled with the diameter; gt_elevation_deg, the elevation of that G/T (empty: the "
+                                "mission's G/T Reference Elevation, usually 5°: G/T values are normally given at 5°, "
+                                "clear sky; if it was measured at zenith instead, the low-elevation G/T is about "
+                                "0.8 dB optimistic at L band); tsys_k (empty: the mission's); antennas (default 1), "
+                                "backups included: used by the statistics only with Use backup antennas. Excel's "
+                                "semicolon-separated CSV is accepted; the old ground_stations.csv without header "
+                                "is still read. Edit Stations... (Orbit & Passes) shows and edits it as a table."],
         ["antenna_pattern.txt", "One point per line: angle from nadir [deg], gain [dBi], separated by a "
                                 "comma, tabs, spaces or a semicolon. It should cover the lowest elevation "
                                 "used (66° from nadir at 3° and 628 km)."],
@@ -856,7 +863,7 @@ def content():
         ["The program stops with a licence message", "See 2.2."],
         ["Fields empty at startup", "parameters.json or tle.txt are not next to the executable (or not valid): "
                                     "copy them there, or load them from the Orbit &amp; Passes tab."],
-        ["'Ground stations: built-in list'", "ground_stations.txt was not found: the built-in stations are "
+        ["'Ground stations: built-in list'", "ground_stations.csv was not found: the built-in stations are "
                                               "used."],
         ["'Pattern: isotropic 0 dBi' (orange)", "The mission folder has no readable antenna pattern: put "
                                                  "an antenna_pattern.txt there."],

@@ -1225,3 +1225,25 @@ def test_ground_station_own_gt_and_antennas(tmp_path):
     assert diameters == {"B": 2.4}
     assert gt == {"B": {"gt_dbk": 8.1, "ref_elevation_deg": None, "tsys_k": 135.0}}
     assert antennas == {"B": 2, "C": 3}
+
+
+def test_ground_stations_csv_with_header(tmp_path):
+    path = tmp_path / "stations.csv"
+    rows = [
+        {"name": "A", "latitude_deg": 10.0, "longitude_deg": 20.0, "altitude_m": 30.0},
+        {"name": "B", "latitude_deg": 11.0, "longitude_deg": 21.0, "altitude_m": 31.0, "antenna_diameter_m": 2.4,
+         "gt_dbk": 8.1, "tsys_k": 135.0, "antennas": 2},
+    ]
+    calculations.write_ground_stations(str(path), rows)
+    assert path.read_text(encoding="utf-8").splitlines()[0].startswith("name,latitude_deg")
+    gt, antennas = {}, {}
+    stations, diameters = calculations._read_ground_stations(str(path), gt, antennas)
+    assert stations == {"A": (10.0, 20.0, 30.0), "B": (11.0, 21.0, 31.0)}
+    assert diameters == {"B": 2.4} and antennas == {"B": 2}
+    assert gt == {"B": {"gt_dbk": 8.1, "ref_elevation_deg": None, "tsys_k": 135.0}}
+    # Excel with a semicolon separator, columns in another order, optional ones missing.
+    excel = tmp_path / "excel.csv"
+    excel.write_text("﻿name;altitude_m;latitude_deg;longitude_deg;antennas\nC;5;1.5;2.5;3\n", encoding="utf-8")
+    antennas = {}
+    stations, _ = calculations._read_ground_stations(str(excel), {}, antennas)
+    assert stations == {"C": (1.5, 2.5, 5.0)} and antennas == {"C": 3}
