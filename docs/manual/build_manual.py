@@ -497,7 +497,7 @@ def content():
         "than one day; without internet the saved one is used.",
     ])
     story.append(P(
-        "A mission not launched yet (e.g. EPS-Sterna) has "
+        "A mission not launched yet has a "
         "<b>custom orbit</b>, given by its mean elements: <b>altitude</b> (mean semi-major axis minus the "
         "equatorial radius), <b>eccentricity</b>, argument of perigee <b>ω</b> (90° for a frozen orbit), "
         "<b>inclination</b> (empty: computed for a sun-synchronous orbit), on the <b>Custom orbit</b> row. "
@@ -510,23 +510,24 @@ def content():
         "the pass analysis and the link budgets. The program builds a "
         "synthetic TLE with its epoch at the analysed date (also with <b>Generate TLE</b>), with the mean "
         "motion set so that the nodal period is that of the J2 theory: the pass times do not drift over the "
-        "day. Passes and link budgets are then computed as for a launched satellite. EPS-Sterna uses its "
-        "reference orbit: 595.6 km, e = 0.001214, ω = 90°, i = 97.794°, planes at 15:30, 19:30 and 23:30 "
-        "(nodal period 96.716 min, altitude over the ellipsoid 600–628 km). SGP4 adds its short-period terms "
-        "to the mean elements, so the instantaneous altitude swings a few km more than in the reference "
-        "table; the mean altitude and the pass times are those of the reference orbit. The orbit is saved in "
+        "day. Passes and link budgets are then computed as for a launched satellite. The example constellation "
+        "of the figures (Example-Constellation, an invented mission) has 650 km, e = 0.001, ω = 90°, "
+        "inclination computed for a sun-synchronous orbit (97.986°), planes at 10:30 and 22:30, 3 satellites "
+        "per plane, phasing 60°. SGP4 adds its short-period terms to the mean elements, so the instantaneous "
+        "altitude swings a few km around the mean one; the mean altitude and the pass times are those of the "
+        "mean elements. The orbit is saved in "
         "the orbit section of the mission's parameters.json with <b>Save</b> (Static LB tabs); the "
         "Statistics tab can use the whole constellation. To change the orbits: edit the fields (a new plane "
         "list or Sats/plane updates the plane and satellite menus), check them with <b>Show "
         "Constellation</b>, then Save."))
-    story += FIG("custom_orbit", "EPS-Sterna selected: custom orbit, constellation and synthetic TLE.")
+    story += FIG("custom_orbit", "Example-Constellation selected: custom orbit, constellation and synthetic TLE.")
     story.append(P(
         "<b>Show Constellation</b> lists every satellite (plane, RAAN, argument of latitude and inclination "
         "at 00:00 UTC of the analysed date) and draws the ground tracks over the first 100 minutes of the day "
         "with the ground stations, and the satellites in their planes (RAAN against argument of latitude). "
         "<b>3D View</b> draws the orbits around the Earth (inertial frame), the satellites and the stations; "
         "drag to rotate, and move the slider to follow the satellites over the first 100 minutes of the day."))
-    story += FIG("constellation", "Show Constellation: 3 planes × 2 satellites, phasing 60°.")
+    story += FIG("constellation", "Show Constellation: 2 planes × 3 satellites, phasing 60°.")
     story.append(P(
         "<b>Project Name</b> is shown in the window title, in the PDF report (page header and above "
         "the title), in the proposed PDF file name and in the CSV exports. It is read from and saved to the "
@@ -605,12 +606,11 @@ def content():
         "<b>On-board Memory</b> (GB, with the on-board data rates): memory of each satellite for these data, "
         "e.g. 4 GB for one partition. The summary gives the largest share used, the hours without contacts "
         "until it is full and, if it fills, the data lost (the new data are discarded; the latency of the rest "
-        "is then approximate). Saved in the parameters file (memory_gb: 4 GB, the Mission Data partition, "
-        "for EPS-Sterna; 64 GB per band in total); lbtool.py --memory-gb.",
+        "is then approximate). Saved in the parameters file (memory_gb); lbtool.py --memory-gb.",
         "<b>Latency at end of pass</b>: the data downloaded during a pass count as on ground at the end of that "
         "pass, when the dump is complete and a product can be processed (the convention of product timeliness "
         "requirements); unchecked, each bit counts when it comes down, a few minutes earlier. Saved in the "
-        "parameters file (latency_at_pass_end, on for EPS-Sterna); lbtool.py --latency-at-pass-end.",
+        "parameters file (latency_at_pass_end); lbtool.py --latency-at-pass-end.",
         "<b>Save to Mission</b> writes these inputs (data rates, latency requirement, memory, minimum pass, "
         "antenna setup, latency at end of pass, ground stations) into the parameters.json of the selected "
         "mission, keeping the rest of the file; they are loaded again whenever the mission is selected. "
@@ -622,8 +622,7 @@ def content():
         "<b>Antenna Setup</b> (min, whole constellation): time to configure an antenna for another satellite. "
         "After serving a satellite the antenna cannot take a different one for this long (the same satellite "
         "resumes at once); a satellite waiting for it counts as a conflict. Saved in the parameters file "
-        "(antenna_setup_min; 0 by default: the EPS-Sterna requirement gives at most 7 min to configure a "
-        "station for a pass from scratch, a worst case; up to about 3 min it has no effect on SVL+PUN).",
+        "(antenna_setup_min; 0 by default).",
         "<b>Gaps</b>: time from the end of a contact to the start of the next one; a gap counts for the day the "
         "next contact starts.",
         "For a satellite without link budget parameters only contacts, contact minutes and gaps are given.",

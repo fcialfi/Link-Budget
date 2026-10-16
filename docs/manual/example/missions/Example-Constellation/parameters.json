@@ -1,0 +1,119 @@
+{
+  "project_name": "Example-Constellation",
+  "norad_id": null,
+  "orbit": {
+    "altitude_km": 650.0,
+    "eccentricity": 0.001,
+    "arg_perigee_deg": 90.0,
+    "inclination_deg": null,
+    "ltan": [
+      "10:30",
+      "22:30"
+    ],
+    "satellites_per_plane": 3,
+    "phasing_deg": 60.0,
+    "extra_satellites": null
+  },
+  "frequency_ghz": 2.25,
+  "eirp_sat_dbw": 6.0,
+  "bitrate_mbps": 4.0,
+  "overhead": 2.322,
+  "rolloff": 0.35,
+  "spectral_efficiency_bpshz": 2.0,
+  "demod_loss_db": 1.5,
+  "link_availability_pct": 99.9,
+  "other_attenuations_db": 0.0,
+  "c_io_dbhz": null,
+  "gt_gs_dbk": 13.5,
+  "gt_ref_diameter_m": 3.7,
+  "gt_ref_elevation_deg": 10.0,
+  "tsys_ref_k": 160.0,
+  "radome_loss_db": 0.3,
+  "sun_noise": null,
+  "solar_flux_sfu": null,
+  "antenna_diameter_m": 3.7,
+  "min_elevation_deg": 5.0,
+  "uplink_frequency_ghz": 2.05,
+  "eirp_gs_dbw": 40.0,
+  "gt_sat_dbk": -25.0,
+  "uplink_bitrate_mbps": 0.064,
+  "uplink_overhead": 2.0,
+  "uplink_rolloff": 0.35,
+  "uplink_spectral_efficiency_bpshz": 1.5,
+  "demod_loss_sat_db": 1.5,
+  "uplink_other_attenuations_db": 0.5,
+  "downlink_data_kbps": {
+    "instruments": 100.0,
+    "hktm": 4.0,
+    "other": null,
+    "realtime": null
+  },
+  "memory_gb": 8.0,
+  "min_pass_min": 2.0,
+  "antenna_setup_min": 0.0,
+  "latency_at_pass_end": true,
+  "product_length_min": null,
+  "product_latency_reference": null,
+  "latency_requirement": {
+    "minutes": 100.0,
+    "percent": 90.0
+  },
+  "statistics_stations": [
+    "Svalbard",
+    "Kangerlussuaq"
+  ],
+  "fixed_elevation_downlink": {
+    "elevation_deg": 5.0,
+    "sat_altitude_km": 650.0,
+    "required_ebno_db": 2.5,
+    "required_margin_db": 3.0,
+    "tx_power_w": 4.0,
+    "ant_circuit_loss_db": 0.8,
+    "vswr": 1.3,
+    "ant_gain_dbi": 0.0,
+    "ant_axial_ratio_db": 2.0,
+    "tx_pointing_loss_db": 0.0,
+    "ionospheric_loss_db": 0.0,
+    "polarisation_loss_db": null,
+    "multipath_loss_db": 0.2,
+    "rx_axial_ratio_db": 1.0,
+    "rx_depointing_deg": 0.1,
+    "rx_beamwidth_deg": null,
+    "modulation_degradation_db": 0.3,
+    "formatting_overhead": 1.01134,
+    "pfd_limit": -154.0,
+    "pfd_limit_high": -144.0,
+    "tolerances": {
+      "tx_power": {
+        "favourable_db": 0.5,
+        "adverse_db": 0.5,
+        "distribution": "TRI"
+      },
+      "propagation": {
+        "favourable_db": 1.0,
+        "adverse_db": 1.0,
+        "distribution": "GAU"
+      }
+    },
+    "station": "Svalbard",
+    "ionospheric_mode": "s4",
+    "iono_s4_ref": 0.2,
+    "iono_s4_ref_freq_mhz": 1575.42,
+    "scintillation": false,
+    "framing_mode": "ccsds",
+    "ccsds_interleaving": 4.0,
+    "ccsds_ocf": true,
+    "ccsds_fecf": false,
+    "ccsds_packet_error_control": true,
+    "eirp_mode": "tx_chain",
+    "ant_gain_from_pattern": true
+  },
+  "fixed_elevation_uplink": {
+    "elevation_deg": 5.0,
+    "sat_altitude_km": 650.0,
+    "required_ebno_db": 9.6,
+    "required_margin_db": 3.0,
+    "scintillation": false,
+    "gt_from_pattern": true
+  }
+}
