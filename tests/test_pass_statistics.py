@@ -268,3 +268,35 @@ def test_memory_capacity_and_loss():
     day = {"S": {"G": _sat_day([0, 0, 0, 0, 0, 1])}}
     c = ps.simulate_constellation([day], step_s=600, info_bitrate_bps=1e6, generated_bps=1e4, memory_bits=8 * 2e6)
     assert c.summary["lost_mb"] > 0 and c.satellites[0]["lost_mb"] > 0
+
+
+def test_products_on_ground():
+    # Data of 0-30 min down at 35 min, of 30-60 min at 70 min, of 60-75 min at 80 min; products of 60 min.
+    raw = [(1800.0, 0.0, 1800.0, 2100.0), (1800.0, 1800.0, 3600.0, 4200.0), (900.0, 3600.0, 4500.0, 4800.0)]
+    data = ps._chunks(raw, 3600.0, "data")
+    # The first product is complete at 70 min; the second (60-120 min) never is and is not counted.
+    assert sum(c[0] for c in data) == pytest.approx(3600.0)
+    assert min(c[1] for c in data) == pytest.approx(600.0)  # newest datum: 70 - 60 min
+    assert max(c[2] for c in data) == pytest.approx(4200.0)  # oldest datum: 70 - 0 min
+    assert [c[1] for c in ps._chunks(raw, 3600.0, "start")] == pytest.approx([4200.0, 4200.0])
+    assert [c[1] for c in ps._chunks(raw, 3600.0, "end")] == pytest.approx([600.0, 600.0])
+    # Without products every chunk is on ground when it comes down.
+    assert ps._chunks(raw)[0] == (1800.0, 300.0, 2100.0)
+    with pytest.raises(ValueError):
+        ps._chunks(raw, 3600.0, "middle")
+
+
+def test_products_in_the_statistics():
+    # One dump at the end of the hour: two 30-min products, both complete at 60 min.
+    d1 = _day(1, [0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 5])
+    kwargs = dict(step_s=600, info_bitrate_bps=1e6, generated_bps=1e4)
+    per_bit = ps.aggregate([d1], **kwargs)
+    by_data = ps.aggregate([d1], product_s=1800, **kwargs)
+    by_start = ps.aggregate([d1], product_s=1800, product_reference="start", **kwargs)
+    by_end = ps.aggregate([d1], product_s=1800, product_reference="end", **kwargs)
+    assert by_data.summary["mean_latency_min"] == pytest.approx(per_bit.summary["mean_latency_min"])
+    assert by_start.summary["mean_latency_min"] == pytest.approx(45.0)  # 60 and 30 min
+    assert by_end.summary["mean_latency_min"] == pytest.approx(15.0)  # 30 and 0 min
+    day = {"S1": {"G": _sat_day([0, 0, 0, 0, 0, 1])}}
+    c_start = ps.simulate_constellation([day], product_s=1800, product_reference="start", **kwargs)
+    assert c_start.summary["mean_latency_min"] == pytest.approx(45.0)
