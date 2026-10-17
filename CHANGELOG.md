@@ -1,8 +1,8 @@
 # Changelog
 
 ## Unreleased
-- Orbit & Passes: Simultaneous with station: a second station (e.g. the one the satellite dumps to); the contact table gives the minutes of each contact during which the satellite sees both stations, and that common window.
-- ground_stations.csv: KDA Tromso (69.6625° N, 18.9408° E, 100 m).
+- Orbit & Passes: Simultaneous with station: a second station (e.g. the one the satellite dumps to) and the elevation above which it counts there (e.g. 3°, above which the satellite transmits to it; empty: the Min Elevation); the contact table gives the minutes of each contact during which the satellite sees both stations, and that common window; with Analyse the common minutes only, the contacts, plots, tables and link budgets cover only those common minutes.
+- ground_stations.csv: TSS Tromso, Tromsø Satellite Station (69.6625° N, 18.9408° E, 100 m).
 - PFD limit and margin no longer shown as columns of the contact and pass tables (still in the exported CSV): a pass, or a sample, above the limit is red, and hovering the contact row says by how much.
 - Contact windows as a table, one row per pass: start, end, direction, duration, max elevation, azimuth at the start, at the max elevation and at the end (degrees and compass direction) and Doppler shift/rate; Columns check boxes choose what is shown, each column as wide as its content; a pass exceeding the PFD limit is red, one with Sun noise orange (hover the row for the detail).
 - Pass plots: the first plot also shows the azimuth (dashed, right axis, 0–360° from North clockwise, broken where the satellite crosses North); title "Elevation and Azimuth".

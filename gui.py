@@ -3541,8 +3541,9 @@ class LinkBudgetApp:
         self._step_s = analysis.step_s
         try:
             self.df_all = analysis.day(obs_date)
-            self.contact_windows = analysis.contacts(self.df_all)
+            self._analysis = analysis
             self._compute_simultaneous()
+            self.contact_windows = self._contact_windows()
             self.atm_label_var.set(analysis.atmosphere_summary() if link else "")
         except ValueError as exc:
             messagebox.showerror("Input Error", str(exc))
@@ -3576,7 +3577,12 @@ class LinkBudgetApp:
             self.contact_listbox.show_column("sim", False)
             return
         tle, obs_date = self._sim_inputs
-        other = link_core.PassAnalysis(tle, self._station(name), None, self._min_elevation(), self._step_s)
+        text = self._sim_el_entry.get().strip()
+        try:
+            min_el = float(text) if text else self._min_elevation()
+        except ValueError:
+            raise ValueError(f"Elevation of the simultaneous station: '{text}' is not a number.") from None
+        other = link_core.PassAnalysis(tle, self._station(name), None, min_el, self._step_s)
         frame = other.day(obs_date)
         self.sim_visible = pd.Series(frame["Visible"].to_numpy(dtype=bool), index=frame["Time (UTC)"])
         self.contact_listbox.show_column("sim", True, f"With {name} [min]")
@@ -3591,9 +3597,29 @@ class LinkBudgetApp:
             messagebox.showerror("Simultaneous with station", str(exc))
             return
         selected = self.contact_listbox.curselection()
+        before = list(self.contact_windows)
+        self.contact_windows = self._contact_windows()
         self.display_contacts(self.contact_windows)
-        if selected and selected[0] < len(self.contact_windows):
-            self.contact_listbox.selection_set(selected[0])
+        if not self.contact_windows:
+            self.clear_plot_and_table()
+            self.clear_uplink_table()
+            self.selected_pass_var.set("no pass in common with " + self.sim_station_var.get()
+                                       if self.sim_common_var.get() else NO_PASS_SELECTED)
+            return
+        index = selected[0] if selected and selected[0] < len(self.contact_windows) else 0
+        self.contact_listbox.selection_set(index)
+        if self.link_budget_enabled and (self.contact_windows != before or not selected):
+            self.on_contact_select(None)  # the passes changed: show the one selected now
+
+    def _contact_windows(self) -> list:
+        """Contact windows of the day; with 'Analyse the common minutes only', only the minutes in which the
+        satellite also sees the station of 'Simultaneous with station'."""
+        if not self.sim_common_var.get() or self.sim_visible is None:
+            return self._analysis.contacts(self.df_all)
+        frame = self.df_all[["Time (UTC)"]].copy()
+        common = self.df_all["Time (UTC)"].map(self.sim_visible).fillna(False).astype(bool)
+        frame["Visible"] = self.df_all["Visible"].astype(bool) & common
+        return self._analysis.contacts(frame)
 
     def _station(self, gs_name: str) -> "link_core.Station":
         """The ground station of the analysis: catalogue position, diameter and horizon mask."""
@@ -7384,12 +7410,33 @@ class LinkBudgetApp:
         )
         sim_box.pack(side=tk.LEFT, padx=6)
         sim_box.bind("<<ComboboxSelected>>", self._simultaneous_changed)
-        ttk.Label(
-            sim_row, foreground=PALETTE["text_muted"],
-            text="minutes of each contact in common with that station (e.g. the one the satellite dumps to)",
-        ).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(sim_row, text="above").pack(side=tk.LEFT)
+        sim_el = _PlaceholderEntry(sim_row, "e.g. 3", width=7)
+        sim_el.pack(side=tk.LEFT, padx=4)
+        self._sim_el_used = ""
+
+        def _sim_el_changed(_event=None):
+            if sim_el.get().strip() != self._sim_el_used:  # not on every focus change
+                self._sim_el_used = sim_el.get().strip()
+                self._simultaneous_changed()
+
+        sim_el.bind("<Return>", _sim_el_changed)
+        sim_el.bind("<FocusOut>", _sim_el_changed, add="+")
+        self._sim_el_entry = sim_el
+        ttk.Label(sim_row, text="° there").pack(side=tk.LEFT, padx=(0, 12))
+        _add_tooltip(sim_el, "Elevation above which the satellite counts as seen by that station, e.g. the "
+                             "elevation above which it transmits to it (3°). Empty: the Min Elevation above.")
+        self.sim_common_var = tk.BooleanVar(value=False)
+        sim_common = ttk.Checkbutton(sim_row, text="Analyse the common minutes only", variable=self.sim_common_var,
+                                     command=self._simultaneous_changed)
+        sim_common.pack(side=tk.LEFT, padx=(0, 6))
+        _add_tooltip(sim_common, "Contacts, plots, tables and link budgets only over the minutes in which the "
+                                 "satellite also sees the station chosen (e.g. while it dumps to it).")
+        _add_tooltip(sim_box, "A second station, e.g. the one the satellite dumps to: the contact table gives "
+                              "the minutes of each contact during which the satellite sees both stations.")
         self.sim_visible = None
         self._sim_inputs = None
+        self._analysis = None
         self._step_s = link_core.STEP_S
         # One row per contact; hover a heading for its meaning.
         self.contact_listbox = _ContactTable(contact_frame, height=6)
