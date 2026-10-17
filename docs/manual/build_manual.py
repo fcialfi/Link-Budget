@@ -571,6 +571,8 @@ def content():
         "to: the table then gives, for each contact, the minutes during which the satellite sees both stations "
         "and that common window (same minimum elevation; the horizon mask of the second station is used). A "
         "satellite that transmits only over its own station can be received here only in those minutes. "
+        "With <b>Analyse the common minutes only</b> the contacts become those common windows (passes with "
+        "none disappear): plots, tables and link budgets of the Downlink and Uplink tabs cover only them. "
         "Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
         "when the TLE, date or station change."))
     story.append(P(
