@@ -680,6 +680,135 @@ def _stop_for_invalid_license(status) -> None:
     raise SystemExit(1)
 
 
+def _compass(azimuth_deg: float) -> str:
+    """8-point compass direction (N, NE, E, ...) of an azimuth from North clockwise."""
+    return ("N", "NE", "E", "SE", "S", "SW", "W", "NW")[int(((azimuth_deg % 360.0) + 22.5) // 45.0) % 8]
+
+
+class _ContactTable(ttk.Frame):
+    """Table of the contact windows, one row per pass, with the calls of a ``tk.Listbox`` used by the app.
+
+    Rows are indexed from 0 as in a listbox; ``get(i)`` returns the one-line summary of row i. The select
+    callback runs when the user picks another row, not when the program selects one (as with a listbox).
+    """
+
+    # (column id, heading, anchor, heading tooltip); the first three are always shown.
+    COLUMNS = (
+        ("n", "#", "center", "Number of the contact on the day."),
+        ("start", "Start", "center", "Start of the contact (UTC): the satellite rises above the minimum "
+                                     "elevation and the horizon mask."),
+        ("end", "End", "center", "End of the contact (UTC)."),
+        ("pass", "Pass", "center", "Asc.: ascending pass (satellite moving north); Desc.: descending."),
+        ("minutes", "Duration [min]", "e", "Length of the contact in minutes."),
+        ("max_el", "Max El [°]", "e", "Highest elevation of the satellite during the contact."),
+        ("azimuth", "Azimuth: start → max El → end", "center",
+         "Azimuth of the satellite (degrees from North, clockwise, with the compass direction) at the start "
+         "of the contact, at the highest elevation and at the end: where to point the antenna."),
+        ("doppler", "Doppler [kHz] / rate [Hz/s]", "center", "Largest Doppler shift and Doppler rate during "
+                                                             "the contact."),
+    )
+    FIXED = 3
+    # Optional columns shown when the window opens (the check boxes above the table change them).
+    SHOWN = ("pass", "minutes", "max_el", "azimuth")
+
+    def __init__(self, master, height: int = 6, **kwargs):
+        super().__init__(master, **kwargs)
+        chooser = ttk.Frame(self)
+        chooser.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(chooser, text="Columns:").pack(side=tk.LEFT, padx=(0, 6))
+        self._show = {}
+        for key, heading, _anchor, _tip in self.COLUMNS[self.FIXED:]:
+            var = tk.BooleanVar(value=key in self.SHOWN)
+            self._show[key] = var
+            ttk.Checkbutton(chooser, text=heading.split(" [")[0].split(":")[0], variable=var,
+                            command=self._update_columns).pack(side=tk.LEFT, padx=(0, 8))
+        self.tree = ttk.Treeview(self, columns=[c[0] for c in self.COLUMNS], show="headings", height=height,
+                                 selectmode="browse")
+        for key, heading, anchor, _tip in self.COLUMNS:
+            self.tree.heading(key, text=heading)
+            self.tree.column(key, anchor=anchor, stretch=False)
+        _TreeviewHeadingTooltip(self.tree, {c[0]: c[3] for c in self.COLUMNS})
+        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.grid(row=1, column=0, sticky="nsew")
+        yscroll.grid(row=1, column=1, sticky="ns")
+        xscroll.grid(row=2, column=0, sticky="ew")
+        self.columnconfigure(0, weight=1)
+        self.tree.tag_configure("bad", foreground=PALETTE["danger"])
+        self.tree.tag_configure("warn", foreground=PALETTE["warning"])
+        self._rows: list[tuple] = []
+        self._summaries: list[str] = []
+        self._warnings: dict[str, str] = {}  # row id -> warnings, shown when the pointer rests on the row
+        _TreeviewRowTooltip(self.tree, self._warnings)
+        self._handled: tuple = ()
+        self._callback = None
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self._update_columns()
+
+    def _update_columns(self) -> None:
+        """Show the columns ticked, each as wide as its heading and its widest value."""
+        shown = [c[0] for c in self.COLUMNS[:self.FIXED]] + [k for k, var in self._show.items() if var.get()]
+        self.tree.configure(displaycolumns=shown)
+        self._autosize()
+
+    def _autosize(self) -> None:
+        style = ttk.Style(self)
+        heading_font = tkfont.Font(self, font=style.lookup("Treeview.Heading", "font") or "TkHeadingFont")
+        body_font = tkfont.Font(self, font=style.lookup("Treeview", "font") or "TkDefaultFont")
+        for k, (key, heading, _anchor, _tip) in enumerate(self.COLUMNS):
+            widest = max([heading_font.measure(heading) + 24] + [body_font.measure(str(r[k])) + 18
+                                                                 for r in self._rows])
+            self.tree.column(key, width=widest, minwidth=widest)
+
+    # The calls of a tk.Listbox used by the application.
+    def delete(self, _first=0, _last=None) -> None:
+        self.tree.delete(*self.tree.get_children())
+        self._rows.clear()
+        self._summaries.clear()
+        self._warnings.clear()
+        self._handled = ()
+
+    def insert(self, _index, values: tuple, summary: str, tag: str = "", warnings: str = "") -> None:
+        """A row; ``tag`` "bad" (red) or "warn" (orange) colours it, ``warnings`` is its hover text."""
+        iid = str(len(self._summaries))
+        self.tree.insert("", tk.END, iid=iid, values=values, tags=(tag,) if tag else ())
+        if warnings:
+            self._warnings[iid] = warnings
+        self._rows.append(values)
+        self._summaries.append(summary)
+        self._autosize()
+
+    def curselection(self) -> tuple:
+        return tuple(int(item) for item in self.tree.selection())
+
+    def selection_set(self, index: int) -> None:
+        self._handled = (index,)
+        self.tree.selection_set(str(index))
+        self.tree.see(str(index))
+
+    def selection_clear(self, _first=0, _last=None) -> None:
+        self._handled = ()
+        self.tree.selection_set(())
+
+    def get(self, index: int) -> str:
+        return self._summaries[index]
+
+    def bind(self, sequence=None, func=None, add=None):
+        if sequence == "<<ListboxSelect>>":
+            self._callback = func
+            return None
+        return super().bind(sequence, func, add)
+
+    def _on_select(self, event) -> None:
+        current = self.curselection()
+        if current == self._handled:  # selected by the program, or the same row again
+            return
+        self._handled = current
+        if self._callback is not None:
+            self._callback(event)
+
+
 NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
 # Satellite antenna pattern loaded at startup (next to the executable, in the
 # working directory or next to the source), like tle.txt and parameters.json.
@@ -1289,6 +1418,10 @@ class LinkBudgetApp:
             self.stats_pass_end_var.set(bool(payload.get("latency_at_pass_end", False)))
             memory = payload.get("memory_gb")
             self.stats_memory_var.set("" if memory is None else f"{memory:g}")
+            product = payload.get("product_length_min")
+            self.stats_product_var.set("" if product is None else f"{product:g}")
+            reference = payload.get("product_latency_reference")
+            self.stats_product_ref_var.set(self._PRODUCT_REFERENCES.get(reference, self._PRODUCT_REFERENCES["data"]))
         network = payload.get("statistics_stations")
         if hasattr(self, "stats_station_list"):
             # The mission's station network (e.g. Svalbard + Punta Arenas for the global data); none when not given.
@@ -2232,6 +2365,8 @@ class LinkBudgetApp:
         self.stats_setup_var = tk.StringVar(value="")
         self.stats_min_pass_var = tk.StringVar(value="")
         self.stats_memory_var = tk.StringVar(value="")
+        self.stats_product_var = tk.StringVar(value="")
+        self.stats_product_ref_var = tk.StringVar(value=self._PRODUCT_REFERENCES["data"])
         fields = (
             ("Start Date (YYYY-MM-DD)", self.stats_start_var, "First day of the period (UTC)."),
             ("Days", self.stats_days_var, "Number of days, 1 to 366. About a second per day and station."),
@@ -2266,6 +2401,10 @@ class LinkBudgetApp:
             ("Antenna Setup [min]", self.stats_setup_var,
              "Time to configure an antenna for another satellite (whole constellation): after a pass the "
              "antenna cannot take a different satellite for this long. Empty: 0."),
+            ("Product Length [min]", self.stats_product_var,
+             "Optional: the ground processes the data in products of this many minutes of on-board data "
+             "(e.g. 30), fixed blocks from 00:00 UTC. A product is ready when the last of its data is on "
+             "ground; only complete products count. Empty: each datum counts when it is on ground."),
         )
         grid = ttk.Frame(inputs)
         grid.pack(side=tk.LEFT, anchor="n")
@@ -2275,6 +2414,17 @@ class LinkBudgetApp:
             entry = ttk.Entry(grid, textvariable=var, width=12)
             entry.grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 18), pady=2)
             _add_tooltip(entry, tip)
+        row = (len(fields) + 1) // 2
+        ttk.Label(grid, text="Product Latency From").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+        reference_box = ttk.Combobox(grid, textvariable=self.stats_product_ref_var, state="readonly", width=22,
+                                     values=list(self._PRODUCT_REFERENCES.values()))
+        reference_box.grid(row=row, column=1, columnspan=3, sticky="w", pady=2)
+        _add_tooltip(
+            reference_box,
+            "With a Product Length: the instant the latency of the data of a product is counted from. Each "
+            "datum's sensing: every datum from the time it was acquired (share of the data volume). Product "
+            "sensing start / end: every product from the start (strictest) or the end of its sensing.",
+        )
 
         station_box = ttk.Frame(inputs)
         station_box.pack(side=tk.LEFT, anchor="n", padx=(10, 0))
@@ -2582,6 +2732,11 @@ class LinkBudgetApp:
         min_pass = _number(self.stats_min_pass_var, "Min Pass Duration [min]") or 0.0
         if min_pass < 0:
             raise ValueError("The minimum pass duration must be positive.")
+        product_min = _number(self.stats_product_var, "Product Length [min]")
+        if product_min is not None and product_min <= 0:
+            raise ValueError("The product length must be greater than 0 min.")
+        reference = {text: key for key, text in self._PRODUCT_REFERENCES.items()}.get(
+            self.stats_product_ref_var.get(), "data")
         inputs["link"] = link
         inputs["budget"] = {
             "latency_requirement": (latency, latency_pct or 100.0) if latency is not None else None,
@@ -2595,6 +2750,8 @@ class LinkBudgetApp:
             "setup_s": setup_min * 60.0,
             "min_pass_s": min_pass * 60.0,
             "memory_bits": memory_gb * 8e9 if memory_gb else None,
+            "product_s": product_min * 60.0 if product_min else None,
+            "product_reference": reference,
         }
         return inputs
 
@@ -2670,6 +2827,8 @@ class LinkBudgetApp:
                     latency_requirement=budget["latency_requirement"] if budget else None,
                     latency_at_pass_end=inputs["latency_at_pass_end"],
                     memory_bits=budget["memory_bits"] if budget else None,
+                    product_s=budget["product_s"] if budget else None,
+                    product_reference=budget["product_reference"] if budget else "data",
                 )
                 # One antenna per site, the others backups, unless the backups are used too.
                 antennas = dict(calculations.GROUND_STATION_ANTENNAS) if use_backups else {}
@@ -2858,6 +3017,12 @@ class LinkBudgetApp:
     _STATS_INK = {"primary": "#0b0b0b", "secondary": "#52514e", "muted": "#8a8984", "grid": "#e6e5e1"}
 
     _STATS_ALL_DAYS = "All days"
+    # Product latency reference (pass_statistics) -> text of the selector.
+    _PRODUCT_REFERENCES = {
+        "data": "each datum's sensing",
+        "start": "product sensing start",
+        "end": "product sensing end",
+    }
 
     def _redraw_statistics_plot(self) -> None:
         """Draw the plots of the last statistics again (e.g. for another day of the timeline)."""
@@ -3147,6 +3312,9 @@ class LinkBudgetApp:
             rows.append(("Minimum pass duration", f"{budget['min_pass_s'] / 60:g} min"))
             rows.append(("Latency counted", "at the end of each pass (dump complete)"
                          if inputs.get("latency_at_pass_end") else "when each bit comes down"))
+            if budget.get("product_s"):
+                rows.append(("Ground products", f"{budget['product_s'] / 60:g} min of on-board data, latency "
+                             f"from {self._PRODUCT_REFERENCES[budget['product_reference']]}"))
             if inputs["constellation"]:
                 rows.append(("Antenna setup", f"{budget['setup_s'] / 60:g} min"))
         else:
@@ -3171,13 +3339,15 @@ class LinkBudgetApp:
         if any(value is not None for value in flows.values()):
             values["downlink_data_kbps"] = flows
         for key, var in (("antenna_setup_min", self.stats_setup_var), ("min_pass_min", self.stats_min_pass_var),
-                         ("memory_gb", self.stats_memory_var)):
+                         ("memory_gb", self.stats_memory_var), ("product_length_min", self.stats_product_var)):
             try:
                 if var.get().strip():
                     values[key] = float(var.get())
             except ValueError:
                 pass
         values["latency_at_pass_end"] = bool(self.stats_pass_end_var.get())
+        values["product_latency_reference"] = {text: key for key, text in self._PRODUCT_REFERENCES.items()}.get(
+            self.stats_product_ref_var.get(), "data")
         network = [self.stats_station_list.get(i) for i in self.stats_station_list.curselection()]
         if network:
             values["statistics_stations"] = network
@@ -3214,7 +3384,7 @@ class LinkBudgetApp:
                 with open(path, encoding="utf-8") as f:
                     payload = json.load(f)
             for key in ("downlink_data_kbps", "latency_requirement", "antenna_setup_min", "min_pass_min",
-                        "memory_gb", "statistics_stations"):
+                        "memory_gb", "statistics_stations", "product_length_min"):
                 payload.pop(key, None)  # cleared fields are removed from the file
             payload.update(self._statistics_parameters())
             self._write_parameters(path, payload)
@@ -3513,33 +3683,51 @@ class LinkBudgetApp:
                 ):
                     filtered_contacts.append((start, end, pass_direction))
         self.contact_windows = filtered_contacts
+        df = self.df_all
         for i, (start, end, pass_direction) in enumerate(self.contact_windows):
-            mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
-            max_elevation = self.df_all.loc[mask, "Elevation (°)"].max()
+            mask = (df["Time (UTC)"] >= start) & (df["Time (UTC)"] <= end)
+            in_contact = mask & df["Visible"] if "Visible" in df else mask
+            if not in_contact.any():
+                in_contact = mask
+            max_elevation = df.loc[mask, "Elevation (°)"].max()
             minutes = (end - start).total_seconds() / 60.0
             text = (
                 f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})"
                 f"  ·  {minutes:.1f} min  ·  max El {max_elevation:.1f}°"
             )
-            if "PFD Margin (dB)" in self.df_all.columns:
-                pfd_margin = self.df_all.loc[mask, "PFD Margin (dB)"].min()
-                text += f"  ·  min PFD margin {pfd_margin:+.1f} dB" + ("  ✗ PFD EXCEEDED" if pfd_margin < 0 else "")
-            in_contact = mask & self.df_all["Visible"] if "Visible" in self.df_all else mask
-            if "Sun Noise (dB)" in self.df_all.columns and self.df_all.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
-                worst = self.df_all.loc[in_contact, "Sun Noise (dB)"].idxmax()
-                text += (
-                    f"  ·  ☀ SUN NOISE up to {self.df_all.at[worst, 'Sun Noise (dB)']:.1f} dB at "
-                    f"{self.df_all.at[worst, 'Time (UTC)']:%H:%M:%S}"
-                )
-            elif "Sun Noise (dB)" not in self.df_all.columns and "Sun Separation (°)" in self.df_all.columns:
-                closest = self.df_all.loc[in_contact, "Sun Separation (°)"].min()
+            azimuth = "–"
+            if "Azimuth (°)" in df.columns:
+                seen = df.loc[in_contact]
+                az_start = seen["Azimuth (°)"].iloc[0]
+                az_top = seen.loc[seen["Elevation (°)"].idxmax(), "Azimuth (°)"]
+                az_end = seen["Azimuth (°)"].iloc[-1]
+                azimuth = "  →  ".join(f"{az:.0f}° {_compass(az)}" for az in (az_start, az_top, az_end))
+                text += f"  ·  Az {az_start:.0f}° → {az_end:.0f}°"
+            notes, tag = [], ""
+            if "PFD Margin (dB)" in df.columns:
+                pfd_margin = df.loc[mask, "PFD Margin (dB)"].min()
+                if pfd_margin < 0:
+                    notes.append(f"✗ PFD limit exceeded by {-pfd_margin:.1f} dB")
+                    tag = "bad"
+            if "Sun Noise (dB)" in df.columns and df.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
+                worst = df.loc[in_contact, "Sun Noise (dB)"].idxmax()
+                notes.append(f"☀ Sun noise up to {df.at[worst, 'Sun Noise (dB)']:.1f} dB at "
+                             f"{df.at[worst, 'Time (UTC)']:%H:%M:%S}")
+                tag = tag or "warn"
+            elif "Sun Noise (dB)" not in df.columns and "Sun Separation (°)" in df.columns:
+                closest = df.loc[in_contact, "Sun Separation (°)"].min()
                 if closest < 5.0:
-                    text += f"  ·  ☀ Sun {closest:.1f}° from the satellite"
-            if "Doppler Rate (Hz/s)" in self.df_all.columns:
-                doppler = self.df_all.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
-                rate = self.df_all.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
-                text += f"  ·  Doppler ±{doppler:.1f} kHz, max {rate:.0f} Hz/s"
-            self.contact_listbox.insert(tk.END, text)
+                    notes.append(f"☀ Sun {closest:.1f}° from the satellite")
+                    tag = tag or "warn"
+            doppler = "–"
+            if "Doppler Rate (Hz/s)" in df.columns:
+                shift = df.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
+                rate = df.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
+                doppler = f"±{shift:.1f} / {rate:.0f}"
+            values = (i + 1, start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S"),
+                      {"A": "Asc.", "D": "Desc."}.get(pass_direction, pass_direction), f"{minutes:.1f}",
+                      f"{max_elevation:.1f}", azimuth, doppler)
+            self.contact_listbox.insert(tk.END, values, text, tag, "\n".join(notes))
 
     def on_contact_select(self, event):
         selection = self.contact_listbox.curselection()
@@ -3587,6 +3775,19 @@ class LinkBudgetApp:
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax1.grid(True)
         ax1.set_title("Elevation Angle")
+        if "Azimuth (°)" in df_pass.columns:
+            # Azimuth on a second axis; the line is broken where it wraps across North (359° → 0°).
+            azimuth = df_pass["Azimuth (°)"].to_numpy(dtype=float).copy()
+            wrap = np.abs(np.diff(azimuth)) > 180.0
+            azimuth[1:][wrap] = np.nan
+            ax1_az = ax1.twinx()
+            ax1_az.plot(df_pass["Time (UTC)"], azimuth, label="Azimuth (°)", color=MATLAB_COLORS["orange"],
+                        linestyle="--")
+            ax1_az.set_ylim(0, 360)
+            ax1_az.set_yticks(range(0, 361, 90))
+            ax1_az.set_ylabel("Azimuth (° from North)", color=MATLAB_COLORS["orange"], fontsize=8)
+            ax1_az.tick_params(axis="y", labelcolor=MATLAB_COLORS["orange"], labelsize=8)
+            ax1.set_title("Elevation and Azimuth")
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()
@@ -3666,9 +3867,6 @@ class LinkBudgetApp:
              "Carrier to noise (and interference) density ratio."),
             ("Eb/No (dB)", "Eb/N0 [dB]", "Link Budget", "Energy per bit to noise density ratio."),
             ("PFD (dBW/m²/4kHz)", "PFD [dBW/m²]", "PFD", "Power flux density at the ground in 4 kHz."),
-            ("PFD Limit (dBW/m²/4kHz)", "PFD Limit", "PFD",
-             "ITU RR Art. 21 limit at this elevation, dBW/m² in 4 kHz."),
-            ("PFD Margin (dB)", "PFD Mgn [dB]", "PFD", "Limit − PFD; negative: the limit is exceeded."),
         ]
         column_specs = [c for c in column_specs if c[0] == "Time (UTC)" or c[0] in df_pass.columns]
         groups = [g for g in ("Geometry", "Link Budget", "PFD") if any(c[2] == g for c in column_specs)]
@@ -3704,15 +3902,12 @@ class LinkBudgetApp:
             table.heading(col, text=short)
             widest = max([heading_font.measure(short)] + [body_font.measure(str(r[k])) for r in rows])
             table.column(col, anchor="center", width=widest + 18, minwidth=40, stretch=False)
-        margin_index = columns.index("PFD Margin (dB)") if "PFD Margin (dB)" in columns else None
-        for i, values in enumerate(rows):
+        # Samples above the PFD limit in red (the limit and the margin are not shown as columns).
+        margins = df_pass["PFD Margin (dB)"].tolist() if "PFD Margin (dB)" in df_pass.columns else [None] * len(rows)
+        for i, (values, margin) in enumerate(zip(rows, margins)):
             tags = ["evenrow" if i % 2 == 0 else "oddrow"]
-            if margin_index is not None:
-                try:
-                    if float(values[margin_index]) < 0:
-                        tags.append("fail")
-                except ValueError:
-                    pass
+            if margin is not None and margin == margin and margin < 0:
+                tags.append("fail")
             table.insert("", "end", values=values, tags=tuple(tags))
         _TreeviewHeadingTooltip(table, {c[0]: f"{c[0]}: {c[3]}" for c in column_specs})
 
@@ -7126,22 +7321,8 @@ class LinkBudgetApp:
         ttk.Label(contact_frame, textvariable=self.contact_mode_var, foreground=PALETTE["warning"]).pack(
             anchor="w", pady=(0, 4)
         )
-        self.contact_listbox = tk.Listbox(
-            contact_frame,
-            height=6,
-            exportselection=False,
-            bg=PALETTE["surface"],
-            fg=PALETTE["text"],
-            selectbackground=PALETTE["accent"],
-            selectforeground="white",
-            activestyle="none",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-            highlightcolor=PALETTE["accent"],
-            font=default_font,
-        )
+        # One row per contact; hover a heading for its meaning.
+        self.contact_listbox = _ContactTable(contact_frame, height=6)
         self.contact_listbox.pack(fill=tk.X, expand=True)
         self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
 

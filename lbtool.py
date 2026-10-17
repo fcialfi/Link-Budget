@@ -169,6 +169,9 @@ def cmd_statistics(args) -> None:
             latency_at_pass_end=bool(args.latency_at_pass_end or (params or {}).get("latency_at_pass_end")),
             memory_bits=8e9 * (args.memory_gb if args.memory_gb is not None
                                else float((params or {}).get("memory_gb") or 0.0)) or None,
+            product_s=60.0 * (args.product_length if args.product_length is not None
+                              else float((params or {}).get("product_length_min") or 0.0)) or None,
+            product_reference=args.product_reference or (params or {}).get("product_latency_reference") or "data",
         )
     satellites = [("SAT", tle)]
     if args.constellation:
@@ -285,6 +288,12 @@ def main(argv=None) -> None:
     stats.add_argument("--setup", type=float,
                        help="with --constellation: antenna setup time between satellites [min] "
                             "(default: antenna_setup_min of the mission parameters)")
+    stats.add_argument("--product-length", type=float,
+                       help="ground products of this many minutes of on-board data, e.g. 30 (default: "
+                            "product_length_min of the mission parameters; none: each datum counts when on ground)")
+    stats.add_argument("--product-reference", choices=("data", "start", "end"),
+                       help="with --product-length: latency from each datum's sensing (data, default), or from "
+                            "the start or end of the product's sensing")
     stats.add_argument("--latency", type=float, help="latency requirement [min], e.g. 60")
     stats.add_argument("--latency-pct", type=float, default=100.0,
                        help="share of the data that must meet it [%%] (default 100)")

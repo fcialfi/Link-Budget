@@ -3,9 +3,10 @@
 
     python docs/manual/take_screenshots.py
 
-Opens the GUI with the repository's data files (tle.txt, parameters.json,
-ground_stations.txt, satellites.json, missions), runs a pass analysis
-and the static link budgets, and grabs each tab. Needs a display (on
+Opens the GUI with the invented missions of docs/manual/example
+(satellites.json and missions: Example-Sat and Example-Constellation, so the
+manual names no real mission) and the repository's ground stations, runs a
+pass analysis and the static link budgets, and grabs each tab. Needs a display (on
 Linux without one: xvfb-run -s "-screen 0 1400x1000x24" python ...).
 Run it again whenever the GUI layout changes, then rebuild the manual.
 """
@@ -19,6 +20,8 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 IMG = os.path.join(HERE, "img")
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
+# The invented missions of the manual, not the repository's own.
+os.environ["SATELLITES_FILE"] = os.path.join(HERE, "example", "satellites.json")
 
 import tkinter as tk  # noqa: E402
 from tkinter import ttk  # noqa: E402
@@ -39,6 +42,9 @@ def walk(widget):
 def main() -> None:
     os.makedirs(IMG, exist_ok=True)
     gui.messagebox.showinfo = lambda *a, **k: None
+    # The example satellite is invented: no TLE download at startup (the one of its folder is used).
+    original_download = gui.LinkBudgetApp.download_tle
+    gui.LinkBudgetApp.download_tle = lambda self, auto=False: None if auto else original_download(self)
     app = gui.LinkBudgetApp()
     root = app.root
     root.geometry(f"{WIDTH}x{HEIGHT}+0+0")
@@ -72,6 +78,8 @@ def main() -> None:
                 return
 
     tabs = app.main_tabs.tabs()
+    app.gs_var.set("Svalbard")
+    app._update_mask_label()
     app.run_analysis()
     app.contact_listbox.selection_clear(0, "end")
     app.contact_listbox.selection_set(1)  # a high pass: the antenna gain changes along it
@@ -113,6 +121,7 @@ def main() -> None:
     # Statistics over a few days.
     app.main_tabs.select(tabs[-1])
     app.gs_var.set("Svalbard")
+    app._update_mask_label()
     stations = app.stats_station_list
     stations.selection_clear(0, "end")
     stations.selection_set(list(stations.get(0, "end")).index("Svalbard"))
@@ -131,7 +140,7 @@ def main() -> None:
     scroll(1.0); shot("statistics_tables")
 
     # A mission not launched yet: custom orbit and synthetic TLE.
-    app.select_satellite("EPS-Sterna")
+    app.select_satellite("Example-Constellation")
     app.main_tabs.select(tabs[0]); scroll(0); shot("custom_orbit", height=460)
     before = set(root.winfo_children())
     app.show_constellation()
