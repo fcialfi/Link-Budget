@@ -3628,6 +3628,19 @@ class LinkBudgetApp:
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax1.grid(True)
         ax1.set_title("Elevation Angle")
+        if "Azimuth (°)" in df_pass.columns:
+            # Azimuth on a second axis; the line is broken where it wraps across North (359° → 0°).
+            azimuth = df_pass["Azimuth (°)"].to_numpy(dtype=float).copy()
+            wrap = np.abs(np.diff(azimuth)) > 180.0
+            azimuth[1:][wrap] = np.nan
+            ax1_az = ax1.twinx()
+            ax1_az.plot(df_pass["Time (UTC)"], azimuth, label="Azimuth (°)", color=MATLAB_COLORS["orange"],
+                        linestyle="--")
+            ax1_az.set_ylim(0, 360)
+            ax1_az.set_yticks(range(0, 361, 90))
+            ax1_az.set_ylabel("Azimuth (° from North)", color=MATLAB_COLORS["orange"], fontsize=8)
+            ax1_az.tick_params(axis="y", labelcolor=MATLAB_COLORS["orange"], labelsize=8)
+            ax1.set_title("Elevation and Azimuth")
 
         ax2_1 = ax2
         ax2_2 = ax2.twinx()

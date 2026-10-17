@@ -1,0 +1,15 @@
+{
+  "default": "Example-Sat",
+  "satellites": [
+    {
+      "name": "Example-Sat",
+      "norad_id": 99999,
+      "description": "invented mission for the manual"
+    },
+    {
+      "name": "Example-Constellation",
+      "description": "invented constellation for the manual",
+      "custom_orbit": true
+    }
+  ]
+}
