@@ -566,7 +566,12 @@ def content():
         "elevation and at the end (degrees from North clockwise, with the compass direction: where to point the "
         "antenna) and, optionally, the largest Doppler shift and rate. The <b>Columns</b> "
         "check boxes choose the columns shown; hover a heading for its meaning. A pass that exceeds the PFD limit "
-        "is red, one with noise from the Sun orange; hovering the row gives the detail (by how much the limit is exceeded, the Sun noise and its time). Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
+        "is red, one with noise from the Sun orange; hovering the row gives the detail (by how much the limit is exceeded, the Sun noise and its time). "
+        "<b>Simultaneous with station</b> chooses a second station, e.g. the one the satellite dumps its data "
+        "to: the table then gives, for each contact, the minutes during which the satellite sees both stations "
+        "and that common window (same minimum elevation; the horizon mask of the second station is used). A "
+        "satellite that transmits only over its own station can be received here only in those minutes. "
+        "Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
         "when the TLE, date or station change."))
     story.append(P(
         "<b>Satellite antenna pattern</b>: the gain of the satellite antenna versus the angle from nadir, used "
