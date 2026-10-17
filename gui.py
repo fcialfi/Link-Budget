@@ -706,6 +706,10 @@ class _ContactTable(ttk.Frame):
          "of the contact, at the highest elevation and at the end: where to point the antenna."),
         ("doppler", "Doppler [kHz] / rate [Hz/s]", "center", "Largest Doppler shift and Doppler rate during "
                                                              "the contact."),
+        ("sim", "Simultaneous [min]", "center", "Minutes of the contact during which the satellite is also in "
+                                                "contact with the station chosen in 'Simultaneous with station', "
+                                                "and that common window (UTC): when a dump to that station can be "
+                                                "received here too."),
     )
     FIXED = 3
     # Optional columns shown when the window opens (the check boxes above the table change them).
@@ -744,6 +748,14 @@ class _ContactTable(ttk.Frame):
         self._handled: tuple = ()
         self._callback = None
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self._update_columns()
+
+    def show_column(self, key: str, shown: bool, heading: str | None = None) -> None:
+        """Tick or untick an optional column (and change its heading)."""
+        if heading is not None:
+            self.tree.heading(key, text=heading)
+            self.COLUMNS = tuple((k, heading if k == key else h, a, t) for k, h, a, t in self.COLUMNS)
+        self._show[key].set(shown)
         self._update_columns()
 
     def _update_columns(self) -> None:
@@ -810,6 +822,7 @@ class _ContactTable(ttk.Frame):
 
 
 NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
+SIM_NONE = "(none)"  # no station for 'Simultaneous with station'
 # Satellite antenna pattern loaded at startup (next to the executable, in the
 # working directory or next to the source), like tle.txt and parameters.json.
 ANTENNA_PATTERN_FILE = "Antenna Pattern Default.txt"
@@ -3524,9 +3537,12 @@ class LinkBudgetApp:
             return
 
         previous = self.contact_listbox.curselection() if keep_selection else ()
+        self._sim_inputs = ((tle1, tle2), obs_date)
+        self._step_s = analysis.step_s
         try:
             self.df_all = analysis.day(obs_date)
             self.contact_windows = analysis.contacts(self.df_all)
+            self._compute_simultaneous()
             self.atm_label_var.set(analysis.atmosphere_summary() if link else "")
         except ValueError as exc:
             messagebox.showerror("Input Error", str(exc))
@@ -3551,6 +3567,33 @@ class LinkBudgetApp:
         self.start_refresh_button.config(style="TButton")
         if self.link_budget_enabled:
             self.recalc_button.config(state="!disabled")
+
+    def _compute_simultaneous(self) -> None:
+        """Visibility of the satellite from the station of 'Simultaneous with station' (None without one)."""
+        self.sim_visible = None
+        name = self.sim_station_var.get()
+        if name == SIM_NONE or self._sim_inputs is None:
+            self.contact_listbox.show_column("sim", False)
+            return
+        tle, obs_date = self._sim_inputs
+        other = link_core.PassAnalysis(tle, self._station(name), None, self._min_elevation(), self._step_s)
+        frame = other.day(obs_date)
+        self.sim_visible = pd.Series(frame["Visible"].to_numpy(dtype=bool), index=frame["Time (UTC)"])
+        self.contact_listbox.show_column("sim", True, f"With {name} [min]")
+
+    def _simultaneous_changed(self, _event=None) -> None:
+        """New station for 'Simultaneous with station': recompute the common minutes, keep the selection."""
+        if self.df_all.empty or self._sim_inputs is None:
+            return
+        try:
+            self._compute_simultaneous()
+        except ValueError as exc:
+            messagebox.showerror("Simultaneous with station", str(exc))
+            return
+        selected = self.contact_listbox.curselection()
+        self.display_contacts(self.contact_windows)
+        if selected and selected[0] < len(self.contact_windows):
+            self.contact_listbox.selection_set(selected[0])
 
     def _station(self, gs_name: str) -> "link_core.Station":
         """The ground station of the analysis: catalogue position, diameter and horizon mask."""
@@ -3724,9 +3767,19 @@ class LinkBudgetApp:
                 shift = df.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
                 rate = df.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
                 doppler = f"±{shift:.1f} / {rate:.0f}"
+            simultaneous = "–"
+            if self.sim_visible is not None:
+                common = df.loc[in_contact & df["Time (UTC)"].map(self.sim_visible).fillna(False).astype(bool),
+                                "Time (UTC)"]
+                if common.empty:
+                    simultaneous = "0"
+                else:
+                    shared = len(common) * self._step_s / 60.0
+                    simultaneous = f"{shared:.1f}  ({common.iloc[0]:%H:%M}–{common.iloc[-1]:%H:%M})"
+                    text += f"  ·  {shared:.1f} min with {self.sim_station_var.get()}"
             values = (i + 1, start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S"),
                       {"A": "Asc.", "D": "Desc."}.get(pass_direction, pass_direction), f"{minutes:.1f}",
-                      f"{max_elevation:.1f}", azimuth, doppler)
+                      f"{max_elevation:.1f}", azimuth, doppler, simultaneous)
             self.contact_listbox.insert(tk.END, values, text, tag, "\n".join(notes))
 
     def on_contact_select(self, event):
@@ -7321,6 +7374,23 @@ class LinkBudgetApp:
         ttk.Label(contact_frame, textvariable=self.contact_mode_var, foreground=PALETTE["warning"]).pack(
             anchor="w", pady=(0, 4)
         )
+        sim_row = ttk.Frame(contact_frame)
+        sim_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(sim_row, text="Simultaneous with station:").pack(side=tk.LEFT)
+        self.sim_station_var = tk.StringVar(value=SIM_NONE)
+        sim_box = ttk.Combobox(
+            sim_row, textvariable=self.sim_station_var, state="readonly", width=24,
+            postcommand=lambda: sim_box.configure(values=[SIM_NONE] + sorted(calculations.GROUND_STATIONS)),
+        )
+        sim_box.pack(side=tk.LEFT, padx=6)
+        sim_box.bind("<<ComboboxSelected>>", self._simultaneous_changed)
+        ttk.Label(
+            sim_row, foreground=PALETTE["text_muted"],
+            text="minutes of each contact in common with that station (e.g. the one the satellite dumps to)",
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        self.sim_visible = None
+        self._sim_inputs = None
+        self._step_s = link_core.STEP_S
         # One row per contact; hover a heading for its meaning.
         self.contact_listbox = _ContactTable(contact_frame, height=6)
         self.contact_listbox.pack(fill=tk.X, expand=True)
