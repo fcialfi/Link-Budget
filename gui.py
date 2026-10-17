@@ -680,6 +680,136 @@ def _stop_for_invalid_license(status) -> None:
     raise SystemExit(1)
 
 
+def _compass(azimuth_deg: float) -> str:
+    """8-point compass direction (N, NE, E, ...) of an azimuth from North clockwise."""
+    return ("N", "NE", "E", "SE", "S", "SW", "W", "NW")[int(((azimuth_deg % 360.0) + 22.5) // 45.0) % 8]
+
+
+class _ContactTable(ttk.Frame):
+    """Table of the contact windows, one row per pass, with the calls of a ``tk.Listbox`` used by the app.
+
+    Rows are indexed from 0 as in a listbox; ``get(i)`` returns the one-line summary of row i. The select
+    callback runs when the user picks another row, not when the program selects one (as with a listbox).
+    """
+
+    # (column id, heading, anchor, heading tooltip); the first three are always shown.
+    COLUMNS = (
+        ("n", "#", "center", "Number of the contact on the day."),
+        ("start", "Start", "center", "Start of the contact (UTC): the satellite rises above the minimum "
+                                     "elevation and the horizon mask."),
+        ("end", "End", "center", "End of the contact (UTC)."),
+        ("pass", "Pass", "center", "Asc.: ascending pass (satellite moving north); Desc.: descending."),
+        ("minutes", "Duration [min]", "e", "Length of the contact in minutes."),
+        ("max_el", "Max El [°]", "e", "Highest elevation of the satellite during the contact."),
+        ("azimuth", "Azimuth: start → max El → end", "center",
+         "Azimuth of the satellite (degrees from North, clockwise, with the compass direction) at the start "
+         "of the contact, at the highest elevation and at the end: where to point the antenna."),
+        ("pfd", "Min PFD margin [dB]", "e", "Lowest PFD margin of the contact (PFD limit − PFD); must be ≥ 0 dB."),
+        ("doppler", "Doppler [kHz] / rate [Hz/s]", "center", "Largest Doppler shift and Doppler rate during "
+                                                             "the contact."),
+    )
+    FIXED = 3
+    # Optional columns shown when the window opens (the check boxes above the table change them).
+    SHOWN = ("pass", "minutes", "max_el", "azimuth", "pfd")
+
+    def __init__(self, master, height: int = 6, **kwargs):
+        super().__init__(master, **kwargs)
+        chooser = ttk.Frame(self)
+        chooser.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(chooser, text="Columns:").pack(side=tk.LEFT, padx=(0, 6))
+        self._show = {}
+        for key, heading, _anchor, _tip in self.COLUMNS[self.FIXED:]:
+            var = tk.BooleanVar(value=key in self.SHOWN)
+            self._show[key] = var
+            ttk.Checkbutton(chooser, text=heading.split(" [")[0].split(":")[0], variable=var,
+                            command=self._update_columns).pack(side=tk.LEFT, padx=(0, 8))
+        self.tree = ttk.Treeview(self, columns=[c[0] for c in self.COLUMNS], show="headings", height=height,
+                                 selectmode="browse")
+        for key, heading, anchor, _tip in self.COLUMNS:
+            self.tree.heading(key, text=heading)
+            self.tree.column(key, anchor=anchor, stretch=False)
+        _TreeviewHeadingTooltip(self.tree, {c[0]: c[3] for c in self.COLUMNS})
+        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.grid(row=1, column=0, sticky="nsew")
+        yscroll.grid(row=1, column=1, sticky="ns")
+        xscroll.grid(row=2, column=0, sticky="ew")
+        self.columnconfigure(0, weight=1)
+        self.tree.tag_configure("bad", foreground=PALETTE["danger"])
+        self.tree.tag_configure("warn", foreground=PALETTE["warning"])
+        self._rows: list[tuple] = []
+        self._summaries: list[str] = []
+        self._warnings: dict[str, str] = {}  # row id -> warnings, shown when the pointer rests on the row
+        _TreeviewRowTooltip(self.tree, self._warnings)
+        self._handled: tuple = ()
+        self._callback = None
+        self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self._update_columns()
+
+    def _update_columns(self) -> None:
+        """Show the columns ticked, each as wide as its heading and its widest value."""
+        shown = [c[0] for c in self.COLUMNS[:self.FIXED]] + [k for k, var in self._show.items() if var.get()]
+        self.tree.configure(displaycolumns=shown)
+        self._autosize()
+
+    def _autosize(self) -> None:
+        style = ttk.Style(self)
+        heading_font = tkfont.Font(self, font=style.lookup("Treeview.Heading", "font") or "TkHeadingFont")
+        body_font = tkfont.Font(self, font=style.lookup("Treeview", "font") or "TkDefaultFont")
+        for k, (key, heading, _anchor, _tip) in enumerate(self.COLUMNS):
+            widest = max([heading_font.measure(heading) + 24] + [body_font.measure(str(r[k])) + 18
+                                                                 for r in self._rows])
+            self.tree.column(key, width=widest, minwidth=widest)
+
+    # The calls of a tk.Listbox used by the application.
+    def delete(self, _first=0, _last=None) -> None:
+        self.tree.delete(*self.tree.get_children())
+        self._rows.clear()
+        self._summaries.clear()
+        self._warnings.clear()
+        self._handled = ()
+
+    def insert(self, _index, values: tuple, summary: str, tag: str = "", warnings: str = "") -> None:
+        """A row; ``tag`` "bad" (red) or "warn" (orange) colours it, ``warnings`` is its hover text."""
+        iid = str(len(self._summaries))
+        self.tree.insert("", tk.END, iid=iid, values=values, tags=(tag,) if tag else ())
+        if warnings:
+            self._warnings[iid] = warnings
+        self._rows.append(values)
+        self._summaries.append(summary)
+        self._autosize()
+
+    def curselection(self) -> tuple:
+        return tuple(int(item) for item in self.tree.selection())
+
+    def selection_set(self, index: int) -> None:
+        self._handled = (index,)
+        self.tree.selection_set(str(index))
+        self.tree.see(str(index))
+
+    def selection_clear(self, _first=0, _last=None) -> None:
+        self._handled = ()
+        self.tree.selection_set(())
+
+    def get(self, index: int) -> str:
+        return self._summaries[index]
+
+    def bind(self, sequence=None, func=None, add=None):
+        if sequence == "<<ListboxSelect>>":
+            self._callback = func
+            return None
+        return super().bind(sequence, func, add)
+
+    def _on_select(self, event) -> None:
+        current = self.curselection()
+        if current == self._handled:  # selected by the program, or the same row again
+            return
+        self._handled = current
+        if self._callback is not None:
+            self._callback(event)
+
+
 NO_PASS_SELECTED = "none (run Start/Refresh Analysis)"
 # Satellite antenna pattern loaded at startup (next to the executable, in the
 # working directory or next to the source), like tle.txt and parameters.json.
@@ -3554,33 +3684,52 @@ class LinkBudgetApp:
                 ):
                     filtered_contacts.append((start, end, pass_direction))
         self.contact_windows = filtered_contacts
+        df = self.df_all
         for i, (start, end, pass_direction) in enumerate(self.contact_windows):
-            mask = (self.df_all["Time (UTC)"] >= start) & (self.df_all["Time (UTC)"] <= end)
-            max_elevation = self.df_all.loc[mask, "Elevation (°)"].max()
+            mask = (df["Time (UTC)"] >= start) & (df["Time (UTC)"] <= end)
+            in_contact = mask & df["Visible"] if "Visible" in df else mask
+            if not in_contact.any():
+                in_contact = mask
+            max_elevation = df.loc[mask, "Elevation (°)"].max()
             minutes = (end - start).total_seconds() / 60.0
             text = (
                 f"Contact {i+1}: {start.strftime('%H:%M:%S')} - {end.strftime('%H:%M:%S')} ({pass_direction})"
                 f"  ·  {minutes:.1f} min  ·  max El {max_elevation:.1f}°"
             )
-            if "PFD Margin (dB)" in self.df_all.columns:
-                pfd_margin = self.df_all.loc[mask, "PFD Margin (dB)"].min()
-                text += f"  ·  min PFD margin {pfd_margin:+.1f} dB" + ("  ✗ PFD EXCEEDED" if pfd_margin < 0 else "")
-            in_contact = mask & self.df_all["Visible"] if "Visible" in self.df_all else mask
-            if "Sun Noise (dB)" in self.df_all.columns and self.df_all.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
-                worst = self.df_all.loc[in_contact, "Sun Noise (dB)"].idxmax()
-                text += (
-                    f"  ·  ☀ SUN NOISE up to {self.df_all.at[worst, 'Sun Noise (dB)']:.1f} dB at "
-                    f"{self.df_all.at[worst, 'Time (UTC)']:%H:%M:%S}"
-                )
-            elif "Sun Noise (dB)" not in self.df_all.columns and "Sun Separation (°)" in self.df_all.columns:
-                closest = self.df_all.loc[in_contact, "Sun Separation (°)"].min()
+            azimuth = "–"
+            if "Azimuth (°)" in df.columns:
+                seen = df.loc[in_contact]
+                az_start = seen["Azimuth (°)"].iloc[0]
+                az_top = seen.loc[seen["Elevation (°)"].idxmax(), "Azimuth (°)"]
+                az_end = seen["Azimuth (°)"].iloc[-1]
+                azimuth = "  →  ".join(f"{az:.0f}° {_compass(az)}" for az in (az_start, az_top, az_end))
+                text += f"  ·  Az {az_start:.0f}° → {az_end:.0f}°"
+            pfd, notes, tag = "–", [], ""
+            if "PFD Margin (dB)" in df.columns:
+                pfd_margin = df.loc[mask, "PFD Margin (dB)"].min()
+                pfd = f"{pfd_margin:+.1f}"
+                if pfd_margin < 0:
+                    notes.append("✗ PFD EXCEEDED")
+                    tag = "bad"
+            if "Sun Noise (dB)" in df.columns and df.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
+                worst = df.loc[in_contact, "Sun Noise (dB)"].idxmax()
+                notes.append(f"☀ Sun noise up to {df.at[worst, 'Sun Noise (dB)']:.1f} dB at "
+                             f"{df.at[worst, 'Time (UTC)']:%H:%M:%S}")
+                tag = tag or "warn"
+            elif "Sun Noise (dB)" not in df.columns and "Sun Separation (°)" in df.columns:
+                closest = df.loc[in_contact, "Sun Separation (°)"].min()
                 if closest < 5.0:
-                    text += f"  ·  ☀ Sun {closest:.1f}° from the satellite"
-            if "Doppler Rate (Hz/s)" in self.df_all.columns:
-                doppler = self.df_all.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
-                rate = self.df_all.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
-                text += f"  ·  Doppler ±{doppler:.1f} kHz, max {rate:.0f} Hz/s"
-            self.contact_listbox.insert(tk.END, text)
+                    notes.append(f"☀ Sun {closest:.1f}° from the satellite")
+                    tag = tag or "warn"
+            doppler = "–"
+            if "Doppler Rate (Hz/s)" in df.columns:
+                shift = df.loc[in_contact, "Doppler Shift (kHz)"].abs().max()
+                rate = df.loc[in_contact, "Doppler Rate (Hz/s)"].abs().max()
+                doppler = f"±{shift:.1f} / {rate:.0f}"
+            values = (i + 1, start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S"),
+                      {"A": "Asc.", "D": "Desc."}.get(pass_direction, pass_direction), f"{minutes:.1f}",
+                      f"{max_elevation:.1f}", azimuth, pfd, doppler)
+            self.contact_listbox.insert(tk.END, values, text, tag, "\n".join(notes))
 
     def on_contact_select(self, event):
         selection = self.contact_listbox.curselection()
@@ -7180,22 +7329,8 @@ class LinkBudgetApp:
         ttk.Label(contact_frame, textvariable=self.contact_mode_var, foreground=PALETTE["warning"]).pack(
             anchor="w", pady=(0, 4)
         )
-        self.contact_listbox = tk.Listbox(
-            contact_frame,
-            height=6,
-            exportselection=False,
-            bg=PALETTE["surface"],
-            fg=PALETTE["text"],
-            selectbackground=PALETTE["accent"],
-            selectforeground="white",
-            activestyle="none",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-            highlightcolor=PALETTE["accent"],
-            font=default_font,
-        )
+        # One row per contact; hover a heading for its meaning.
+        self.contact_listbox = _ContactTable(contact_frame, height=6)
         self.contact_listbox.pack(fill=tk.X, expand=True)
         self.contact_listbox.bind("<<ListboxSelect>>", self.on_contact_select)
 

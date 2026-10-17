@@ -561,8 +561,12 @@ def content():
     story.append(P(
         "<b>Start/Refresh Analysis</b> propagates the orbit for the chosen date and station, finds the passes "
         "above the minimum elevation (5°) and computes the downlink and uplink link budgets along each of them. "
-        "The passes are listed under <b>Contact Windows (UTC Time)</b> with their direction ((A)scending or "
-        "(D)escending). Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
+        "The passes are listed in the <b>Contact Windows (UTC Time)</b> table, one row per pass: start and end "
+        "(UTC), direction (Asc. or Desc.), duration, maximum elevation, azimuth at the start, at the maximum "
+        "elevation and at the end (degrees from North clockwise, with the compass direction: where to point the "
+        "antenna), minimum PFD margin and, optionally, the largest Doppler shift and rate. The <b>Columns</b> "
+        "check boxes choose the columns shown; hover a heading for its meaning. A pass that exceeds the PFD limit "
+        "is red, one with noise from the Sun orange; hovering the row gives the detail. Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
         "when the TLE, date or station change."))
     story.append(P(
         "<b>Satellite antenna pattern</b>: the gain of the satellite antenna versus the angle from nadir, used "
@@ -700,8 +704,8 @@ def content():
                                    "32 − 25 log10 θ outside it). G/T and Eb/No drop by 10 log10(1 + ΔT/Tsys). "
                                    "Sun position: Astronomical Almanac low-precision formulae (about 0.01°). "
                                    "A 3 m antenna at 1.7 GHz with the quiet Sun on its axis: +510 K, about "
-                                   "−6 dB with Tsys 150 K. The contact list marks the passes with at least "
-                                   "0.5 dB (☀ SUN NOISE)."],
+                                   "−6 dB with Tsys 150 K. The contact table marks the passes with at least "
+                                   "0.5 dB (row in orange; hover it for the noise and the time)."],
         ["Coded Bit Rate [Mbps]", "Channel bit rate of the transmitter (coding included)."],
         ["Overhead (coded / info)", "Coded bit rate / information bit rate (coding × formatting)."],
         ["Demodulator Loss [dB]", "Receiver implementation loss."],
@@ -740,7 +744,7 @@ def content():
         ["Doppler Rate (Hz/s)", "Rate of change of the downlink Doppler shift, −f r''/c, from the range "
                                 "acceleration (relative velocity, satellite gravity, station rotation): exact at "
                                 "every sample, peak at the closest approach. Shown dashed in the Doppler plot; "
-                                "the contact list gives the largest Doppler shift and rate of each pass."],
+                                "the contact table gives the largest Doppler shift and rate of each pass (Doppler column)."],
         ["Sun Noise (dB)", "G/T degradation from the Sun in the antenna beam."],
         ["Link Losses (dB)", "Ionospheric + polarisation + multipath, from the static tab."],
         ["C/(No+Io) (dBHz)", "Carrier to noise (and interference) density after the demodulator losses."],
@@ -909,7 +913,7 @@ def content():
     ]))
     story.append(P(
         "Along the passes the PFD is computed at every sample with the EIRP of the pattern towards the station; "
-        "the contact list gives the minimum PFD margin of each pass and flags a pass that exceeds the limit."))
+        "the contact table gives the minimum PFD margin of each pass and shows in red a pass that exceeds the limit."))
     story += H2("Statistical margins")
     story.append(P(
         "Each tolerance with adverse limit a = −adverse and favourable limit b = +favourable contributes a mean "
