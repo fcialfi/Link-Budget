@@ -614,8 +614,8 @@ def chapters(m, root=None):
 
         tb = c.sun_brightness_temperature_k(EXAMPLE["freq_ghz"])
         story.append(NOTE(
-            f"At {EXAMPLE['freq_ghz']:g} GHz the quiet Sun has T<sub>b</sub> = {tb:,.0f} K. A pass is marked ☀ SUN NOISE in the "
-            "contact list when the Sun noise reaches 0.5 dB; without a System Noise Temperature the list shows "
+            f"At {EXAMPLE['freq_ghz']:g} GHz the quiet Sun has T<sub>b</sub> = {tb:,.0f} K. A pass is shown in orange in the "
+            "contact table when the Sun noise reaches 0.5 dB; without a System Noise Temperature the table marks "
             "instead the passes with the Sun less than 5° from the satellite."))
     except Exception:  # pragma: no cover
         pass
@@ -701,12 +701,12 @@ def chapters(m, root=None):
          "The second line only when C/Io is given."],
         ["Eb/No (dB)", M(r"E_b/N_0 = C/(N_0 + I_0) - 10\,\log_{10} \dfrac{R_c\, F}{OH}"),
          "Referred to the transfer frame bit rate."],
-        ["Doppler Shift, Doppler Rate", "§geom", "The contact list gives the largest |shift| and |rate| of each "
+        ["Doppler Shift, Doppler Rate", "§geom", "The contact table gives the largest |shift| and |rate| of each "
                                                 "pass."],
         ["PFD (dBW/m²/4kHz)", M(r"\mathrm{EIRP} - 10\,\log_{10}(4\pi d^2) - 10\,\log_{10} \dfrac{B}{4\,\mathrm{kHz}}"), "d in m. When the static tab "
                                                                                      "has a PFD limit and α, "
                                                                                      "η<sub>s</sub> are set."],
-        ["PFD Limit, PFD Margin", "limit(el) (§derived); margin = limit − PFD", "The contact list gives the "
+        ["PFD Limit, PFD Margin", "limit(el) (§derived); margin = limit − PFD", "The contact table gives the "
                                                                              "smallest margin of each pass."],
         ["UL Path Loss, UL Atmospheric Att", "as above at f<sub>UL</sub>", ""],
         ["UL Rx Power (dBW)", [M(r"P_{\mathrm{Rx,UL}} = \mathrm{EIRP}_{\mathrm{GS}} - L_{\mathrm{FS,UL}} - A_{\mathrm{UL}} - L_{\mathrm{other,UL}}"),
