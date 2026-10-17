@@ -706,8 +706,9 @@ def chapters(m, root=None):
         ["PFD (dBW/m²/4kHz)", M(r"\mathrm{EIRP} - 10\,\log_{10}(4\pi d^2) - 10\,\log_{10} \dfrac{B}{4\,\mathrm{kHz}}"), "d in m. When the static tab "
                                                                                      "has a PFD limit and α, "
                                                                                      "η<sub>s</sub> are set."],
-        ["PFD Limit, PFD Margin", "limit(el) (§derived); margin = limit − PFD", "The contact table gives the "
-                                                                             "smallest margin of each pass."],
+        ["PFD Limit, PFD Margin", "limit(el) (§derived); margin = limit − PFD", "Not shown in the tables (in the "
+                                                                             "exported CSV); a pass or sample with a "
+                                                                             "negative margin is shown in red."],
         ["UL Path Loss, UL Atmospheric Att", "as above at f<sub>UL</sub>", ""],
         ["UL Rx Power (dBW)", [M(r"P_{\mathrm{Rx,UL}} = \mathrm{EIRP}_{\mathrm{GS}} - L_{\mathrm{FS,UL}} - A_{\mathrm{UL}} - L_{\mathrm{other,UL}}"),
                                M(r"\qquad - \left[G_{\mathrm{peak}} - G(\eta)\right] - L_{\mathrm{link,UL}}")],

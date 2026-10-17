@@ -704,13 +704,12 @@ class _ContactTable(ttk.Frame):
         ("azimuth", "Azimuth: start → max El → end", "center",
          "Azimuth of the satellite (degrees from North, clockwise, with the compass direction) at the start "
          "of the contact, at the highest elevation and at the end: where to point the antenna."),
-        ("pfd", "Min PFD margin [dB]", "e", "Lowest PFD margin of the contact (PFD limit − PFD); must be ≥ 0 dB."),
         ("doppler", "Doppler [kHz] / rate [Hz/s]", "center", "Largest Doppler shift and Doppler rate during "
                                                              "the contact."),
     )
     FIXED = 3
     # Optional columns shown when the window opens (the check boxes above the table change them).
-    SHOWN = ("pass", "minutes", "max_el", "azimuth", "pfd")
+    SHOWN = ("pass", "minutes", "max_el", "azimuth")
 
     def __init__(self, master, height: int = 6, **kwargs):
         super().__init__(master, **kwargs)
@@ -3704,12 +3703,11 @@ class LinkBudgetApp:
                 az_end = seen["Azimuth (°)"].iloc[-1]
                 azimuth = "  →  ".join(f"{az:.0f}° {_compass(az)}" for az in (az_start, az_top, az_end))
                 text += f"  ·  Az {az_start:.0f}° → {az_end:.0f}°"
-            pfd, notes, tag = "–", [], ""
+            notes, tag = [], ""
             if "PFD Margin (dB)" in df.columns:
                 pfd_margin = df.loc[mask, "PFD Margin (dB)"].min()
-                pfd = f"{pfd_margin:+.1f}"
                 if pfd_margin < 0:
-                    notes.append("✗ PFD EXCEEDED")
+                    notes.append(f"✗ PFD limit exceeded by {-pfd_margin:.1f} dB")
                     tag = "bad"
             if "Sun Noise (dB)" in df.columns and df.loc[in_contact, "Sun Noise (dB)"].max() >= 0.5:
                 worst = df.loc[in_contact, "Sun Noise (dB)"].idxmax()
@@ -3728,7 +3726,7 @@ class LinkBudgetApp:
                 doppler = f"±{shift:.1f} / {rate:.0f}"
             values = (i + 1, start.strftime("%H:%M:%S"), end.strftime("%H:%M:%S"),
                       {"A": "Asc.", "D": "Desc."}.get(pass_direction, pass_direction), f"{minutes:.1f}",
-                      f"{max_elevation:.1f}", azimuth, pfd, doppler)
+                      f"{max_elevation:.1f}", azimuth, doppler)
             self.contact_listbox.insert(tk.END, values, text, tag, "\n".join(notes))
 
     def on_contact_select(self, event):
@@ -3869,9 +3867,6 @@ class LinkBudgetApp:
              "Carrier to noise (and interference) density ratio."),
             ("Eb/No (dB)", "Eb/N0 [dB]", "Link Budget", "Energy per bit to noise density ratio."),
             ("PFD (dBW/m²/4kHz)", "PFD [dBW/m²]", "PFD", "Power flux density at the ground in 4 kHz."),
-            ("PFD Limit (dBW/m²/4kHz)", "PFD Limit", "PFD",
-             "ITU RR Art. 21 limit at this elevation, dBW/m² in 4 kHz."),
-            ("PFD Margin (dB)", "PFD Mgn [dB]", "PFD", "Limit − PFD; negative: the limit is exceeded."),
         ]
         column_specs = [c for c in column_specs if c[0] == "Time (UTC)" or c[0] in df_pass.columns]
         groups = [g for g in ("Geometry", "Link Budget", "PFD") if any(c[2] == g for c in column_specs)]
@@ -3907,15 +3902,12 @@ class LinkBudgetApp:
             table.heading(col, text=short)
             widest = max([heading_font.measure(short)] + [body_font.measure(str(r[k])) for r in rows])
             table.column(col, anchor="center", width=widest + 18, minwidth=40, stretch=False)
-        margin_index = columns.index("PFD Margin (dB)") if "PFD Margin (dB)" in columns else None
-        for i, values in enumerate(rows):
+        # Samples above the PFD limit in red (the limit and the margin are not shown as columns).
+        margins = df_pass["PFD Margin (dB)"].tolist() if "PFD Margin (dB)" in df_pass.columns else [None] * len(rows)
+        for i, (values, margin) in enumerate(zip(rows, margins)):
             tags = ["evenrow" if i % 2 == 0 else "oddrow"]
-            if margin_index is not None:
-                try:
-                    if float(values[margin_index]) < 0:
-                        tags.append("fail")
-                except ValueError:
-                    pass
+            if margin is not None and margin == margin and margin < 0:
+                tags.append("fail")
             table.insert("", "end", values=values, tags=tuple(tags))
         _TreeviewHeadingTooltip(table, {c[0]: f"{c[0]}: {c[3]}" for c in column_specs})
 
