@@ -564,9 +564,9 @@ def content():
         "The passes are listed in the <b>Contact Windows (UTC Time)</b> table, one row per pass: start and end "
         "(UTC), direction (Asc. or Desc.), duration, maximum elevation, azimuth at the start, at the maximum "
         "elevation and at the end (degrees from North clockwise, with the compass direction: where to point the "
-        "antenna), minimum PFD margin and, optionally, the largest Doppler shift and rate. The <b>Columns</b> "
+        "antenna) and, optionally, the largest Doppler shift and rate. The <b>Columns</b> "
         "check boxes choose the columns shown; hover a heading for its meaning. A pass that exceeds the PFD limit "
-        "is red, one with noise from the Sun orange; hovering the row gives the detail. Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
+        "is red, one with noise from the Sun orange; hovering the row gives the detail (by how much the limit is exceeded, the Sun noise and its time). Select a pass: the Downlink and Uplink tabs show its results. The button turns blue "
         "when the TLE, date or station change."))
     story.append(P(
         "<b>Satellite antenna pattern</b>: the gain of the satellite antenna versus the angle from nadir, used "
@@ -913,7 +913,7 @@ def content():
     ]))
     story.append(P(
         "Along the passes the PFD is computed at every sample with the EIRP of the pattern towards the station; "
-        "the contact table gives the minimum PFD margin of each pass and shows in red a pass that exceeds the limit."))
+        "the contact table shows in red a pass that exceeds the limit (hover the row for by how much), and the pass table in red its samples above the limit; the PFD Check page of the static budget gives the limit and the margin."))
     story += H2("Statistical margins")
     story.append(P(
         "Each tolerance with adverse limit a = −adverse and favourable limit b = +favourable contributes a mean "
