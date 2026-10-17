@@ -3577,7 +3577,12 @@ class LinkBudgetApp:
             self.contact_listbox.show_column("sim", False)
             return
         tle, obs_date = self._sim_inputs
-        other = link_core.PassAnalysis(tle, self._station(name), None, self._min_elevation(), self._step_s)
+        text = self._sim_el_entry.get().strip()
+        try:
+            min_el = float(text) if text else self._min_elevation()
+        except ValueError:
+            raise ValueError(f"Elevation of the simultaneous station: '{text}' is not a number.") from None
+        other = link_core.PassAnalysis(tle, self._station(name), None, min_el, self._step_s)
         frame = other.day(obs_date)
         self.sim_visible = pd.Series(frame["Visible"].to_numpy(dtype=bool), index=frame["Time (UTC)"])
         self.contact_listbox.show_column("sim", True, f"With {name} [min]")
@@ -7405,6 +7410,22 @@ class LinkBudgetApp:
         )
         sim_box.pack(side=tk.LEFT, padx=6)
         sim_box.bind("<<ComboboxSelected>>", self._simultaneous_changed)
+        ttk.Label(sim_row, text="above").pack(side=tk.LEFT)
+        sim_el = _PlaceholderEntry(sim_row, "e.g. 3", width=7)
+        sim_el.pack(side=tk.LEFT, padx=4)
+        self._sim_el_used = ""
+
+        def _sim_el_changed(_event=None):
+            if sim_el.get().strip() != self._sim_el_used:  # not on every focus change
+                self._sim_el_used = sim_el.get().strip()
+                self._simultaneous_changed()
+
+        sim_el.bind("<Return>", _sim_el_changed)
+        sim_el.bind("<FocusOut>", _sim_el_changed, add="+")
+        self._sim_el_entry = sim_el
+        ttk.Label(sim_row, text="° there").pack(side=tk.LEFT, padx=(0, 12))
+        _add_tooltip(sim_el, "Elevation above which the satellite counts as seen by that station, e.g. the "
+                             "elevation above which it transmits to it (3°). Empty: the Min Elevation above.")
         self.sim_common_var = tk.BooleanVar(value=False)
         sim_common = ttk.Checkbutton(sim_row, text="Analyse the common minutes only", variable=self.sim_common_var,
                                      command=self._simultaneous_changed)
