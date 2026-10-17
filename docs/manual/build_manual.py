@@ -719,7 +719,9 @@ def content():
     story += H2("Results of the selected pass")
     story += FIG("downlink_results", "Plots and table of a pass.")
     story.append(P(
-        "The plots show elevation, Eb/No and C/(No+Io), and Doppler shift along the pass; the table gives every "
+        "The plots show elevation and azimuth (dashed, right axis, degrees from North clockwise; the line breaks "
+        "where the satellite crosses North), Eb/No and C/(No+Io), and Doppler shift and rate along the pass; the "
+        "table gives every "
         "30 s step. <b>Calculate DL Link Budget</b> recomputes the budget with new parameters without repeating "
         "the orbit propagation; <b>Export Table CSV</b> saves the table (with project and pass on the first "
         "lines). The table uses short headings (hover a heading for its full name and unit) and the "
